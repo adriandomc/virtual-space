@@ -1,4 +1,4 @@
-import type { BedSize, FurnitureItem, Opening, Point, Room } from './types.js';
+import type { BedSize, FloorFinish, FurnitureItem, Opening, Point, Room, Selection } from './types.js';
 
 const EPS = 1e-7;
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
@@ -17,7 +17,7 @@ export function createDefaultRoom(): Room {
     version: 1, name: 'Mi habitación',
     vertices: [{ x: -2.5, z: -2 }, { x: 2.5, z: -2 }, { x: 2.5, z: 2 }, { x: -2.5, z: 2 }],
     wallColors: ['#9cae98', '#eee9df', '#eee9df', '#eee9df'],
-    height: 2.8, thickness: 0.15, floorColor: '#b49b7d', showFurniture: true, furniture: [],
+    height: 2.8, thickness: 0.15, floorColor: '#b49b7d', ceilingColor: '#f2f0e9', floorFinish: 'wood', renderQuality: 'standard', editing: { snap: true, step: 0.1, bounds: true }, showFurniture: true, furniture: [],
     openings: [
       { id: 'door-1', type: 'door', wall: 3, offset: 0.35, width: 0.9, height: 2.1, sill: 0 },
       { id: 'window-1', type: 'window', wall: 1, offset: 1.1, width: 1.8, height: 1.3, sill: 0.85 },
@@ -121,7 +121,10 @@ export function furnitureContains(point: Point, item: FurnitureItem, margin = 0.
 
 export function furnitureInside(item: FurnitureItem, vertices: Point[], margin = 0) {
   if (vertices.length < 3 || ![item.x, item.z, item.width, item.depth, item.rotation, margin].every(Number.isFinite) || item.width <= 0 || item.depth <= 0 || margin < 0) return false;
-  const corners = furnitureCorners(item);
+  return footprintInside(furnitureCorners(item), vertices, margin);
+}
+
+function footprintInside(corners: Point[], vertices: Point[], margin = 0) {
   if (!corners.every(p => pointInPolygon(p, vertices))) return false;
   return corners.every((a, i) => {
     const b = corners[(i + 1) % corners.length], dx = b.x - a.x, dz = b.z - a.z, cuts = [0, 1];
@@ -148,13 +151,33 @@ export function furnitureInside(item: FurnitureItem, vertices: Point[], margin =
   });
 }
 
-function furnitureOverlaps(a: FurnitureItem, b: FurnitureItem) {
-  const ca = furnitureCorners(a), cb = furnitureCorners(b);
-  return [ca, cb].every(corners => [0, 1].every(i => {
-    const axis = { x: corners[i + 1].z - corners[i].z, z: corners[i].x - corners[i + 1].x };
+function polygonsOverlap(ca: Point[], cb: Point[]) {
+  return [ca, cb].every(corners => corners.every((p, i) => {
+    const next = corners[(i + 1) % corners.length], axis = { x: next.z - p.z, z: p.x - next.x };
     const pa = ca.map(p => p.x * axis.x + p.z * axis.z), pb = cb.map(p => p.x * axis.x + p.z * axis.z);
     return Math.min(...pa) < Math.max(...pb) - EPS && Math.min(...pb) < Math.max(...pa) - EPS;
   }));
+}
+
+function furnitureOverlaps(a: FurnitureItem, b: FurnitureItem) {
+  return polygonsOverlap(furnitureCorners(a), furnitureCorners(b));
+}
+
+function sweptFootprint(previous: FurnitureItem, target: FurnitureItem): Point[] {
+  const points = [...furnitureCorners(previous), ...furnitureCorners(target)].sort((a, b) => a.x - b.x || a.z - b.z);
+  const hull: Point[] = [];
+  for (const p of points) {
+    while (hull.length >= 2 && cross(hull[hull.length - 2], hull[hull.length - 1], p) <= EPS) hull.pop();
+    hull.push(p);
+  }
+  const lowerLength = hull.length;
+  for (let i = points.length - 2; i >= 0; i--) {
+    const p = points[i];
+    while (hull.length > lowerLength && cross(hull[hull.length - 2], hull[hull.length - 1], p) <= EPS) hull.pop();
+    hull.push(p);
+  }
+  hull.pop();
+  return hull;
 }
 
 export function furnitureWalkable(point: Point, room: Room, margin = Math.max(0.2, room.thickness / 2 + 0.12)) {
@@ -235,7 +258,7 @@ function placeFurniture(room: Room, rawItem: FurnitureItem, avoid: FurnitureItem
 
 export function fitFurniture(room: Room, item: FurnitureItem): FurnitureItem {
   const valid = readFurniture(item, room.height);
-  return furnitureInside(valid, room.vertices) ? valid : placeFurniture(room, valid, []);
+  return room.editing?.bounds === false || furnitureInside(valid, room.vertices) ? valid : placeFurniture(room, valid, []);
 }
 const overlapping = (a: Opening, b: Opening) => a.wall === b.wall && a.offset < b.offset + b.width - EPS && b.offset < a.offset + a.width - EPS && a.sill < b.sill + b.height - EPS && b.sill < a.sill + a.height - EPS;
 
@@ -259,6 +282,12 @@ export function validateRoom(value: unknown): Room {
     }
   }
   const height = number(raw.height, 1.8, 8, 'La altura');
+  const editingRaw = raw.editing === undefined ? { snap: true, step: 0.1, bounds: true } : record(raw.editing, 'El ajuste del editor');
+  const editing = { snap: boolean(editingRaw.snap, 'El ajuste a cuadrícula'), step: number(editingRaw.step, 0.01, 1, 'El paso de cuadrícula'), bounds: boolean(editingRaw.bounds, 'Los límites del cuarto') };
+  const floorFinish = raw.floorFinish === undefined ? 'wood' : raw.floorFinish;
+  if (!['wood', 'tile-grid', 'tile-brick', 'tile-checker', 'marble', 'concrete'].includes(floorFinish as string)) throw new Error('Selecciona un acabado de piso válido.');
+  const renderQuality = raw.renderQuality === undefined ? 'standard' : raw.renderQuality;
+  if (renderQuality !== 'standard' && renderQuality !== 'realistic') throw new Error('La calidad debe ser estándar o realista.');
   const wallColors = array(raw.wallColors, vertices.length, vertices.length, 'Los colores de pared').map((c, i) => color(c, `Color de pared ${i + 1}`));
   const openings = array(raw.openings, 0, 48, 'Las puertas y ventanas').map((value, i): Opening => {
     const p = record(value, `Abertura ${i + 1}`);
@@ -279,17 +308,17 @@ export function validateRoom(value: unknown): Room {
   const lights = array(raw.lights, 0, 24, 'Las luces').map((value, i) => {
     const p = record(value, `Luz ${i + 1}`);
     const position = { x: number(p.x, -50, 50, `Luz ${i + 1}, X`), z: number(p.z, -50, 50, `Luz ${i + 1}, Z`) };
-    if (!pointInPolygon(position, vertices)) throw new Error(`La luz ${i + 1} debe estar dentro del cuarto.`);
+    if (editing.bounds && !pointInPolygon(position, vertices)) throw new Error(`La luz ${i + 1} debe estar dentro del cuarto.`);
     return { ...position, id: text(p.id, 'Identificador de luz'), name: text(p.name, 'Nombre de luz'), y: number(p.y, 0.1, height, `Altura de luz ${i + 1}`), lumens: number(p.lumens, 0, 20000, `Lúmenes de luz ${i + 1}`), temperature: number(p.temperature, 1000, 12000, `Temperatura de luz ${i + 1}`), enabled: boolean(p.enabled, 'Interruptor de luz') };
   });
   if (new Set(lights.map(p => p.id)).size !== lights.length) throw new Error('Las luces necesitan identificadores únicos.');
   const furniture = array(raw.furniture === undefined ? [] : raw.furniture, 0, 64, 'Los muebles').map((value, i) => readFurniture(value, height, i));
   if (new Set(furniture.map(p => p.id)).size !== furniture.length) throw new Error('Los muebles necesitan identificadores únicos.');
-  for (const item of furniture) if (!furnitureInside(item, vertices)) throw new Error(`${FURNITURE_LABELS[item.type]} debe quedar completamente dentro del cuarto.`);
+  for (const item of furniture) if (editing.bounds && !furnitureInside(item, vertices)) throw new Error(`${FURNITURE_LABELS[item.type]} debe quedar completamente dentro del cuarto.`);
   const sun = record(raw.sun, 'El sol');
   return {
     version: 1, name: text(raw.name, 'El nombre'), vertices, wallColors, height,
-    thickness: number(raw.thickness, 0.05, 0.6, 'El espesor'), floorColor: color(raw.floorColor, 'El color de piso'), showFurniture: raw.showFurniture === undefined ? true : boolean(raw.showFurniture, 'Los muebles'), furniture, openings, lights,
+    thickness: number(raw.thickness, 0.05, 0.6, 'El espesor'), floorColor: color(raw.floorColor, 'El color de piso'), ceilingColor: color(raw.ceilingColor === undefined ? '#f2f0e9' : raw.ceilingColor, 'El color de techo'), floorFinish: floorFinish as FloorFinish, renderQuality, editing, showFurniture: raw.showFurniture === undefined ? true : boolean(raw.showFurniture, 'Los muebles'), furniture, openings, lights,
     sun: { enabled: boolean(sun.enabled, 'El sol'), hour: number(sun.hour, 0, 24, 'La hora'), azimuth: number(sun.azimuth, 0, 360, 'La orientación solar'), intensity: number(sun.intensity, 0, 10, 'La intensidad solar') },
   };
 }
@@ -324,7 +353,17 @@ export function fitRoom(room: Room): Room {
     packed.push(...placed);
   }
   const interior = interiorPoint(room.vertices);
-  return validateRoom({ ...room, furniture: (room.furniture ?? []).map(item => fitFurniture(room, item)), openings: room.openings.map(p => packed.find(item => item.id === p.id)!), lights: room.lights.map(light => ({ ...light, ...(pointInPolygon(light, room.vertices) ? {} : interior), y: clamp(light.y, 0.1, room.height) })) });
+  let furniture = (room.furniture ?? []).map(item => readFurniture(item, room.height));
+  if (room.editing?.bounds !== false) {
+    const placed: FurnitureItem[] = [], pending: FurnitureItem[] = [];
+    for (const item of furniture) {
+      if (furnitureInside(item, room.vertices) && placed.every(other => !furnitureOverlaps(item, other))) placed.push(item);
+      else pending.push(item);
+    }
+    for (const item of pending) placed.push(placeFurniture(room, item, placed));
+    furniture = furniture.map(item => placed.find(p => p.id === item.id)!);
+  }
+  return validateRoom({ ...room, furniture, openings: room.openings.map(p => packed.find(item => item.id === p.id)!), lights: room.lights.map(light => ({ ...light, ...(room.editing?.bounds === false || pointInPolygon(light, room.vertices) ? {} : interior), y: clamp(light.y, 0.1, room.height) })) });
 }
 
 export function resizeRoom(room: Room, width: number, depth: number): Room {
@@ -365,4 +404,100 @@ export function addFurniture(room: Room, type: FurnitureItem['type'], bedSize: B
   const point = interiorPoint(room.vertices);
   const item = placeFurniture(room, { id: itemId(), type, ...(type === 'bed' ? { bedSize } : {}), ...point, width: dimensions.width, depth: dimensions.depth, height: dimensions.height, rotation: 0 }, room.furniture ?? []);
   return validateRoom({ ...room, furniture: [...(room.furniture ?? []), item] });
+}
+
+export function snapPlanPoint(previous: Point | null, point: Point, options: { grid: boolean; step: number; angles: boolean; angleStep?: number }): Point {
+  if (![point.x, point.z, ...(previous ? [previous.x, previous.z] : [])].every(Number.isFinite)) throw new Error('Las coordenadas deben ser números finitos.');
+  const step = number(options.step, 0.01, 1, 'El paso de cuadrícula');
+  if (!options.grid && !options.angles) return { ...point };
+  const snap = (value: number) => options.grid ? Math.round(value / step) * step : value;
+  if (previous && options.angles) {
+    const dx = point.x - previous.x, dz = point.z - previous.z, angleStep = number(options.angleStep ?? 15, 1, 180, 'El paso angular') * Math.PI / 180;
+    const angle = Math.round(Math.atan2(dz, dx) / angleStep) * angleStep, length = snap(Math.hypot(dx, dz));
+    return { x: Number((previous.x + Math.cos(angle) * length).toFixed(6)), z: Number((previous.z + Math.sin(angle) * length).toFixed(6)) };
+  }
+  return { x: Number(snap(point.x).toFixed(6)), z: Number(snap(point.z).toFixed(6)) };
+}
+
+export function itemWorldPosition(room: Room, selection: Selection): { x: number; y: number; z: number } | null {
+  if (selection.kind === 'wall') {
+    const a = room.vertices[selection.index], b = room.vertices[(selection.index + 1) % room.vertices.length];
+    return a && b ? { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2, y: room.height / 2 } : null;
+  }
+  if (selection.kind === 'floor' || selection.kind === 'ceiling') return { ...interiorPoint(room.vertices), y: selection.kind === 'floor' ? 0 : room.height };
+  if (selection.kind === 'light') {
+    const item = room.lights.find(p => p.id === selection.id);
+    return item ? { x: item.x, y: item.y, z: item.z } : null;
+  }
+  if (selection.kind === 'furniture') {
+    const item = room.furniture.find(p => p.id === selection.id);
+    return item ? { x: item.x, y: item.height / 2, z: item.z } : null;
+  }
+  if (selection.kind !== 'opening') return null;
+  const item = room.openings.find(p => p.id === selection.id);
+  if (!item) return null;
+  const a = room.vertices[item.wall], b = room.vertices[(item.wall + 1) % room.vertices.length], t = (item.offset + item.width / 2) / wallLength(room, item.wall);
+  return { x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t, y: item.sill + item.height / 2 };
+}
+
+function boundedMove(previous: Point, target: Point, pathIsClear: (point: Point) => boolean): Point | null {
+  if (pathIsClear(target)) return target;
+  if (!pathIsClear(previous)) return null;
+  let low = 0, high = 1;
+  for (let i = 0; i < 18; i++) {
+    const middle = (low + high) / 2, point = { x: previous.x + (target.x - previous.x) * middle, z: previous.z + (target.z - previous.z) * middle };
+    if (pathIsClear(point)) low = middle; else high = middle;
+  }
+  return { x: previous.x + (target.x - previous.x) * low, z: previous.z + (target.z - previous.z) * low };
+}
+
+export function moveSceneItem(room: Room, selection: Selection, target: Point & { y?: number; rotation?: number }): Room {
+  if (![target.x, target.z, ...(target.y === undefined ? [] : [target.y]), ...(target.rotation === undefined ? [] : [target.rotation])].every(Number.isFinite)) throw new Error('La posición y el giro deben ser números finitos.');
+  const editing = room.editing ?? { snap: true, step: 0.1, bounds: true };
+  const snap = (value: number) => editing.snap ? Number((Math.round(value / editing.step) * editing.step).toFixed(6)) : value;
+  const coordinate = (value: number) => clamp(snap(value), -50, 50);
+  const position = { x: coordinate(target.x), z: coordinate(target.z) };
+  if (selection.kind === 'furniture') {
+    const item = room.furniture.find(p => p.id === selection.id);
+    if (!item) throw new Error('Este mueble ya no existe.');
+    // Permite salir de superposiciones antiguas sin atravesar obstáculos nuevos.
+    const obstacles = room.furniture.filter(other => other.id !== item.id && !furnitureOverlaps(item, other));
+    const rotation = target.rotation === undefined ? item.rotation : ((target.rotation % 360) + 360) % 360;
+    const candidate = (point: Point) => ({ ...item, x: coordinate(point.x), z: coordinate(point.z), rotation });
+    const point = editing.bounds ? boundedMove(item, position, point => {
+      const footprint = sweptFootprint({ ...item, rotation }, candidate(point));
+      return footprintInside(footprint, room.vertices, room.thickness / 2 + 0.02) && obstacles.every(other => !polygonsOverlap(footprint, furnitureCorners(other)));
+    }) : position;
+    if (!point) return room;
+    const moved = candidate(point);
+    if (moved.x === item.x && moved.z === item.z && moved.rotation === item.rotation) return room;
+    return validateRoom({ ...room, furniture: room.furniture.map(p => p.id === item.id ? moved : p) });
+  }
+  if (selection.kind === 'light') {
+    const item = room.lights.find(p => p.id === selection.id);
+    if (!item) throw new Error('Esta luz ya no existe.');
+    const point = editing.bounds ? boundedMove(item, position, p => footprintInside([item, { x: coordinate(p.x), z: coordinate(p.z) }], room.vertices)) : position;
+    if (!point) return room;
+    const moved = { ...item, x: coordinate(point.x), z: coordinate(point.z), y: target.y === undefined ? item.y : clamp(snap(target.y), 0.1, room.height) };
+    return validateRoom({ ...room, lights: room.lights.map(p => p.id === item.id ? moved : p) });
+  }
+  if (selection.kind !== 'opening') return room;
+  const item = room.openings.find(p => p.id === selection.id);
+  if (!item) throw new Error('Esta abertura ya no existe.');
+  const sill = item.type === 'door' ? 0 : target.y === undefined ? item.sill : clamp(snap(target.y - item.height / 2), 0, room.height - item.height);
+  let closest: Opening | null = null, distance = Infinity;
+  for (let wall = 0; wall < room.vertices.length; wall++) {
+    const length = wallLength(room, wall);
+    if (length < item.width) continue;
+    const a = room.vertices[wall], b = room.vertices[(wall + 1) % room.vertices.length], dx = (b.x - a.x) / length, dz = (b.z - a.z) / length;
+    const desired = clamp(snap((position.x - a.x) * dx + (position.z - a.z) * dz - item.width / 2), 0, length - item.width);
+    const others = room.openings.filter(p => p.id !== item.id && p.wall === wall);
+    const offsets = [desired, 0, length - item.width, ...others.flatMap(p => [p.offset + p.width, p.offset - item.width])].filter(offset => offset >= -EPS && offset <= length - item.width + EPS).sort((a, b) => Math.abs(a - desired) - Math.abs(b - desired));
+    const offset = offsets.find(offset => others.every(p => !overlapping(p, { ...item, wall, offset, sill })));
+    if (offset === undefined) continue;
+    const center = { x: a.x + dx * (offset + item.width / 2), z: a.z + dz * (offset + item.width / 2) }, error = Math.hypot(center.x - position.x, center.z - position.z);
+    if (error < distance) { distance = error; closest = { ...item, wall, offset: clamp(offset, 0, length - item.width), sill }; }
+  }
+  if (!closest) throw new Error('No queda espacio en una pared para mover esta abertura sin superponerla.');
+  return validateRoom({ ...room, openings: room.openings.map(p => p.id === item.id ? closest! : p) });
 }

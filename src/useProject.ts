@@ -146,15 +146,15 @@ export default function useProject() {
       const validated = validateRoom(next);
       setRoomState(validated); pending.current = validated; clearError();
       if (timer.current) clearTimeout(timer.current);
-      timer.current = setTimeout(() => { timer.current = null; void save(); }, 250);
+      timer.current = setTimeout(() => { timer.current = null; void save(); void saveSketch().catch(() => {}); }, 250);
     } catch (cause) { failure(cause); }
-  }, [clearError, failure, save]);
+  }, [clearError, failure, save, saveSketch]);
 
   const uploadSketch = useCallback(async (file: File | null) => {
     if (!session.current || session.current.readOnly) throw new Error('Este enlace solo permite ver el proyecto.');
     if (file && (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || file.size > 10 * 1024 * 1024)) throw new Error('Usa una imagen PNG, JPG o WebP de hasta 10 MB.');
-    pendingSketch.current = file; clearError(); await saveSketch();
-  }, [clearError, saveSketch]);
+    pendingSketch.current = file; clearError(); void save(); await saveSketch();
+  }, [clearError, save, saveSketch]);
   const retry = useCallback(() => {
     if (!session.current) { void load(); return; }
     clearError(); void save(); void saveSketch().catch(() => {}); finishStatus();

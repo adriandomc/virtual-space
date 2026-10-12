@@ -4,7 +4,7 @@ Aplicación React + TypeScript + Three.js para construir la planta de un cuarto,
 
 ## Proyectos guardados y enlaces
 
-Cada proyecto tiene un enlace de edición privado. Los cambios se guardan automáticamente en el servidor: dimensiones, contorno, colores, puertas, ventanas, focos e interruptores, sol, muebles y su visibilidad. La imagen del croquis también queda guardada en el proyecto. Espera a que el estado indique que se guardó antes de cerrar la página o compartirla.
+Cada proyecto tiene un enlace de edición privado. Los cambios se guardan automáticamente en el servidor: dimensiones, contorno, colores y acabados, puertas, ventanas, focos e interruptores, sol, muebles, calidad visual y ajustes de movimiento. La imagen del croquis también queda guardada en el proyecto. Espera a que el estado indique que se guardó antes de cerrar la página o compartirla.
 
 Guarda tu dirección completa de edición como marcador. Contiene `?room=<identificador>#edit=<clave>`; la clave permite modificar ese proyecto. Quien obtenga ese enlace privado puede editarlo. Si pierdes la clave, no hay un inicio de sesión que permita recuperarla.
 
@@ -14,12 +14,17 @@ Los datos se conservan en el servidor, sin depender del almacenamiento local del
 
 ## Uso del editor
 
-- Ajusta ancho, fondo, altura y espesor del cuarto; arrastra esquinas para crear una planta irregular. Selecciona cada pared para cambiar su pintura.
-- Carga un croquis PNG, JPG o WebP y marca sus esquinas en orden. Indica el ancho total trazado en metros para fijar la escala y aplica el contorno. Reemplazar la planta elimina las puertas y ventanas anteriores; el editor avisa antes de aplicarla.
-- Añade puertas y ventanas a una pared y ajusta su ancho, altura, posición y antepecho. Los huecos se conservan al cambiar dimensiones; si no caben sin superponerse, el cambio se rechaza.
+- Selecciona paredes, piso, techo, puertas, ventanas, muebles o focos desde **Elementos**, la escena o la planta. Sus medidas y controles aparecen en **Propiedades**.
+- Usa **Mover** y arrastra el objeto o sus controles de colores. **Girar** rota los muebles. Con **Ajuste**, el movimiento sigue el paso de cuadrícula y el giro avanza en 15°; configura el paso en **Cuarto → Movimiento**. **Límites** evita colocaciones fuera de la planta o sobre otros muebles durante el arrastre; desactívalo para colocar muebles y focos fuera de ella. Los límites generales de dimensiones y altura siguen vigentes.
+- Ajusta ancho, fondo, altura y espesor del cuarto; arrastra esquinas para crear una planta irregular.
+- Carga un croquis PNG, JPG o WebP y marca sus esquinas en orden. Usa la cuadrícula y **Líneas rectas**, con ángulos de 15°, 30°, 45° o 90°. Toca el primer punto o pulsa Enter para cerrar; Retroceso deshace y Escape cancela. Indica el ancho total en metros para fijar la escala. Al cambiar la planta se conservan los objetos y se reubican las aberturas; si alguno no cabe, se conserva la planta actual.
+- Añade puertas y ventanas a una pared y ajusta sus medidas y antepecho. Arrástralas hacia otra pared para trasladarlas. Los huecos se conservan al cambiar dimensiones; si no caben sin superponerse, el cambio se rechaza.
+- Selecciona pared, piso o techo en **Color**. Escribe o pega un código hexadecimal de tres o seis dígitos, con o sin `#`; puedes copiarlo y reutilizar los colores aplicados al cuarto. El piso admite madera, loseta, loseta trabada, damero, mármol y concreto.
 - Añade focos, cambia posición, lúmenes y temperatura de color y utiliza su interruptor. Ajusta también la hora, orientación e intensidad del sol.
 - Añade camas individuales, matrimoniales, queen o king, roperos, tocadores y burós. Selecciona un mueble para cambiar sus dimensiones, posición y giro, o eliminarlo. La planta y el visor muestran los mismos muebles guardados; el enlace de consulta conserva su distribución.
 - Alterna entre vista exterior, planta y recorrido interior. En escritorio usa WASD o las flechas para caminar, Q/E para girar y R/F para mirar arriba o abajo. En pantallas táctiles mueve el joystick y arrastra para mirar.
+
+**Estándar** reduce el trabajo gráfico. **Realista** añade relieve de superficies, variación de rugosidad y reflejos; consume más GPU y batería, especialmente en celulares. El modo elegido queda guardado con el proyecto.
 
 Las camas parten de medidas nacionales de colchón: individual **1.00 × 1.90 m**, matrimonial **1.35 × 1.90 m**, queen **1.50 × 1.90 m** y king **2.00 × 1.90 m**, según [Sealy México](https://sealy.com.mx/linea-correct-comfort/). Son medidas iniciales editables: ajusta el tamaño si tu colchón, marco o cabecera ocupan más espacio.
 

@@ -34,6 +34,8 @@ test('el servidor persiste proyectos y croquis con permisos, revisiones y rutas 
     { id: 'vanity', type: 'vanity', x: 1.3, z: 0.8, width: 1.1, depth: 0.55, height: 1.3, rotation: 0 },
     { id: 'nightstand', type: 'nightstand', x: 0, z: -1.1, width: 0.5, depth: 0.5, height: 0.6, rotation: 0 },
   ];
+  const freeProjectId = randomUUID();
+  const freeRoom = { ...room, editing: { snap: false, step: 0.2, bounds: false }, furniture: [{ ...furniture[0], x: 8, z: -4 }], lights: [{ ...room.lights[0], x: -6, z: 6 }] };
   const headers = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + editKey };
   const createBody = { id, editKey, room };
   const send = (path: string, method = 'GET', body?: unknown, auth = true) => fetch(base + path, { method, headers: auth ? headers : { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -62,7 +64,7 @@ test('el servidor persiste proyectos y croquis con permisos, revisiones y rutas 
       assert.equal((await fetch(base + path, { headers: { Authorization: 'Bearer ' + 'b'.repeat(64) } }).then(r => r.json())).canEdit, false);
     });
     await t.test('guarda cambios completos e impide sobrescribir una revisión posterior', async () => {
-      const changed = { ...room, name: 'Cuarto compartido', furniture, showFurniture: false, sun: { ...room.sun, hour: 9 } };
+      const changed = { ...room, name: 'Cuarto compartido', furniture, showFurniture: false, ceilingColor: '#c8d7e2', floorFinish: 'tile-brick', renderQuality: 'realistic', editing: { snap: true, step: 0.25, bounds: true }, sun: { ...room.sun, hour: 9 } };
       const saved = await send(path, 'PUT', { room: changed, revision: 1 });
       assert.equal(saved.status, 200); assert.equal((await saved.json()).revision, 2);
       const repeated = await send(path, 'PUT', { room: changed, revision: 1 });
@@ -76,6 +78,28 @@ test('el servidor persiste proyectos y croquis con permisos, revisiones y rutas 
       assert.equal(publicRoom.canEdit, false);
       assert.equal((await send(path, 'PUT', { room: { ...changed, furniture: [] }, revision: 2 }, false)).status, 403);
       assert.deepEqual((await (await send(path)).json()).room.furniture, furniture);
+    });
+    await t.test('persiste ajustes y materiales y valida límites opcionales en la API', async () => {
+      const current = (await (await send(path)).json()).room;
+      for (const patch of [
+        { floorFinish: 'glass' }, { renderQuality: 'ultra' }, { ceilingColor: '#12' },
+        { editing: { ...current.editing, snap: 'yes' } }, { editing: { ...current.editing, bounds: 'false' } },
+        { editing: { ...current.editing, step: 0 } }, { editing: { ...current.editing, step: 2 } },
+      ]) assert.equal((await send(path, 'PUT', { room: { ...current, ...patch }, revision: 2 })).status, 400);
+      const unchanged = await (await send(path)).json();
+      assert.deepEqual(unchanged.room, current); assert.equal(unchanged.revision, 2);
+      assert.equal((await send('/api/rooms', 'POST', { id: freeProjectId, editKey, room: freeRoom })).status, 201);
+      const freePath = '/api/rooms/' + freeProjectId;
+      const outside = await (await send(freePath, 'GET', undefined, false)).json();
+      assert.deepEqual(outside.room.furniture, freeRoom.furniture);
+      assert.deepEqual(outside.room.lights, freeRoom.lights);
+      assert.deepEqual(outside.room.editing, freeRoom.editing);
+      assert.equal(outside.canEdit, false);
+      assert.equal((await send(freePath, 'PUT', { room: { ...freeRoom, editing: { ...freeRoom.editing, bounds: true } }, revision: 1 })).status, 400);
+      const stillOutside = await (await send(freePath)).json();
+      assert.equal(stillOutside.revision, 1); assert.equal(stillOutside.room.editing.bounds, false);
+      const furnitureOnly = { ...freeRoom, lights: room.lights, editing: { ...freeRoom.editing, bounds: true } };
+      assert.equal((await send(freePath, 'PUT', { room: furnitureOnly, revision: 1 })).status, 400);
     });
     await t.test('valida medidas y tipos de muebles antes de guardar una distribución', async () => {
       const current = (await (await send(path)).json()).room;
@@ -124,6 +148,12 @@ test('el servidor persiste proyectos y croquis con permisos, revisiones y rutas 
       assert.equal(restored.room.name, 'Cuarto compartido'); assert.equal(restored.room.showFurniture, false); assert.equal(restored.canEdit, true); assert.equal(restored.revision, 2);
       assert.deepEqual(restored.room.furniture, furniture);
       assert.deepEqual((await (await send(path, 'GET', undefined, false)).json()).room.furniture, furniture);
+      assert.equal(restored.room.ceilingColor, '#c8d7e2'); assert.equal(restored.room.floorFinish, 'tile-brick'); assert.equal(restored.room.renderQuality, 'realistic');
+      assert.deepEqual(restored.room.editing, { snap: true, step: 0.25, bounds: true });
+      const restoredOutside = await (await send('/api/rooms/' + freeProjectId)).json();
+      assert.deepEqual(restoredOutside.room.furniture, freeRoom.furniture);
+      assert.deepEqual(restoredOutside.room.lights, freeRoom.lights);
+      assert.deepEqual(restoredOutside.room.editing, freeRoom.editing);
       assert.deepEqual(Buffer.from(await (await send(path + '/sketch')).arrayBuffer()), png);
       assert.equal((await send(path + '/sketch', 'DELETE', undefined, false)).status, 403);
       const deleted = await send(path + '/sketch', 'DELETE');
