@@ -11,6 +11,7 @@ export const BED_SIZES: Record<BedSize, { label: string; width: number; depth: n
   king: { label: 'King', width: 2, depth: 1.9 },
 };
 export const FURNITURE_LABELS: Record<FurnitureItem['type'], string> = { bed: 'Cama', wardrobe: 'Ropero', vanity: 'Tocador', nightstand: 'Buró' };
+export const FURNITURE_COLORS: Record<FurnitureItem['type'], string> = { bed: '#b8a084', wardrobe: '#b8a084', vanity: '#b8a084', nightstand: '#b8a084' };
 
 export function createDefaultRoom(): Room {
   return {
@@ -230,9 +231,11 @@ function readFurniture(value: unknown, height: number, index = 0): FurnitureItem
     if (typeof size !== 'string' || !Object.hasOwn(BED_SIZES, size)) throw new Error('El tamaño de cama debe ser individual, matrimonial, queen o king.');
     bedSize = size as BedSize;
   } else if (p.bedSize !== undefined) throw new Error('El tamaño de cama solo corresponde a las camas.');
+  const material = p.material;
+  if (material !== undefined && material !== 'wood' && material !== 'plastic' && material !== 'metal') throw new Error('El material de mueble debe ser madera, plástico o metal.');
   const id = text(p.id, 'Identificador de mueble');
   if (id.length > 64) throw new Error('El identificador de mueble admite hasta 64 caracteres.');
-  return { id, type, ...(bedSize ? { bedSize } : {}), x: number(p.x, -50, 50, `Mueble ${index + 1}, X`), z: number(p.z, -50, 50, `Mueble ${index + 1}, Z`), width: number(p.width, 0.1, 10, `Ancho de mueble ${index + 1}`), depth: number(p.depth, 0.1, 10, `Fondo de mueble ${index + 1}`), height: number(p.height, 0.1, height, `Altura de mueble ${index + 1}`), rotation: number(p.rotation, 0, 360, `Giro de mueble ${index + 1}`) };
+  return { id, type, ...(bedSize ? { bedSize } : {}), ...(material === undefined ? {} : { material }), ...(p.color === undefined ? {} : { color: color(p.color, `Color de mueble ${index + 1}`) }), x: number(p.x, -50, 50, `Mueble ${index + 1}, X`), z: number(p.z, -50, 50, `Mueble ${index + 1}, Z`), width: number(p.width, 0.1, 10, `Ancho de mueble ${index + 1}`), depth: number(p.depth, 0.1, 10, `Fondo de mueble ${index + 1}`), height: number(p.height, 0.1, height, `Altura de mueble ${index + 1}`), rotation: number(p.rotation, 0, 360, `Giro de mueble ${index + 1}`) };
 }
 
 function placeFurniture(room: Room, rawItem: FurnitureItem, avoid: FurnitureItem[]): FurnitureItem {

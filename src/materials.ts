@@ -1,6 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { color, float, min, mix, normalMap, smoothstep, step, texture, uv, vec2, vec3, type ShaderNodeObject } from 'three/tsl';
-import type { FloorFinish, Room } from './types';
+import type { FloorFinish, FurnitureMaterial, Room } from './types';
 
 type ShaderValue = ShaderNodeObject<THREE.Node>;
 type Quality = Room['renderQuality'];
@@ -188,6 +188,20 @@ export function createWoodMaterial(hex: string, quality: Quality): THREE.MeshSta
   material.roughnessNode = grain.mul(0.12).add(0.43);
   material.normalNode = surfaceNormal(uv(), p => woodGrain(p.yx).mul(0.00025));
   material.clearcoatNormalNode = material.normalNode;
+  return material;
+}
+
+export function createFurnitureMaterial(hex: string, surface: FurnitureMaterial, quality: Quality): THREE.MeshStandardNodeMaterial {
+  if (surface === 'wood') return createWoodMaterial(hex, quality);
+  const metal = surface === 'metal';
+  const material = new THREE.MeshPhysicalNodeMaterial({ color: hex, metalness: metal ? 1 : 0, roughness: metal ? 0.28 : 0.32, clearcoat: metal ? 0 : quality === 'standard' ? 0.12 : 0.35, clearcoatRoughness: 0.28 });
+  if (quality !== 'standard') {
+    const variation = quality === 'hyperrealistic' ? 0.07 : 0.035;
+    const finish = (p: ShaderValue) => metal ? p.y.mul(1200).sin().mul(0.5).add(0.5) : noise(p.mul(240));
+    material.roughnessNode = finish(uv()).mul(variation).add(material.roughness - variation / 2);
+    material.normalNode = surfaceNormal(uv(), p => finish(p).mul(quality === 'hyperrealistic' ? 0.000006 : 0.000003));
+    material.clearcoatNormalNode = material.normalNode;
+  }
   return material;
 }
 

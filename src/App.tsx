@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Archive, ArrowDownToLine, ArrowUpFromLine, BedDouble, Box, Check, ChevronDown, CircleHelp, Copy, DoorClosed, DoorOpen, Focus, Footprints, Grid2X2, Layers3, Lightbulb, LoaderCircle, Magnet, Menu, MousePointer2, Move, Paintbrush, PanelLeftClose, PanelRightClose, Plus, RotateCcw, Ruler, Settings2, Share2, Shield, Sun, Table2, Trash2, X } from 'lucide-react';
 import RoomScene from './RoomScene';
 import PlanEditor from './PlanEditor';
 import useProject from './useProject';
 import { normalizeHex } from './color';
-import { addFurniture, addLight, addOpening, BED_SIZES, bounds, fitRoom, FURNITURE_LABELS, moveSceneItem, polygonArea, resizeRoom, validateRoom, wallLength } from './model';
-import type { BedSize, FloorFinish, FurnitureItem, Opening, Room, RoomLight, Selection, ViewMode } from './types';
+import { addFurniture, addLight, addOpening, BED_SIZES, bounds, fitRoom, FURNITURE_COLORS, FURNITURE_LABELS, moveSceneItem, polygonArea, resizeRoom, validateRoom, wallLength } from './model';
+import type { BedSize, FloorFinish, FurnitureItem, FurnitureMaterial, Opening, Room, RoomLight, Selection, ViewMode } from './types';
 
 const COLORS = [
   ['#9cae98', 'Salvia suave'], ['#e7e3d9', 'Lino natural'], ['#d7c7b1', 'Arena'], ['#c4967c', 'Terracota'],
@@ -37,21 +37,23 @@ function Switch({ checked, label, onChange, disabled = false }: { checked: boole
 function Section({ title, children, defaultOpen = true }: { title: string; children: ReactNode; defaultOpen?: boolean }) {
   return <details className="property-section" open={defaultOpen}><summary><ChevronDown size={14} /><span>{title}</span></summary><div className="section-body">{children}</div></details>;
 }
-function HexColorField({ value, onChange, readOnly, notify }: { value: string; onChange: (value: string) => void; readOnly: boolean; notify: (text: string) => void }) {
+function HexColorField({ value, onChange, readOnly, notify, label = 'Color personalizado' }: { value: string; onChange: (value: string) => void; readOnly: boolean; notify: (text: string) => void; label?: string }) {
+  const inputId = useId();
   const [draft, setDraft] = useState(value.toUpperCase());
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => setDraft(value.toUpperCase()), [value]);
   function apply() {
     if (readOnly) return;
     const normalized = normalizeHex(draft);
-    if (normalized) { onChange(normalized); setDraft(normalized.toUpperCase()); }
+    if (normalized) { if (normalized !== value.toLowerCase()) onChange(normalized); setDraft(normalized.toUpperCase()); }
     else { setDraft(value.toUpperCase()); notify('Escribe un código hexadecimal de 3 o 6 dígitos.'); }
   }
-  return <div className="hex-field"><label htmlFor="paint-hex">Color personalizado</label><div>
+  return <div className="hex-field"><label htmlFor={inputId}>{label}</label><div>
     <input type="color" aria-label="Elegir color personalizado" disabled={readOnly} value={value} onChange={event => onChange(event.target.value)} />
-    <input ref={input} id="paint-hex" aria-label="Código hexadecimal" readOnly={readOnly} value={draft} maxLength={9} spellCheck={false} autoCapitalize="characters" onChange={event => {
+    <input ref={input} id={inputId} className="hex-code-input" aria-label="Código hexadecimal" readOnly={readOnly} value={draft} maxLength={9} spellCheck={false} autoCapitalize="characters" onChange={event => {
       setDraft(event.target.value);
-      if (/^#?[\da-f]{6}$/i.test(event.target.value.trim())) onChange(normalizeHex(event.target.value)!);
+      const normalized = normalizeHex(event.target.value);
+      if (/^#?[\da-f]{6}$/i.test(event.target.value.trim()) && normalized !== value.toLowerCase()) onChange(normalized!);
     }} onBlur={apply} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); apply(); } }} />
     <button type="button" className="icon-button" aria-label="Copiar código hexadecimal" title="Copiar código" onClick={async () => { try { await navigator.clipboard.writeText(value.toUpperCase()); notify('Código copiado.'); } catch { input.current?.select(); notify('Selecciona el código para copiarlo.'); } }}><Copy size={15} /></button>
   </div></div>;
@@ -187,6 +189,10 @@ export default function App() {
   const itemPanel = <>
     {!selection && <div className="empty-inspector"><MousePointer2 size={23} /><p>Selecciona un elemento en la escena o en la planta.</p><button className="outline-button" disabled={readOnly} onClick={() => setAddOpen(true)}><Plus size={14} />Agregar elemento</button></div>}
     {selection && !furniture && !opening && !light && <div className="empty-inspector"><Paintbrush size={22} /><p>{surfaceName}</p><button className="outline-button" onClick={() => setTab('color')}>Editar material</button></div>}
+    {furniture && <Section title={furniture.type === 'bed' ? 'Estructura' : 'Material'}>
+      <label className="select-field">Material<select aria-label="Material del mueble" disabled={readOnly} value={furniture.material ?? 'wood'} onChange={event => updateFurniture({ material: event.target.value as FurnitureMaterial })}><option value="wood">Madera</option><option value="plastic">Plástico</option><option value="metal">Metal</option></select></label>
+      <HexColorField value={furniture.color ?? FURNITURE_COLORS[furniture.type]} onChange={color => updateFurniture({ color })} readOnly={readOnly} notify={setNotice} label="Color del material" />
+    </Section>}
     <fieldset disabled={readOnly} className="property-fields">
       {furniture && <Section title={furnitureName(furniture)}>
         {furniture.type === 'bed' && <label className="select-field">Tamaño<select aria-label="Tamaño de cama" value={furniture.bedSize} onChange={event => { const bedSize = event.target.value as BedSize; updateFurniture({ bedSize, width: BED_SIZES[bedSize].width, depth: BED_SIZES[bedSize].depth }); }}>{Object.entries(BED_SIZES).map(([key, preset]) => <option key={key} value={key}>{preset.label}</option>)}</select></label>}

@@ -7,8 +7,8 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 import { RectAreaLightTexturesLib } from 'three/addons/lights/RectAreaLightTexturesLib.js';
 import { LoaderCircle } from 'lucide-react';
-import { bounds, furnitureCorners, furnitureWalkable, interiorPoint, interiorWalkPoint, itemWorldPosition, moveSceneItem, pointInPolygon, polygonArea } from './model';
-import { createCeilingMaterial, createFabricMaterial, createFloorMaterial, createWallMaterial, createWoodMaterial, disposeArchitecturalTextures } from './materials';
+import { bounds, FURNITURE_COLORS, furnitureCorners, furnitureWalkable, interiorPoint, interiorWalkPoint, itemWorldPosition, moveSceneItem, pointInPolygon, polygonArea } from './model';
+import { createCeilingMaterial, createFabricMaterial, createFloorMaterial, createFurnitureMaterial, createWallMaterial, createWoodMaterial, disposeArchitecturalTextures } from './materials';
 import { createDuvetGeometry, createPillowGeometry } from './beddingGeometry';
 import { createArchitecturalPostProcessing } from './postProcessing';
 import { daylightFactor, joystickVector, renderPixelRatio } from './navigation';
@@ -76,7 +76,7 @@ function disposeArchitecture(runtime: Runtime) {
 
 function updateEnvironment(runtime: Runtime, room: Room, mode: ViewMode) {
   const architectural = room.renderQuality === 'hyperrealistic';
-  const detailed = room.renderQuality !== 'standard';
+  const detailed = room.renderQuality !== 'standard' || room.furniture.some(item => item.material === 'metal');
   const day = room.sun.enabled ? Math.max(0, Math.sin((room.sun.hour - 6) / 12 * Math.PI)) : 0;
   const bounce = daylightFactor(day, room.openings.reduce((area, opening) => area + opening.width * opening.height, 0), polygonArea(room.vertices));
   const lampLumens = room.lights.filter(light => light.enabled).reduce((sum, light) => sum + light.lumens, 0);
@@ -293,16 +293,16 @@ function addStoredFurniture(parent: THREE.Group, item: FurnitureItem, quality: R
   group.userData.selection = { kind: 'furniture', id: item.id } satisfies Selection;
   parent.add(group);
   const w = item.width, d = item.depth, h = item.height;
-  const wood = createWoodMaterial('#b8a084', quality);
-  const face = createWoodMaterial('#d0bea3', quality);
+  const body = createFurnitureMaterial(item.color ?? FURNITURE_COLORS[item.type], item.material ?? 'wood', quality);
+  const face = item.color || item.type === 'bed' ? body : createFurnitureMaterial('#d0bea3', item.material ?? 'wood', quality);
   const handles = new THREE.MeshStandardMaterial({ color: '#626559', metalness: 0.65, roughness: 0.35 });
   const ivory = quality === 'hyperrealistic' ? createFabricMaterial('#eee8df', quality) : new THREE.MeshStandardMaterial({ color: '#f1ebdf', roughness: 1 });
   if (item.type === 'bed' && quality === 'hyperrealistic') {
     ivory.side = THREE.DoubleSide;
     const linen = createFabricMaterial('#ccc1b1', quality);
-    box(group, [w, h, d * 0.05], [0, h / 2, -d * 0.475], wood, true);
+    box(group, [w, h, d * 0.05], [0, h / 2, -d * 0.475], body, true);
     box(group, [w * 0.91, h * 0.61, d * 0.048], [0, h * 0.675, -d * 0.432], linen, true);
-    box(group, [w * 0.96, h * 0.18, d * 0.94], [0, h * 0.26, d * 0.02], wood, true);
+    box(group, [w * 0.96, h * 0.18, d * 0.94], [0, h * 0.26, d * 0.02], body, true);
     box(group, [w * 0.92, h * 0.23, d * 0.90], [0, h * 0.455, d * 0.025], ivory, true);
     const duvet = new THREE.Mesh(createDuvetGeometry(w, d, h), ivory);
     duvet.castShadow = duvet.receiveShadow = true;
@@ -320,18 +320,18 @@ function addStoredFurniture(parent: THREE.Group, item: FurnitureItem, quality: R
       cushion.castShadow = cushion.receiveShadow = true;
       group.add(cushion);
     }
-    for (const x of [-w * 0.4, w * 0.4]) for (const z of [-d * 0.4, d * 0.4]) box(group, [w * 0.055, h * 0.17, d * 0.045], [x, h * 0.085, z], wood);
+    for (const x of [-w * 0.4, w * 0.4]) for (const z of [-d * 0.4, d * 0.4]) box(group, [w * 0.055, h * 0.17, d * 0.045], [x, h * 0.085, z], body);
   } else if (item.type === 'bed') {
-    box(group, [w, h, d * 0.05], [0, h / 2, -d * 0.475], wood, true);
-    box(group, [w * 0.96, h * 0.18, d * 0.94], [0, h * 0.24, d * 0.02], wood, true);
+    box(group, [w, h, d * 0.05], [0, h / 2, -d * 0.475], body, true);
+    box(group, [w * 0.96, h * 0.18, d * 0.94], [0, h * 0.24, d * 0.02], body, true);
     box(group, [w * 0.91, h * 0.20, d * 0.9], [0, h * 0.43, d * 0.025], ivory, true);
     const blanket = new THREE.MeshStandardMaterial({ color: '#aab59c', roughness: 1 });
     box(group, [w * 0.92, h * 0.035, d * 0.63], [0, h * 0.545, d * 0.15], blanket, true);
     const columns = w < 1.3 ? 1 : 2;
     for (let i = 0; i < columns; i++) box(group, [w * 0.74 / columns, h * 0.09, d * 0.21], [columns === 1 ? 0 : (i - 0.5) * w * 0.45, h * 0.56, -d * 0.285], ivory, true);
-    for (const x of [-w * 0.4, w * 0.4]) for (const z of [-d * 0.4, d * 0.4]) box(group, [w * 0.055, h * 0.16, d * 0.045], [x, h * 0.08, z], wood);
+    for (const x of [-w * 0.4, w * 0.4]) for (const z of [-d * 0.4, d * 0.4]) box(group, [w * 0.055, h * 0.16, d * 0.045], [x, h * 0.08, z], body);
   } else if (item.type === 'wardrobe') {
-    box(group, [w, h, d * 0.84], [0, h / 2, -d * 0.08], wood, true);
+    box(group, [w, h, d * 0.84], [0, h / 2, -d * 0.08], body, true);
     for (const x of [-w * 0.24, w * 0.24]) {
       box(group, [w * 0.46, h * 0.71, d * 0.12], [x, h * 0.615, d * 0.405], face, true);
       box(group, [w * 0.018, h * 0.12, d * 0.03], [x < 0 ? -w * 0.055 : w * 0.055, h * 0.58, d * 0.483], handles, true);
@@ -342,23 +342,23 @@ function addStoredFurniture(parent: THREE.Group, item: FurnitureItem, quality: R
     }
   } else if (item.type === 'vanity') {
     box(group, [w, h * 0.045, d], [0, h * 0.475, 0], face, true);
-    for (const x of [-w * 0.43, w * 0.43]) for (const z of [-d * 0.38, d * 0.38]) box(group, [w * 0.055, h * 0.45, d * 0.07], [x, h * 0.225, z], wood);
-    box(group, [w * 0.3, h * 0.39, d * 0.82], [-w * 0.31, h * 0.25, -d * 0.075], wood, true);
+    for (const x of [-w * 0.43, w * 0.43]) for (const z of [-d * 0.38, d * 0.38]) box(group, [w * 0.055, h * 0.45, d * 0.07], [x, h * 0.225, z], body);
+    box(group, [w * 0.3, h * 0.39, d * 0.82], [-w * 0.31, h * 0.25, -d * 0.075], body, true);
     for (const y of [h * 0.17, h * 0.34]) {
       box(group, [w * 0.28, h * 0.15, d * 0.04], [-w * 0.31, y, d * 0.43], face, true);
       box(group, [w * 0.10, h * 0.009, d * 0.025], [-w * 0.31, y, d * 0.475], handles, true);
     }
-    box(group, [w * 0.73, h * 0.46, d * 0.075], [0, h * 0.75, -d * 0.425], wood, true);
+    box(group, [w * 0.73, h * 0.46, d * 0.075], [0, h * 0.75, -d * 0.425], body, true);
     const mirror = box(group, [w * 0.65, h * 0.4, d * 0.018], [0, h * 0.75, -d * 0.378], quality === 'hyperrealistic' ? new THREE.MeshPhysicalNodeMaterial({ color: '#e5ecec', metalness: 1, roughness: 0.06 }) : new THREE.MeshBasicMaterial({ color: '#c1d0d0' }), true);
     mirror.castShadow = false;
   } else {
-    box(group, [w, h * 0.78, d * 0.84], [0, h * 0.51, -d * 0.08], wood, true);
+    box(group, [w, h * 0.78, d * 0.84], [0, h * 0.51, -d * 0.08], body, true);
     box(group, [w, h * 0.07, d], [0, h * 0.965, 0], face, true);
     for (const y of [h * 0.32, h * 0.69]) {
       box(group, [w * 0.92, h * 0.32, d * 0.10], [0, y, d * 0.425], face, true);
       box(group, [w * 0.21, h * 0.02, d * 0.025], [0, y, d * 0.487], handles, true);
     }
-    for (const x of [-w * 0.37, w * 0.37]) for (const z of [-d * 0.36, d * 0.36]) box(group, [w * 0.07, h * 0.14, d * 0.07], [x, h * 0.07, z], wood);
+    for (const x of [-w * 0.37, w * 0.37]) for (const z of [-d * 0.36, d * 0.36]) box(group, [w * 0.07, h * 0.14, d * 0.07], [x, h * 0.07, z], body);
   }
   if (import.meta.env.DEV) {
     group.updateWorldMatrix(true, true);
@@ -604,7 +604,7 @@ function buildRoom(runtime: Runtime, room: Room, furniture: boolean) {
   runtime.builtRoom = room;
   runtime.structure = structureOf(room, furniture);
   runtime.renderer.setPixelRatio(renderPixelRatio(window.devicePixelRatio, room.renderQuality, highResolution));
-  if (detailed && !runtime.environment) {
+  if ((detailed || room.furniture.some(item => item.material === 'metal')) && !runtime.environment) {
     const environmentScene = new RoomEnvironment();
     const generator = new THREE.PMREMGenerator(runtime.renderer);
     try { runtime.environment = generator.fromScene(environmentScene, 0.04, 0.1, 100, { size: 128 }); }

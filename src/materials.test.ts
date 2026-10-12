@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as THREE from 'three/webgpu';
-import { createCeilingMaterial, createFabricMaterial, createFloorMaterial, createWallMaterial, createWoodMaterial, disposeArchitecturalTextures } from './materials';
+import { createCeilingMaterial, createFabricMaterial, createFloorMaterial, createFurnitureMaterial, createWallMaterial, createWoodMaterial, disposeArchitecturalTextures } from './materials';
 import { createDefaultRoom } from './model';
 import type { FloorFinish } from './types';
 
@@ -85,4 +85,32 @@ test('architectural materials use photographed PBR maps with custom tint and sha
   const rebuilt = createWoodMaterial('#876543', 'hyperrealistic');
   assert.notEqual(rebuilt.map, wood.map);
   rebuilt.dispose(); disposeArchitecturalTextures();
+});
+
+test('furniture wood, plastic and metal preserve HEX and physical response in every quality mode', () => {
+  let disposed = 0;
+  for (const quality of ['standard', 'realistic', 'hyperrealistic'] as const) {
+    for (const surface of ['wood', 'plastic', 'metal'] as const) {
+      const material = createFurnitureMaterial('#e14c35', surface, quality);
+      assert.equal(material.color.getHexString(), 'e14c35');
+      assert.equal(material.lights, true);
+      assert.equal(material.metalness, surface === 'metal' ? 1 : 0);
+      assert.ok(material.roughness > 0 && material.roughness <= 1);
+      if (surface === 'wood') {
+        assert.equal(Boolean(material.map), quality === 'hyperrealistic');
+        if (quality === 'hyperrealistic') assert.equal(material.map!.name, '/materials/wood/color.jpg');
+      } else {
+        assert.ok(material instanceof THREE.MeshPhysicalNodeMaterial);
+        assert.equal(material.map, null); assert.equal(material.normalMap, null);
+        assert.equal(Boolean(material.normalNode), quality !== 'standard');
+        assert.equal(Boolean(material.roughnessNode), quality !== 'standard');
+        if (surface === 'plastic') assert.ok(material.clearcoat > 0);
+        else assert.equal(material.clearcoat, 0);
+      }
+      material.addEventListener('dispose', () => disposed++);
+      material.dispose();
+    }
+  }
+  assert.equal(disposed, 9);
+  disposeArchitecturalTextures();
 });

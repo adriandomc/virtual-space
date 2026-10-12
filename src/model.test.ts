@@ -139,6 +139,39 @@ test('añade los cuatro tamaños mexicanos de cama con dimensiones físicas', ()
   }
 });
 
+test('conserva estilos de muebles y omite los campos ausentes de proyectos anteriores', () => {
+  for (const type of ['bed', 'wardrobe', 'vanity', 'nightstand'] as const) {
+    const room = addFurniture(createDefaultRoom(), type);
+    const legacy = validateRoom(JSON.parse(JSON.stringify(room))).furniture[0];
+    assert.equal('material' in legacy, false);
+    assert.equal('color' in legacy, false);
+    for (const material of ['wood', 'plastic', 'metal'] as const) {
+      const item = { ...legacy, material, color: '#A5B6C7' };
+      const styled = validateRoom({ ...room, furniture: [item] });
+      assert.deepEqual(styled.furniture[0], item);
+      const variants = [
+        fitFurniture(styled, { ...item, x: 10 }),
+        fitRoom(styled).furniture[0],
+        resizeRoom(styled, 6, 5).furniture[0],
+        moveSceneItem(styled, { kind: 'furniture', id: item.id }, { x: 0, z: 0, rotation: 15 }).furniture[0],
+      ];
+      if (type === 'bed') variants.push(validateRoom({ ...styled, furniture: [{ ...item, bedSize: 'king', width: BED_SIZES.king.width, depth: BED_SIZES.king.depth }] }).furniture[0]);
+      for (const changed of variants) {
+        assert.equal(changed.material, material);
+        assert.equal(changed.color, item.color);
+      }
+    }
+    for (const patch of [{ material: 'metal' }, { color: '#abcdef' }]) assert.deepEqual(validateRoom({ ...room, furniture: [{ ...legacy, ...patch }] }).furniture[0], { ...legacy, ...patch });
+  }
+});
+
+test('rechaza materiales y colores de mueble inválidos sin convertir campos ausentes', () => {
+  const room = addFurniture(createDefaultRoom(), 'nightstand'), item = room.furniture[0];
+  for (const material of ['glass', 'constructor', '', null, 1, false, {}]) assert.throws(() => validateRoom({ ...room, furniture: [{ ...item, material }] }), /material de mueble/);
+  for (const color of ['red', '#abc', '#abcdef00', '', null, 1, false, {}]) assert.throws(() => validateRoom({ ...room, furniture: [{ ...item, color }] }), /Color de mueble/);
+  assert.deepEqual(validateRoom(room).furniture[0], item);
+});
+
 test('añade ropero, tocador y buró sin apilarlos sobre la cama', () => {
   let room = addFurniture(createDefaultRoom(), 'bed');
   for (const type of ['wardrobe', 'vanity', 'nightstand'] as const) room = addFurniture(room, type);

@@ -22,10 +22,13 @@ export type RoomLight = {
   enabled: boolean;
 };
 export type BedSize = 'single' | 'double' | 'queen' | 'king';
+export type FurnitureMaterial = 'wood' | 'plastic' | 'metal';
 export type FurnitureItem = {
   id: string;
   type: 'bed' | 'wardrobe' | 'vanity' | 'nightstand';
   bedSize?: BedSize;
+  material?: FurnitureMaterial;
+  color?: string;
   x: number;
   z: number;
   width: number;

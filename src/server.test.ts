@@ -29,9 +29,9 @@ test('el servidor persiste proyectos y croquis con permisos, revisiones y rutas 
   let base = await listen(server);
   const id = randomUUID(), editKey = randomBytes(32).toString('hex'), room = createDefaultRoom();
   const furniture = [
-    { id: 'bed-queen', type: 'bed', bedSize: 'queen', x: -1.3, z: -0.7, width: 1.5, depth: 1.9, height: 0.55, rotation: 0 },
-    { id: 'wardrobe', type: 'wardrobe', x: 1.65, z: -1.1, width: 0.6, depth: 1.2, height: 2.1, rotation: 90 },
-    { id: 'vanity', type: 'vanity', x: 1.3, z: 0.8, width: 1.1, depth: 0.55, height: 1.3, rotation: 0 },
+    { id: 'bed-queen', type: 'bed', bedSize: 'queen', material: 'wood', color: '#6b4935', x: -1.3, z: -0.7, width: 1.5, depth: 1.9, height: 0.55, rotation: 0 },
+    { id: 'wardrobe', type: 'wardrobe', material: 'metal', color: '#a2b1bb', x: 1.65, z: -1.1, width: 0.6, depth: 1.2, height: 2.1, rotation: 90 },
+    { id: 'vanity', type: 'vanity', material: 'plastic', color: '#c8b7cb', x: 1.3, z: 0.8, width: 1.1, depth: 0.55, height: 1.3, rotation: 0 },
     { id: 'nightstand', type: 'nightstand', x: 0, z: -1.1, width: 0.5, depth: 0.5, height: 0.6, rotation: 0 },
   ];
   const freeProjectId = randomUUID();
@@ -107,6 +107,8 @@ test('el servidor persiste proyectos y croquis con permisos, revisiones y rutas 
         { ...furniture[0], type: 'sofa' }, { ...furniture[0], bedSize: 'california-king' },
         { ...furniture[0], width: -1 }, { ...furniture[0], height: current.height + 1 },
         { ...furniture[0], x: 20 }, { ...furniture[0], rotation: -1 },
+        { ...furniture[0], material: 'glass' }, { ...furniture[0], material: null },
+        { ...furniture[0], color: '#abc' }, { ...furniture[0], color: null },
       ]) assert.equal((await send(path, 'PUT', { room: { ...current, furniture: [item] }, revision: 2 })).status, 400);
       const unchanged = await (await send(path)).json();
       assert.equal(unchanged.revision, 2); assert.deepEqual(unchanged.room.furniture, furniture);
