@@ -4,10 +4,14 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
+import { RectAreaLightTexturesLib } from 'three/addons/lights/RectAreaLightTexturesLib.js';
 import { LoaderCircle } from 'lucide-react';
 import { bounds, furnitureCorners, furnitureWalkable, interiorPoint, interiorWalkPoint, itemWorldPosition, moveSceneItem, pointInPolygon, polygonArea } from './model';
-import { createCeilingMaterial, createFloorMaterial, createWallMaterial, createWoodMaterial } from './materials';
-import { daylightFactor, joystickVector } from './navigation';
+import { createCeilingMaterial, createFabricMaterial, createFloorMaterial, createWallMaterial, createWoodMaterial, disposeArchitecturalTextures } from './materials';
+import { createDuvetGeometry, createPillowGeometry } from './beddingGeometry';
+import { createArchitecturalPostProcessing } from './postProcessing';
+import { daylightFactor, joystickVector, renderPixelRatio } from './navigation';
 import type { FurnitureItem, Point, Room, Selection, ViewMode } from './types';
 import './scene.css';
 
@@ -45,11 +49,61 @@ type Runtime = {
   pendingEdit: boolean;
   lastOpeningBuild: number;
   environment: THREE.RenderTarget | null;
+  architecturalEnvironment: THREE.RenderTarget | null;
+  sky: THREE.DataTexture | null;
+  loadingSky: boolean;
+  disposed: boolean;
+  areaTextures: ReturnType<typeof RectAreaLightTexturesLib.init> | null;
+  postProcessing: ReturnType<typeof createArchitecturalPostProcessing> | null;
+  postFailed: boolean;
+  viewMode: ViewMode;
   builtRoom: Room | null;
   structure: string;
   outlinedKey: string | null;
   walkBlocked: boolean;
 };
+
+function disposeArchitecture(runtime: Runtime) {
+  runtime.disposed = true;
+  runtime.postProcessing?.dispose();
+  runtime.architecturalEnvironment?.dispose();
+  runtime.sky?.dispose();
+  if (runtime.areaTextures) {
+    for (const key of ['LTC_FLOAT_1', 'LTC_FLOAT_2', 'LTC_HALF_1', 'LTC_HALF_2'] as const) runtime.areaTextures[key].dispose();
+  }
+  disposeArchitecturalTextures();
+}
+
+function updateEnvironment(runtime: Runtime, room: Room, mode: ViewMode) {
+  const architectural = room.renderQuality === 'hyperrealistic';
+  const detailed = room.renderQuality !== 'standard';
+  const day = room.sun.enabled ? Math.max(0, Math.sin((room.sun.hour - 6) / 12 * Math.PI)) : 0;
+  const bounce = daylightFactor(day, room.openings.reduce((area, opening) => area + opening.width * opening.height, 0), polygonArea(room.vertices));
+  const lampLumens = room.lights.filter(light => light.enabled).reduce((sum, light) => sum + light.lumens, 0);
+  runtime.scene.environment = architectural ? runtime.architecturalEnvironment?.texture ?? runtime.environment?.texture ?? null : detailed ? runtime.environment?.texture ?? null : null;
+  runtime.scene.environmentIntensity = architectural ? bounce * room.sun.intensity / 3 * 0.18 + Math.min(0.14, lampLumens / 40000) : detailed ? Math.min(0.25, bounce * 0.18 + lampLumens / 20000) : 0;
+  runtime.scene.environmentRotation.y = architectural ? THREE.MathUtils.degToRad(room.sun.azimuth) : 0;
+  runtime.scene.background = architectural && mode === 'walk' && runtime.sky ? runtime.sky : new THREE.Color(architectural ? mode === 'walk' ? '#070b14' : '#e6e2d9' : '#e9ece4');
+  runtime.scene.backgroundIntensity = architectural ? day * room.sun.intensity / 3 : 1;
+  runtime.scene.backgroundRotation.y = runtime.scene.environmentRotation.y;
+  if (architectural && !runtime.loadingSky && !runtime.sky) {
+    runtime.loadingSky = true;
+    void new HDRLoader().loadAsync('/environments/sunset-fairway-1k.hdr').then(async texture => {
+      if (runtime.disposed) { texture.dispose(); return; }
+      texture.mapping = THREE.EquirectangularReflectionMapping;
+      const generator = new THREE.PMREMGenerator(runtime.renderer);
+      try {
+        // r180 implements this method, but its companion type declarations omit it.
+        const environment = await (generator as THREE.PMREMGenerator & { fromEquirectangularAsync(texture: THREE.Texture): Promise<THREE.RenderTarget> }).fromEquirectangularAsync(texture);
+        if (runtime.disposed) { environment.dispose(); texture.dispose(); return; }
+        runtime.architecturalEnvironment = environment;
+        runtime.sky = texture;
+        if (runtime.builtRoom) updateEnvironment(runtime, runtime.builtRoom, runtime.viewMode);
+      } catch (cause) { texture.dispose(); console.warn('Architectural environment:', cause); }
+      finally { generator.dispose(); }
+    }).catch(cause => { if (!runtime.disposed) console.warn('Architectural environment:', cause); });
+  }
+}
 
 const selectionKey = (selection: Selection) => selection.kind === 'wall' ? `wall:${selection.index}` : 'id' in selection ? `${selection.kind}:${selection.id}` : selection.kind;
 const sameSelection = (a: Selection | null, b: Selection | null) => a != null && b != null && selectionKey(a) === selectionKey(b);
@@ -169,7 +223,16 @@ function floorShape(vertices: Point[]) {
 }
 
 function box(group: THREE.Group, size: [number, number, number], at: [number, number, number], material: THREE.Material, rounded = false) {
-  const geometry = rounded ? new RoundedBoxGeometry(...size, 2, Math.min(0.06, ...size.map(value => value / 3))) : new THREE.BoxGeometry(...size);
+  const beveled = group.userData.architectural;
+  const geometry = rounded || beveled ? new RoundedBoxGeometry(...size, beveled ? 3 : 2, Math.min(beveled ? 0.012 : 0.06, ...size.map(value => value / 3))) : new THREE.BoxGeometry(...size);
+  if (beveled) {
+    const position = geometry.getAttribute('position'), normal = geometry.getAttribute('normal'), uv = geometry.getAttribute('uv');
+    for (let i = 0; i < position.count; i++) {
+      const nx = Math.abs(normal.getX(i)), ny = Math.abs(normal.getY(i)), nz = Math.abs(normal.getZ(i));
+      uv.setXY(i, nx > ny && nx > nz ? position.getZ(i) : position.getX(i), ny > nx && ny > nz ? position.getZ(i) : position.getY(i));
+    }
+    if (import.meta.env.DEV) console.assert(Array.from(uv.array).every(Number.isFinite), 'Furniture UV coordinates must be finite');
+  }
   const mesh = new THREE.Mesh(geometry, material);
   mesh.position.set(...at);
   mesh.castShadow = true;
@@ -224,6 +287,7 @@ function addFurniture(group: THREE.Group, room: Room) {
 
 function addStoredFurniture(parent: THREE.Group, item: FurnitureItem, quality: Room['renderQuality']) {
   const group = new THREE.Group();
+  group.userData.architectural = quality === 'hyperrealistic';
   group.position.set(item.x, 0, item.z);
   group.rotation.y = THREE.MathUtils.degToRad(item.rotation);
   group.userData.selection = { kind: 'furniture', id: item.id } satisfies Selection;
@@ -232,8 +296,32 @@ function addStoredFurniture(parent: THREE.Group, item: FurnitureItem, quality: R
   const wood = createWoodMaterial('#b8a084', quality);
   const face = createWoodMaterial('#d0bea3', quality);
   const handles = new THREE.MeshStandardMaterial({ color: '#626559', metalness: 0.65, roughness: 0.35 });
-  const ivory = new THREE.MeshStandardMaterial({ color: '#f1ebdf', roughness: 1 });
-  if (item.type === 'bed') {
+  const ivory = quality === 'hyperrealistic' ? createFabricMaterial('#eee8df', quality) : new THREE.MeshStandardMaterial({ color: '#f1ebdf', roughness: 1 });
+  if (item.type === 'bed' && quality === 'hyperrealistic') {
+    ivory.side = THREE.DoubleSide;
+    const linen = createFabricMaterial('#ccc1b1', quality);
+    box(group, [w, h, d * 0.05], [0, h / 2, -d * 0.475], wood, true);
+    box(group, [w * 0.91, h * 0.61, d * 0.048], [0, h * 0.675, -d * 0.432], linen, true);
+    box(group, [w * 0.96, h * 0.18, d * 0.94], [0, h * 0.26, d * 0.02], wood, true);
+    box(group, [w * 0.92, h * 0.23, d * 0.90], [0, h * 0.455, d * 0.025], ivory, true);
+    const duvet = new THREE.Mesh(createDuvetGeometry(w, d, h), ivory);
+    duvet.castShadow = duvet.receiveShadow = true;
+    group.add(duvet);
+    const columns = w < 1.3 ? 1 : 2;
+    for (let i = 0; i < columns; i++) {
+      const pillow = new THREE.Mesh(createPillowGeometry(w * 0.79 / columns, h * 0.145, d * 0.225), ivory);
+      pillow.position.set(columns === 1 ? 0 : (i - 0.5) * w * 0.45, h * 0.665, -d * 0.27);
+      pillow.rotation.y = (i ? 1 : -1) * 0.05 * Math.min(1, w / d, d / w);
+      pillow.castShadow = pillow.receiveShadow = true;
+      group.add(pillow);
+      const cushion = new THREE.Mesh(createPillowGeometry(w * 0.55 / columns, Math.min(h * 0.145, d * 0.13), d * 0.15), linen);
+      cushion.position.set(pillow.position.x, h * 0.74, -d * 0.375);
+      cushion.rotation.x = -Math.min(0.5, h / d * 0.5);
+      cushion.castShadow = cushion.receiveShadow = true;
+      group.add(cushion);
+    }
+    for (const x of [-w * 0.4, w * 0.4]) for (const z of [-d * 0.4, d * 0.4]) box(group, [w * 0.055, h * 0.17, d * 0.045], [x, h * 0.085, z], wood);
+  } else if (item.type === 'bed') {
     box(group, [w, h, d * 0.05], [0, h / 2, -d * 0.475], wood, true);
     box(group, [w * 0.96, h * 0.18, d * 0.94], [0, h * 0.24, d * 0.02], wood, true);
     box(group, [w * 0.91, h * 0.20, d * 0.9], [0, h * 0.43, d * 0.025], ivory, true);
@@ -261,7 +349,7 @@ function addStoredFurniture(parent: THREE.Group, item: FurnitureItem, quality: R
       box(group, [w * 0.10, h * 0.009, d * 0.025], [-w * 0.31, y, d * 0.475], handles, true);
     }
     box(group, [w * 0.73, h * 0.46, d * 0.075], [0, h * 0.75, -d * 0.425], wood, true);
-    const mirror = box(group, [w * 0.65, h * 0.4, d * 0.018], [0, h * 0.75, -d * 0.378], new THREE.MeshBasicMaterial({ color: '#c1d0d0' }), true);
+    const mirror = box(group, [w * 0.65, h * 0.4, d * 0.018], [0, h * 0.75, -d * 0.378], quality === 'hyperrealistic' ? new THREE.MeshPhysicalNodeMaterial({ color: '#e5ecec', metalness: 1, roughness: 0.06 }) : new THREE.MeshBasicMaterial({ color: '#c1d0d0' }), true);
     mirror.castShadow = false;
   } else {
     box(group, [w, h * 0.78, d * 0.84], [0, h * 0.51, -d * 0.08], wood, true);
@@ -284,6 +372,15 @@ function addStoredFurniture(parent: THREE.Group, item: FurnitureItem, quality: R
 function buildRoom(runtime: Runtime, room: Room, furniture: boolean) {
   disposeContent(runtime.content);
   const group = runtime.content;
+  const architectural = room.renderQuality === 'hyperrealistic';
+  if (!architectural) { runtime.postProcessing?.dispose(); runtime.postProcessing = null; runtime.postFailed = false; }
+  runtime.renderer.shadowMap.type = architectural ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
+  runtime.renderer.toneMapping = architectural ? THREE.AgXToneMapping : THREE.ACESFilmicToneMapping;
+  runtime.renderer.toneMappingExposure = architectural ? 1.45 : 1;
+  if (architectural && !runtime.areaTextures) {
+    runtime.areaTextures = RectAreaLightTexturesLib.init();
+    THREE.RectAreaLightNode.setLTC(runtime.areaTextures);
+  }
   const b = bounds(room.vertices);
   const cx = (b.minX + b.maxX) / 2;
   const cz = (b.minZ + b.maxZ) / 2;
@@ -303,9 +400,9 @@ function buildRoom(runtime: Runtime, room: Room, furniture: boolean) {
   plinth.position.y = -0.18;
   plinth.receiveShadow = true;
   group.add(plinth);
-  const trim = new THREE.MeshStandardMaterial({ color: '#efece3', roughness: 0.8 });
+  const trim = architectural ? new THREE.MeshPhysicalNodeMaterial({ color: '#ebe7df', roughness: 0.45, clearcoat: 0.12, clearcoatRoughness: 0.5 }) : new THREE.MeshStandardMaterial({ color: '#efece3', roughness: 0.8 });
   const shadowMaterial = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
-  const glassMaterial = new THREE.MeshStandardMaterial({ color: '#acd6dc', transparent: true, opacity: 0.12, roughness: 0.15, side: THREE.DoubleSide, depthWrite: false });
+  const glassMaterial = architectural ? new THREE.MeshPhysicalNodeMaterial({ color: '#ffffff', transmission: 0.98, thickness: 0.004, ior: 1.5, roughness: 0.025, metalness: 0, transparent: true, side: THREE.DoubleSide, depthWrite: false }) : new THREE.MeshStandardMaterial({ color: '#acd6dc', transparent: true, opacity: 0.12, roughness: 0.15, side: THREE.DoubleSide, depthWrite: false });
   for (let index = 0; index < room.vertices.length; index++) {
     const start = room.vertices[index];
     const end = room.vertices[(index + 1) % room.vertices.length];
@@ -338,6 +435,7 @@ function buildRoom(runtime: Runtime, room: Room, furniture: boolean) {
     geometry.translate(0, 0, -room.thickness / 2);
     const material = createWallMaterial(room.wallColors[index], room.renderQuality);
     const wallGroup = new THREE.Group();
+    wallGroup.userData.architectural = architectural;
     wallGroup.position.set(start.x, 0, start.z);
     wallGroup.rotation.y = -Math.atan2(dz, dx);
     wallGroup.userData.selection = { kind: 'wall', index } satisfies Selection;
@@ -370,6 +468,7 @@ function buildRoom(runtime: Runtime, room: Room, furniture: boolean) {
       const frame = 0.045;
       const x = opening.offset + opening.width / 2;
       const openingGroup = new THREE.Group();
+      openingGroup.userData.architectural = architectural;
       openingGroup.position.copy(wallGroup.position);
       openingGroup.rotation.copy(wallGroup.rotation);
       openingGroup.userData.selection = { kind: 'opening', id: opening.id } satisfies Selection;
@@ -390,10 +489,11 @@ function buildRoom(runtime: Runtime, room: Room, furniture: boolean) {
         hitPlane.position.set(x, opening.height / 2, 0);
         openingGroup.add(hitPlane);
         const hinge = new THREE.Group();
+        hinge.userData.architectural = architectural;
         hinge.position.set(opening.offset + frame, 0, innerSide * room.thickness / 2);
         hinge.rotation.y = innerSide * -Math.PI * 0.4;
         openingGroup.add(hinge);
-        const leaf = box(hinge, [opening.width - frame * 2, opening.height - frame, 0.04], [(opening.width - frame * 2) / 2, (opening.height - frame) / 2, 0], new THREE.MeshStandardMaterial({ color: '#c7b297', roughness: 0.8 }));
+        const leaf = box(hinge, [opening.width - frame * 2, opening.height - frame, 0.04], [(opening.width - frame * 2) / 2, (opening.height - frame) / 2, 0], architectural ? createWoodMaterial('#c7b297', room.renderQuality) : new THREE.MeshStandardMaterial({ color: '#c7b297', roughness: 0.8 }));
         leaf.castShadow = true;
         box(hinge, [0.07, 0.025, 0.075], [opening.width - 0.15, 0.98, innerSide * 0.045], new THREE.MeshStandardMaterial({ color: '#7c7b6c', metalness: 0.75, roughness: 0.3 }));
       }
@@ -418,7 +518,19 @@ function buildRoom(runtime: Runtime, room: Room, furniture: boolean) {
   const day = room.sun.enabled ? Math.max(0, Math.sin((room.sun.hour - 6) / 12 * Math.PI)) : 0;
   const daylightBounce = daylightFactor(day, room.openings.reduce((area, opening) => area + opening.width * opening.height, 0), polygonArea(room.vertices));
   // shortcut: hemisphere approximates diffuse daylight bounce; use global illumination for calibrated lighting accuracy.
-  group.add(new THREE.HemisphereLight('#f5f7ff', '#d3ceba', 0.035 + daylightBounce * 3.5));
+  group.add(new THREE.HemisphereLight(architectural ? '#eef2ff' : '#f5f7ff', '#d3ceba', architectural ? daylightBounce * 0.14 : 0.035 + daylightBounce * 3.5));
+  if (architectural && day > 0) {
+    // shortcut: window area lights approximate sky bounce without occlusion; replace with traced GI for calibrated transport.
+    for (const opening of room.openings) {
+      const start = room.vertices[opening.wall], end = room.vertices[(opening.wall + 1) % room.vertices.length];
+      const t = (opening.offset + opening.width / 2) / Math.hypot(end.x - start.x, end.z - start.z);
+      const inward = runtime.walls[opening.wall].inward;
+      const light = new THREE.RectAreaLight(kelvinColor(5500), day * room.sun.intensity * 3.2, opening.width, opening.height);
+      light.position.set(start.x + (end.x - start.x) * t + inward.x * (room.thickness / 2 + 0.01), opening.sill + opening.height / 2, start.z + (end.z - start.z) * t + inward.z * (room.thickness / 2 + 0.01));
+      light.lookAt(light.position.x + inward.x, light.position.y, light.position.z + inward.z);
+      group.add(light);
+    }
+  }
   const sun = new THREE.DirectionalLight(kelvinColor(4500 + day * 2000), room.sun.enabled ? room.sun.intensity * day : 0);
   const azimuth = THREE.MathUtils.degToRad(room.sun.azimuth + (room.sun.hour - 12) * 12);
   const elevation = day * Math.PI * 0.25;
@@ -426,7 +538,7 @@ function buildRoom(runtime: Runtime, room: Room, furniture: boolean) {
   sun.position.set(cx + Math.sin(azimuth) * Math.cos(elevation) * distance, Math.sin(elevation) * distance, cz - Math.cos(azimuth) * Math.cos(elevation) * distance);
   sun.target.position.set(cx, 0, cz);
   sun.castShadow = day > 0;
-  const detailed = room.renderQuality === 'realistic';
+  const detailed = room.renderQuality !== 'standard';
   const highResolution = detailed && !window.matchMedia('(pointer: coarse)').matches && runtime.renderer.domElement.clientWidth > 700;
   const shadowSize = highResolution ? 4096 : 2048;
   sun.shadow.mapSize.set(shadowSize, shadowSize);
@@ -436,7 +548,8 @@ function buildRoom(runtime: Runtime, room: Room, furniture: boolean) {
   sun.shadow.camera.far = distance + span * 3;
   sun.shadow.camera.layers.enable(1);
   sun.shadow.bias = -0.0001;
-  sun.shadow.normalBias = 0.018;
+  sun.shadow.normalBias = architectural ? 0.007 : 0.018;
+  sun.shadow.radius = architectural ? 2.5 : 1;
   sun.shadow.autoUpdate = false;
   sun.shadow.needsUpdate = true;
   group.add(sun, sun.target);
@@ -447,6 +560,8 @@ function buildRoom(runtime: Runtime, room: Room, furniture: boolean) {
     runtime.objects.set(`light:${light.id}`, lightGroup);
     group.add(lightGroup);
     const temperature = kelvinColor(light.temperature);
+    // shortcut: diffuse lamp bounce is approximated; use ray tracing for occlusion-aware light transport.
+    if (architectural && light.enabled) lightGroup.add(new THREE.HemisphereLight(temperature, temperature, Math.min(0.25, light.lumens / (polygonArea(room.vertices) * 180))));
     const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.075, 20, 12), new THREE.MeshStandardMaterial({ color: light.enabled ? temperature : '#c0bcae', emissive: temperature, emissiveIntensity: light.enabled ? 3 : 0, roughness: 0.45 }));
     lightGroup.add(bulb);
     const hitSphere = new THREE.Mesh(new THREE.SphereGeometry(0.15, 10, 8), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }));
@@ -466,7 +581,8 @@ function buildRoom(runtime: Runtime, room: Room, furniture: boolean) {
     point.shadow.camera.far = span * 3;
     point.shadow.camera.layers.enable(1);
     point.shadow.bias = -0.0002;
-    point.shadow.normalBias = 0.02;
+    point.shadow.normalBias = architectural ? 0.008 : 0.02;
+    point.shadow.radius = architectural ? 2 : 1;
     point.shadow.autoUpdate = false;
     point.shadow.needsUpdate = true;
     lightGroup.add(point);
@@ -477,15 +593,17 @@ function buildRoom(runtime: Runtime, room: Room, furniture: boolean) {
   ground.rotation.x = -Math.PI / 2;
   ground.position.set(cx, -0.19, cz);
   ground.receiveShadow = true;
+  ground.userData.exterior = architectural;
   group.add(ground);
   const grid = new THREE.GridHelper(Math.max(24, Math.ceil(span * 3)), Math.max(24, Math.ceil(span * 3)), '#cdd4c8', '#dce1d7');
   grid.position.set(cx, -0.185, cz);
   (grid.material as THREE.Material).transparent = true;
-  (grid.material as THREE.Material).opacity = 0.28;
+  (grid.material as THREE.Material).opacity = architectural ? 0.07 : 0.28;
+  grid.userData.exterior = architectural;
   group.add(grid);
   runtime.builtRoom = room;
   runtime.structure = structureOf(room, furniture);
-  runtime.renderer.setPixelRatio(Math.min(window.devicePixelRatio, highResolution ? 2 : 1.5));
+  runtime.renderer.setPixelRatio(renderPixelRatio(window.devicePixelRatio, room.renderQuality, highResolution));
   if (detailed && !runtime.environment) {
     const environmentScene = new RoomEnvironment();
     const generator = new THREE.PMREMGenerator(runtime.renderer);
@@ -493,8 +611,7 @@ function buildRoom(runtime: Runtime, room: Room, furniture: boolean) {
     catch { runtime.environment = null; }
     finally { environmentScene.dispose(); generator.dispose(); }
   }
-  runtime.scene.environment = detailed ? runtime.environment?.texture ?? null : null;
-  runtime.scene.environmentIntensity = detailed ? Math.min(0.25, daylightBounce * 0.18 + room.lights.filter(light => light.enabled).reduce((sum, light) => sum + light.lumens, 0) / 20000) : 0;
+  updateEnvironment(runtime, room, runtime.viewMode);
 }
 
 function fitOrbitCamera(runtime: Runtime, room: Room, preserveZoom = false) {
@@ -511,6 +628,8 @@ function fitOrbitCamera(runtime: Runtime, room: Room, preserveZoom = false) {
 }
 
 function resetCamera(runtime: Runtime, room: Room, mode: ViewMode) {
+  runtime.viewMode = mode;
+  updateEnvironment(runtime, room, mode);
   const b = bounds(room.vertices);
   const cx = (b.minX + b.maxX) / 2;
   const cz = (b.minZ + b.maxZ) / 2;
@@ -597,7 +716,7 @@ export default function RoomScene(props: Props) {
         controls.enablePan = true;
         const content = new THREE.Group();
         scene.add(content);
-        const active: Runtime = { renderer, scene, camera, controls, content, walls: [], ceiling: null, yaw: 0, pitch: 0, fittedDistance: 0, objects: new Map(), selectionBox: null, walkBlocked: false, transform, proxy, manipulating: null, directDragging: false, pendingEdit: false, lastOpeningBuild: 0, environment: null, builtRoom: null, structure: '', outlinedKey: null };
+        const active: Runtime = { renderer, scene, camera, controls, content, walls: [], ceiling: null, yaw: 0, pitch: 0, fittedDistance: 0, objects: new Map(), selectionBox: null, walkBlocked: false, transform, proxy, manipulating: null, directDragging: false, pendingEdit: false, lastOpeningBuild: 0, environment: null, architecturalEnvironment: null, sky: null, loadingSky: false, disposed: false, areaTextures: null, postProcessing: null, postFailed: false, viewMode: current.current.mode, builtRoom: null, structure: '', outlinedKey: null };
         runtime.current = active;
         buildRoom(active, current.current.room, current.current.showFurniture);
         resetCamera(active, current.current.room, current.current.mode);
@@ -606,14 +725,22 @@ export default function RoomScene(props: Props) {
         const resize = () => {
           const width = Math.max(1, mount.clientWidth);
           const height = Math.max(1, mount.clientHeight);
-          const highResolution = current.current.room.renderQuality === 'realistic' && !window.matchMedia('(pointer: coarse)').matches && width > 700;
-          renderer?.setPixelRatio(Math.min(window.devicePixelRatio, highResolution ? 2 : 1.5));
-          renderer?.setSize(width, height);
+          const detailed = current.current.room.renderQuality !== 'standard';
+          const highResolution = detailed && !window.matchMedia('(pointer: coarse)').matches && width > 700;
+          const ratio = renderPixelRatio(window.devicePixelRatio, current.current.room.renderQuality, highResolution);
+          const size = active.renderer.getSize(new THREE.Vector2());
+          if (size.x !== width || size.y !== height || active.renderer.getPixelRatio() !== ratio) {
+            active.postProcessing?.dispose(); active.postProcessing = null;
+            active.renderer.setPixelRatio(ratio); active.renderer.setSize(width, height);
+          }
+          let shadowProfileChanged = false;
           content.traverse(object => {
             if (!(object instanceof THREE.DirectionalLight || object instanceof THREE.PointLight)) return;
-            const size = object instanceof THREE.DirectionalLight ? highResolution ? 4096 : 2048 : current.current.room.renderQuality === 'realistic' && width > 700 ? 1024 : 512;
-            if (object.shadow.mapSize.x !== size) { object.shadow.mapSize.set(size, size); object.shadow.needsUpdate = true; }
+            const size = object instanceof THREE.DirectionalLight ? highResolution ? 4096 : 2048 : detailed && width > 700 ? 1024 : 512;
+            if (object.shadow.mapSize.x !== size) { object.shadow.mapSize.set(size, size); object.shadow.needsUpdate = true; shadowProfileChanged = true; }
           });
+          // Recreate shadow nodes when switching profiles so GPU bindings do not retain the old maps.
+          if (shadowProfileChanged && current.current.room.renderQuality === 'hyperrealistic') { buildRoom(active, current.current.room, current.current.showFurniture); updateSelection(active, current.current); }
           const aspect = width / height;
           if (Math.abs(camera.aspect - aspect) > 0.001) {
             camera.aspect = aspect;
@@ -796,7 +923,21 @@ export default function RoomScene(props: Props) {
           for (const wall of active.walls) wall.group.visible = state.mode === 'walk' || state.selection?.kind === 'wall' && state.selection.index === wall.index || (camera.position.x - wall.midpoint.x) * wall.inward.x + (camera.position.z - wall.midpoint.z) * wall.inward.z > -0.03;
           for (const [key, item] of active.objects) if (key.startsWith('opening:')) item.visible = state.mode === 'walk' || state.selection?.kind === 'opening' && key === selectionKey(state.selection) || active.walls[item.userData.wall]?.group.visible === true;
           if (active.ceiling) active.ceiling.layers.set(state.mode === 'walk' || state.selection?.kind === 'ceiling' ? 0 : 1);
-          try { active.renderer.render(scene, camera); }
+          for (const object of active.content.children) if (object.userData.exterior) object.layers.set(state.mode === 'walk' ? 1 : 0);
+          try {
+            if (state.room.renderQuality === 'hyperrealistic' && !active.postProcessing && !active.postFailed) {
+              try { active.postProcessing = createArchitecturalPostProcessing(active.renderer, scene, camera); }
+              catch (cause) { active.postFailed = true; console.warn('Architectural effects:', cause); }
+            }
+            if (active.postProcessing) {
+              try { active.postProcessing.render(); }
+              catch (cause) {
+                console.warn('Architectural effects:', cause);
+                active.postProcessing.dispose(); active.postProcessing = null; active.postFailed = true;
+                active.renderer.render(scene, camera);
+              }
+            } else active.renderer.render(scene, camera);
+          }
           catch (cause) {
             console.error('Room renderer:', cause);
             void active.renderer.setAnimationLoop(null);
@@ -817,6 +958,7 @@ export default function RoomScene(props: Props) {
           active.environment?.dispose();
           if (active.selectionBox) { active.selectionBox.geometry.dispose(); (active.selectionBox.material as THREE.Material).dispose(); }
           disposeContent(active.content);
+          disposeArchitecture(active);
           runtime.current = null;
         }
         try { renderer?.dispose(); } catch { /* a rejected backend might not be initialized */ }
@@ -839,6 +981,7 @@ export default function RoomScene(props: Props) {
         active.environment?.dispose();
         if (active.selectionBox) { active.selectionBox.geometry.dispose(); (active.selectionBox.material as THREE.Material).dispose(); }
         disposeContent(active.content);
+        disposeArchitecture(active);
         active.renderer.dispose();
         active.renderer.domElement.remove();
         runtime.current = null;

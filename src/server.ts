@@ -159,10 +159,15 @@ export function createServer({ dataDir = process.env.DATA_DIR ?? './data', stati
         if (!inside(realpathSync(file))) throw new HttpError(403, 'La dirección no está permitida.');
         let data = readFileSync(file);
         const mime = MIME[extname(file).toLowerCase()] ?? 'application/octet-stream';
+        const cacheControl = relative(root, file).startsWith('assets' + sep) ? 'public, max-age=31536000, immutable' : 'no-cache';
+        const etag = 'W/"' + createHash('sha256').update(data).digest('hex') + '"';
+        if (request.headers['if-none-match'] === etag) {
+          response.writeHead(304, { ETag: etag, 'Cache-Control': cacheControl, Vary: 'Accept-Encoding' }); response.end(); return;
+        }
         const acceptsGzip = request.headers['accept-encoding']?.split(',').some(value => /^gzip(?:;|$)/i.test(value.trim()) && !/;\s*q=0(?:\.0*)?(?:;|$)/i.test(value)) ?? false;
         const compress = data.length > 1024 && acceptsGzip && (mime.startsWith('text/') || mime === 'image/svg+xml' || mime.startsWith('application/json'));
         if (compress) data = gzipSync(data);
-        response.writeHead(200, { 'Content-Type': mime, 'Content-Length': data.length, ...(compress ? { 'Content-Encoding': 'gzip' } : {}), Vary: 'Accept-Encoding', 'Cache-Control': relative(root, file).startsWith('assets' + sep) ? 'public, max-age=31536000, immutable' : 'no-cache', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' });
+        response.writeHead(200, { 'Content-Type': mime, 'Content-Length': data.length, ...(compress ? { 'Content-Encoding': 'gzip' } : {}), ETag: etag, Vary: 'Accept-Encoding', 'Cache-Control': cacheControl, 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' });
         response.end(method === 'HEAD' ? undefined : data);
       } catch (error) {
         if (error instanceof HttpError) throw error;

@@ -64,7 +64,7 @@ test('el servidor persiste proyectos y croquis con permisos, revisiones y rutas 
       assert.equal((await fetch(base + path, { headers: { Authorization: 'Bearer ' + 'b'.repeat(64) } }).then(r => r.json())).canEdit, false);
     });
     await t.test('guarda cambios completos e impide sobrescribir una revisión posterior', async () => {
-      const changed = { ...room, name: 'Cuarto compartido', furniture, showFurniture: false, ceilingColor: '#c8d7e2', floorFinish: 'tile-brick', renderQuality: 'realistic', editing: { snap: true, step: 0.25, bounds: true }, sun: { ...room.sun, hour: 9 } };
+      const changed = { ...room, name: 'Cuarto compartido', furniture, showFurniture: false, ceilingColor: '#c8d7e2', floorFinish: 'tile-brick', renderQuality: 'hyperrealistic', editing: { snap: true, step: 0.25, bounds: true }, sun: { ...room.sun, hour: 9 } };
       const saved = await send(path, 'PUT', { room: changed, revision: 1 });
       assert.equal(saved.status, 200); assert.equal((await saved.json()).revision, 2);
       const repeated = await send(path, 'PUT', { room: changed, revision: 1 });
@@ -148,7 +148,7 @@ test('el servidor persiste proyectos y croquis con permisos, revisiones y rutas 
       assert.equal(restored.room.name, 'Cuarto compartido'); assert.equal(restored.room.showFurniture, false); assert.equal(restored.canEdit, true); assert.equal(restored.revision, 2);
       assert.deepEqual(restored.room.furniture, furniture);
       assert.deepEqual((await (await send(path, 'GET', undefined, false)).json()).room.furniture, furniture);
-      assert.equal(restored.room.ceilingColor, '#c8d7e2'); assert.equal(restored.room.floorFinish, 'tile-brick'); assert.equal(restored.room.renderQuality, 'realistic');
+      assert.equal(restored.room.ceilingColor, '#c8d7e2'); assert.equal(restored.room.floorFinish, 'tile-brick'); assert.equal(restored.room.renderQuality, 'hyperrealistic');
       assert.deepEqual(restored.room.editing, { snap: true, step: 0.25, bounds: true });
       const restoredOutside = await (await send('/api/rooms/' + freeProjectId)).json();
       assert.deepEqual(restoredOutside.room.furniture, freeRoom.furniture);
@@ -171,6 +171,17 @@ test('el servidor persiste proyectos y croquis con permisos, revisiones y rutas 
       assert.match(await asset.text(), /console.log/);
       const plain = await fetch(base + '/assets/app.js', { headers: { 'Accept-Encoding': 'gzip;q=0' } });
       assert.equal(plain.headers.get('content-encoding'), null);
+      mkdirSync(join(staticDir, 'materials'));
+      const texturePath = join(staticDir, 'materials', 'texture.jpg');
+      writeFileSync(texturePath, png);
+      const texture = await fetch(base + '/materials/texture.jpg');
+      const etag = texture.headers.get('etag')!;
+      assert.ok(etag);
+      const cached = await fetch(base + '/materials/texture.jpg', { headers: { 'If-None-Match': etag } });
+      assert.equal(cached.status, 304); assert.equal(await cached.text(), '');
+      writeFileSync(texturePath, Buffer.concat([png, Buffer.from('changed')]));
+      const updated = await fetch(base + '/materials/texture.jpg', { headers: { 'If-None-Match': etag } });
+      assert.equal(updated.status, 200); assert.notEqual(updated.headers.get('etag'), etag);
       const head = await fetch(base + '/', { method: 'HEAD' });
       assert.equal(head.status, 200); assert.equal(await head.text(), '');
       const traversal = await new Promise<number>(accept => {

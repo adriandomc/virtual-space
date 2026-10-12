@@ -287,7 +287,7 @@ export function validateRoom(value: unknown): Room {
   const floorFinish = raw.floorFinish === undefined ? 'wood' : raw.floorFinish;
   if (!['wood', 'tile-grid', 'tile-brick', 'tile-checker', 'marble', 'concrete'].includes(floorFinish as string)) throw new Error('Selecciona un acabado de piso válido.');
   const renderQuality = raw.renderQuality === undefined ? 'standard' : raw.renderQuality;
-  if (renderQuality !== 'standard' && renderQuality !== 'realistic') throw new Error('La calidad debe ser estándar o realista.');
+  if (renderQuality !== 'standard' && renderQuality !== 'realistic' && renderQuality !== 'hyperrealistic') throw new Error('Selecciona una calidad visual válida.');
   const wallColors = array(raw.wallColors, vertices.length, vertices.length, 'Los colores de pared').map((c, i) => color(c, `Color de pared ${i + 1}`));
   const openings = array(raw.openings, 0, 48, 'Las puertas y ventanas').map((value, i): Opening => {
     const p = record(value, `Abertura ${i + 1}`);

@@ -259,6 +259,7 @@ test('proyectos anteriores reciben techo, acabado, calidad y editor compatibles'
   const stored = validateRoom({ ...room, ceilingColor: '#abcdef', floorFinish: 'tile-brick', renderQuality: 'realistic', editing: { snap: false, step: 0.25, bounds: false } });
   assert.equal(stored.floorFinish, 'tile-brick');
   assert.equal(stored.renderQuality, 'realistic');
+  assert.equal(validateRoom({ ...stored, renderQuality: 'hyperrealistic' }).renderQuality, 'hyperrealistic');
   assert.equal(stored.editing.bounds, false);
 });
 

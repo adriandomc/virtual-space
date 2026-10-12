@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { daylightFactor, joystickVector } from './navigation';
+import { daylightFactor, joystickVector, renderPixelRatio } from './navigation';
+
+test('render density normalizes fractional device ratios and keeps desktop/mobile limits', () => {
+  assert.equal(renderPixelRatio(1.0000000298, 'hyperrealistic', true), 1);
+  assert.equal(renderPixelRatio(1.49999997, 'hyperrealistic', false), 1.5);
+  assert.equal(renderPixelRatio(3, 'hyperrealistic', true), 1.75);
+  assert.equal(renderPixelRatio(3, 'realistic', true), 2);
+  assert.equal(renderPixelRatio(3, 'hyperrealistic', false), 1.5);
+  assert.equal(renderPixelRatio(1.25, 'hyperrealistic', true), 1.25);
+});
 
 test('joystick preserves analog speed, ignores tiny movement, and caps diagonal speed', () => {
   assert.deepEqual(joystickVector(0.04, -0.03), { x: 0, z: 0 });

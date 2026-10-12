@@ -43,7 +43,7 @@ export type Room = {
   floorColor: string;
   ceilingColor: string;
   floorFinish: FloorFinish;
-  renderQuality: 'standard' | 'realistic';
+  renderQuality: 'standard' | 'realistic' | 'hyperrealistic';
   editing: EditingSettings;
   showFurniture: boolean;
   furniture: FurnitureItem[];

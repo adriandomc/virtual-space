@@ -24,7 +24,9 @@ Los datos se conservan en el servidor, sin depender del almacenamiento local del
 - Añade camas individuales, matrimoniales, queen o king, roperos, tocadores y burós. Selecciona un mueble para cambiar sus dimensiones, posición y giro, o eliminarlo. La planta y el visor muestran los mismos muebles guardados; el enlace de consulta conserva su distribución.
 - Alterna entre vista exterior, planta y recorrido interior. En escritorio usa WASD o las flechas para caminar, Q/E para girar y R/F para mirar arriba o abajo. En pantallas táctiles mueve el joystick y arrastra para mirar.
 
-**Estándar** reduce el trabajo gráfico. **Realista** añade relieve de superficies, variación de rugosidad y reflejos; consume más GPU y batería, especialmente en celulares. El modo elegido queda guardado con el proyecto.
+**Estándar** reduce el trabajo gráfico. **Realista** añade relieve de superficies, variación de rugosidad y reflejos. **Hiperrealista** usa materiales PBR fotografiados, tela con volumen y pliegues, iluminación HDR y sombras de contacto. Los activos se sirven desde la aplicación y se cargan al elegir ese modo; suman aproximadamente 9.2 MiB. En pantallas móviles se reduce la resolución y las muestras de los efectos. Los modos más detallados consumen más GPU y batería. El modo elegido queda guardado con el proyecto.
+
+Los activos PBR y el entorno son CC0; su procedencia está documentada en [public/materials/README.md](public/materials/README.md) y [public/environments/README.md](public/environments/README.md). La vista arquitectónica sigue siendo interactiva: las sombras de contacto y la luz indirecta son aproximadas, no un render con trazado de rayos ni una simulación fotométrica.
 
 Las camas parten de medidas nacionales de colchón: individual **1.00 × 1.90 m**, matrimonial **1.35 × 1.90 m**, queen **1.50 × 1.90 m** y king **2.00 × 1.90 m**, según [Sealy México](https://sealy.com.mx/linea-correct-comfort/). Son medidas iniciales editables: ajusta el tamaño si tu colchón, marco o cabecera ocupan más espacio.
 
