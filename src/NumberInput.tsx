@@ -1,0 +1,14 @@
+import { parseNumber } from './fieldDraft';
+import useFieldDraft from './useFieldDraft';
+
+export default function NumberInput({ label, value, min, max, step = 0.1, onChange, onInvalid, onEdit }: { label: string; value: number; min: number; max: number; step?: number; onChange: (value: number) => boolean | void; onInvalid: () => void; onEdit: () => void }) {
+  const { inputProps, edit } = useFieldDraft({ value, parse: raw => parseNumber(raw, min, max), onCommit: onChange, onInvalid });
+  return <input {...inputProps} type="text" role="spinbutton" inputMode="decimal" aria-label={label} aria-valuenow={parseNumber(inputProps.value, min, max) ?? undefined} aria-valuemin={min} aria-valuemax={max} required onChange={event => { onEdit(); inputProps.onChange(event); }} onKeyDown={event => {
+    if (!event.nativeEvent.isComposing && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+      event.preventDefault();
+      const current = parseNumber(inputProps.value, min, max) ?? value;
+      const next = Math.min(max, Math.max(min, Math.round((current + (event.key === 'ArrowUp' ? step : -step)) * 1e6) / 1e6));
+      onEdit(); edit(String(next));
+    } else inputProps.onKeyDown(event);
+  }} />;
+}

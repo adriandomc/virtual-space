@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } fr
 import { Check, ImageOff, Pencil, Undo2, Upload, X } from 'lucide-react';
 import { bounds, FURNITURE_LABELS, fitRoom, furnitureCorners, itemWorldPosition, moveSceneItem, polygonArea, snapPlanPoint, wallLength } from './model';
 import type { Point, Room, Selection } from './types';
+import { parseNumber } from './fieldDraft';
 import './plan.css';
 
 type Props = {
@@ -100,8 +101,8 @@ export default function PlanEditor({ room, onChange, selection: selected, onSele
     if (readOnly) return;
     try {
       if (points.length < 3) throw new Error('Marca al menos tres esquinas para cerrar la planta.');
-      const width = Number(referenceWidth), draft = bounds(points);
-      if (!referenceWidth.trim() || !Number.isFinite(width) || width < 0.5 || width > 50 || draft.width < 0.01) throw new Error('El ancho trazado debe medir entre 0.5 y 50 m.');
+      const width = parseNumber(referenceWidth, 0.5, 50), draft = bounds(points);
+      if (width === null || draft.width < 0.01) throw new Error('El ancho trazado debe medir entre 0.5 y 50 m.');
       const scale = width / draft.width;
       const vertices = points.map(p => ({ x: (p.x - (draft.minX + draft.maxX) / 2) * scale, z: (p.z - (draft.minZ + draft.maxZ) / 2) * scale }));
       let candidate = fitRoom({ ...room, vertices, openings: [], wallColors: vertices.map((_, i) => room.wallColors[i] ?? '#eee9df') });
@@ -124,8 +125,8 @@ export default function PlanEditor({ room, onChange, selection: selected, onSele
     {drawing && <div className="plan-drawing-controls">
       <p title="Enter cierra · Retroceso deshace · Escape cancela">Toca las esquinas y vuelve a la primera para cerrar.</p>
       <div className="plan-draw-options"><label><input type="checkbox" checked={grid} onChange={event => setGrid(event.target.checked)} />Ajustar a cuadrícula</label><label><input type="checkbox" checked={angles} onChange={event => setAngles(event.target.checked)} />Líneas rectas</label><label>Ángulo<select aria-label="Paso angular del trazo" value={angleStep} onChange={event => setAngleStep(Number(event.target.value))}>{[15, 30, 45, 90].map(value => <option key={value} value={value}>{value}°</option>)}</select></label></div>
-      <label>Ancho total trazado<span><input aria-label="Ancho total de la planta en metros" type="number" min="0.5" max="50" step="0.1" value={referenceWidth} onChange={event => setReferenceWidth(event.target.value)} />m</span></label>
-      <details className="plan-coordinates"><summary>Coordenadas</summary><div className="plan-toolbar"><label>X<input aria-label="Coordenada X de nueva esquina" type="number" step={room.editing.step} value={cornerX} onChange={event => setCornerX(event.target.value)} /></label><label>Z<input aria-label="Coordenada Z de nueva esquina" type="number" step={room.editing.step} value={cornerZ} onChange={event => setCornerZ(event.target.value)} /></label><button type="button" onClick={() => addCorner({ x: cornerX.trim() ? Number(cornerX) : NaN, z: cornerZ.trim() ? Number(cornerZ) : NaN })}>Añadir esquina</button></div></details>
+      <label>Ancho total trazado<span><input aria-label="Ancho total de la planta en metros" type="text" inputMode="decimal" value={referenceWidth} onChange={event => setReferenceWidth(event.target.value)} />m</span></label>
+      <details className="plan-coordinates"><summary>Coordenadas</summary><div className="plan-toolbar"><label>X<input aria-label="Coordenada X de nueva esquina" type="text" inputMode="decimal" value={cornerX} onChange={event => setCornerX(event.target.value)} /></label><label>Z<input aria-label="Coordenada Z de nueva esquina" type="text" inputMode="decimal" value={cornerZ} onChange={event => setCornerZ(event.target.value)} /></label><button type="button" onClick={() => addCorner({ x: parseNumber(cornerX, -50, 50) ?? NaN, z: parseNumber(cornerZ, -50, 50) ?? NaN })}>Añadir esquina</button></div></details>
       <div className="plan-toolbar"><button type="button" onClick={() => { setPoints(points.slice(0, -1)); setHover(null); }} disabled={!points.length}><Undo2 size={14} />Deshacer</button><button type="button" onClick={finishDrawing} disabled={points.length < 3}><Check size={14} />Cerrar planta</button><button type="button" className="plan-icon-button" aria-label="Cancelar planta" onClick={cancelDrawing}><X size={14} /></button></div>
     </div>}
     <div className="plan-canvas">

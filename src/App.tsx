@@ -3,7 +3,10 @@ import { Archive, ArrowDownToLine, ArrowUpFromLine, BedDouble, Box, Check, Chevr
 import RoomScene from './RoomScene';
 import PlanEditor from './PlanEditor';
 import useProject from './useProject';
-import { normalizeHex } from './color';
+import { parseColor } from './fieldDraft';
+import useFieldDraft from './useFieldDraft';
+import NameInput from './NameInput';
+import NumberInput from './NumberInput';
 import { addFurniture, addLight, addOpening, BED_SIZES, bounds, fitRoom, FURNITURE_COLORS, FURNITURE_LABELS, moveSceneItem, polygonArea, resizeRoom, validateRoom, wallLength } from './model';
 import type { BedSize, FloorFinish, FurnitureItem, FurnitureMaterial, Opening, Room, RoomLight, Selection, ViewMode } from './types';
 
@@ -19,14 +22,9 @@ const furnitureName = (item: FurnitureItem) => item.type === 'bed' ? 'Cama ' + B
 const timeLabel = (hour: number) => String(Math.floor(hour)).padStart(2, '0') + ':' + String(Math.round((hour % 1) * 60)).padStart(2, '0');
 const sameSelection = (a: Selection | null, b: Selection) => JSON.stringify(a) === JSON.stringify(b);
 
-function NumberField({ label, value, min, max, step = 0.1, unit = 'm', onChange }: { label: string; value: number; min: number; max: number; step?: number; unit?: string; onChange: (value: number) => void }) {
-  const [draft, setDraft] = useState(String(Number(value.toFixed(2))));
-  useEffect(() => setDraft(String(Number(value.toFixed(2)))), [value]);
-  return <label className="number-field"><span>{label}</span><div className="number-input"><input aria-label={label} type="number" inputMode="decimal" value={draft} min={min} max={max} step={step} onChange={event => {
-    setDraft(event.target.value);
-    const next = Number(event.target.value);
-    if (event.target.value !== '' && Number.isFinite(next) && next >= min && next <= max) onChange(next);
-  }} onBlur={() => setDraft(String(Number(value.toFixed(2))))} /><span>{unit}</span></div></label>;
+function NumberField({ label, value, min, max, step = 0.1, unit = 'm', onChange }: { label: string; value: number; min: number; max: number; step?: number; unit?: string; onChange: (value: number) => boolean | void }) {
+  const [feedback, setFeedback] = useState('');
+  return <label className="number-field"><span>{label}</span><div className="number-input"><NumberInput label={label} value={value} min={min} max={max} step={step} onChange={onChange} onInvalid={() => setFeedback('Usa un valor entre ' + min + ' y ' + max + '. Se conservó el anterior.')} onEdit={() => setFeedback('')} /><span>{unit}</span></div>{feedback && <small className="field-feedback" role="status">{feedback}</small>}</label>;
 }
 function Slider({ label, value, min, max, step = 1, unit, onChange }: { label: string; value: number; min: number; max: number; step?: number; unit: string; onChange: (value: number) => void }) {
   return <label className="slider-field"><span><span>{label}</span><output>{Number(value.toFixed(2))} {unit}</output></span><input aria-label={label} type="range" min={min} max={max} step={step} value={value} style={{ '--progress': (100 * (value - min) / (max - min)) + '%' } as CSSProperties} onChange={event => onChange(Number(event.target.value))} /></label>;
@@ -37,24 +35,13 @@ function Switch({ checked, label, onChange, disabled = false }: { checked: boole
 function Section({ title, children, defaultOpen = true }: { title: string; children: ReactNode; defaultOpen?: boolean }) {
   return <details className="property-section" open={defaultOpen}><summary><ChevronDown size={14} /><span>{title}</span></summary><div className="section-body">{children}</div></details>;
 }
-function HexColorField({ value, onChange, readOnly, notify, label = 'Color personalizado' }: { value: string; onChange: (value: string) => void; readOnly: boolean; notify: (text: string) => void; label?: string }) {
+function HexColorField({ value, onChange, readOnly, notify, label = 'Color personalizado' }: { value: string; onChange: (value: string) => boolean | void; readOnly: boolean; notify: (text: string) => void; label?: string }) {
   const inputId = useId();
-  const [draft, setDraft] = useState(value.toUpperCase());
   const input = useRef<HTMLInputElement>(null);
-  useEffect(() => setDraft(value.toUpperCase()), [value]);
-  function apply() {
-    if (readOnly) return;
-    const normalized = normalizeHex(draft);
-    if (normalized) { if (normalized !== value.toLowerCase()) onChange(normalized); setDraft(normalized.toUpperCase()); }
-    else { setDraft(value.toUpperCase()); notify('Escribe un código hexadecimal de 3 o 6 dígitos.'); }
-  }
+  const { inputProps } = useFieldDraft({ value, parse: parseColor, format: next => next.toUpperCase(), onCommit: next => readOnly ? false : onChange(next), onInvalid: () => notify('Escribe un código hexadecimal de 3 o 6 dígitos. Se conservó el color anterior.') });
   return <div className="hex-field"><label htmlFor={inputId}>{label}</label><div>
     <input type="color" aria-label="Elegir color personalizado" disabled={readOnly} value={value} onChange={event => onChange(event.target.value)} />
-    <input ref={input} id={inputId} className="hex-code-input" aria-label="Código hexadecimal" readOnly={readOnly} value={draft} maxLength={9} spellCheck={false} autoCapitalize="characters" onChange={event => {
-      setDraft(event.target.value);
-      const normalized = normalizeHex(event.target.value);
-      if (/^#?[\da-f]{6}$/i.test(event.target.value.trim()) && normalized !== value.toLowerCase()) onChange(normalized!);
-    }} onBlur={apply} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); apply(); } }} />
+    <input {...inputProps} ref={input} id={inputId} className="hex-code-input" aria-label="Código hexadecimal" readOnly={readOnly} required maxLength={9} spellCheck={false} autoCapitalize="characters" />
     <button type="button" className="icon-button" aria-label="Copiar código hexadecimal" title="Copiar código" onClick={async () => { try { await navigator.clipboard.writeText(value.toUpperCase()); notify('Código copiado.'); } catch { input.current?.select(); notify('Selecciona el código para copiarlo.'); } }}><Copy size={15} /></button>
   </div></div>;
 }
@@ -138,11 +125,12 @@ export default function App({ onHome = () => window.location.assign('/') }: { on
   }
 
   function change(next: Room | (() => Room)) {
-    if (readOnly) return;
+    if (readOnly) return false;
     try {
       const validated = validateRoom(typeof next === 'function' ? next() : next);
       if (JSON.stringify(validated) !== JSON.stringify(room)) setRoom(validated);
-    } catch (error) { setNotice(error instanceof Error ? error.message : 'No se pudo aplicar el cambio.'); }
+      return true;
+    } catch (error) { setNotice(error instanceof Error ? error.message : 'No se pudo aplicar el cambio.'); return false; }
   }
   function showProperties(nextTab: typeof tab = tab) {
     setTab(nextTab); setRightOpen(true); setMobilePanel(compact ? 'properties' : null);
@@ -161,20 +149,20 @@ export default function App({ onHome = () => window.location.assign('/') }: { on
     change(() => enabled ? fitRoom({ ...room, editing: { ...room.editing, bounds: true } }) : { ...room, editing: { ...room.editing, bounds: false } });
   }
   function paint(hex: string) {
-    change(surface === 'floor' ? { ...room, floorColor: hex } : surface === 'ceiling' ? { ...room, ceilingColor: hex } : { ...room, wallColors: room.wallColors.map((value, index) => index === selectedWall ? hex : value) });
+    return change(surface === 'floor' ? { ...room, floorColor: hex } : surface === 'ceiling' ? { ...room, ceilingColor: hex } : { ...room, wallColors: room.wallColors.map((value, index) => index === selectedWall ? hex : value) });
   }
   function updateFurniture(patch: Partial<FurnitureItem>) {
-    if (!furniture) return;
-    if ('x' in patch || 'z' in patch || 'rotation' in patch) change(() => moveSceneItem(room, { kind: 'furniture', id: furniture.id }, { x: patch.x ?? furniture.x, z: patch.z ?? furniture.z, rotation: patch.rotation ?? furniture.rotation }));
-    else change({ ...room, furniture: room.furniture.map(item => item.id === furniture.id ? { ...item, ...patch } : item) });
+    if (!furniture) return false;
+    if ('x' in patch || 'z' in patch || 'rotation' in patch) return change(() => moveSceneItem(room, { kind: 'furniture', id: furniture.id }, { x: patch.x ?? furniture.x, z: patch.z ?? furniture.z, rotation: patch.rotation ?? furniture.rotation }));
+    return change({ ...room, furniture: room.furniture.map(item => item.id === furniture.id ? { ...item, ...patch } : item) });
   }
   function updateOpening(patch: Partial<Opening>) {
-    if (opening) change(() => fitRoom({ ...room, openings: room.openings.map(item => item.id === opening.id ? { ...item, ...patch } : item) }));
+    return opening ? change(() => fitRoom({ ...room, openings: room.openings.map(item => item.id === opening.id ? { ...item, ...patch } : item) })) : false;
   }
   function updateLight(patch: Partial<RoomLight>) {
-    if (!light) return;
-    if ('x' in patch || 'z' in patch || 'y' in patch) change(() => moveSceneItem(room, { kind: 'light', id: light.id }, { x: patch.x ?? light.x, z: patch.z ?? light.z, y: patch.y ?? light.y }));
-    else change({ ...room, lights: room.lights.map(item => item.id === light.id ? { ...item, ...patch } : item) });
+    if (!light) return false;
+    if ('x' in patch || 'z' in patch || 'y' in patch) return change(() => moveSceneItem(room, { kind: 'light', id: light.id }, { x: patch.x ?? light.x, z: patch.z ?? light.z, y: patch.y ?? light.y }));
+    return change({ ...room, lights: room.lights.map(item => item.id === light.id ? { ...item, ...patch } : item) });
   }
   function removeSelected() {
     if (readOnly || !selection) return;
@@ -273,14 +261,14 @@ export default function App({ onHome = () => window.location.assign('/') }: { on
   const propertiesPanel = <>
     <div className="panel-heading"><span>Propiedades</span><button className="icon-button desktop-only" aria-label="Ocultar propiedades" onClick={() => setRightOpen(false)}><PanelRightClose size={18} /></button><button className="icon-button mobile-only" aria-label="Cerrar propiedades" onClick={() => setMobilePanel(null)}><X size={20} /></button></div>
     <div className="inspector-title"><span className="inspector-icon">{tab === 'color' ? <Paintbrush size={19} /> : tab === 'light' ? <Sun size={19} /> : tab === 'space' ? <Ruler size={19} /> : <Box size={19} />}</span><h2>{tab === 'item' ? selectedName || 'Elemento' : tab === 'space' ? 'Cuarto' : tab === 'color' ? 'Materiales' : 'Iluminación'}</h2></div>
-    <div className="inspector-content" id={'panel-' + tab}>{tab === 'item' ? itemPanel : tab === 'space' ? spacePanel : tab === 'color' ? colorPanel : lightPanel}</div>
+    <div className="inspector-content" key={JSON.stringify([tab, selection])} id={'panel-' + tab}>{tab === 'item' ? itemPanel : tab === 'space' ? spacePanel : tab === 'color' ? colorPanel : lightPanel}</div>
   </>;
 
   return <div className={'studio editor-ui ' + (leftOpen ? '' : 'left-collapsed') + ' ' + (rightOpen ? '' : 'right-collapsed')}>
     <header className="app-header"><div className="brand"><span className="brand-mark"><Box size={24} strokeWidth={1.5} /></span><strong>espacio<span>.</span></strong></div><div className="header-divider" />
       <details ref={fileRef} className="file-menu"><summary onClick={() => setMobilePanel(null)}>Archivo <ChevronDown size={16} /></summary><div><button disabled={readOnly} onClick={() => { importRef.current?.click(); if (fileRef.current) fileRef.current.open = false; }}><ArrowUpFromLine size={17} />Abrir proyecto</button><button onClick={() => { exportRoom(); if (fileRef.current) fileRef.current.open = false; }}><ArrowDownToLine size={17} />Descargar copia</button></div></details>
       <button className="editor-home" aria-label="Mis diseños" title="Mis diseños" onClick={onHome}><Layers3 size={19} /><span>Mis diseños</span></button>
-      <div className="project-name"><span className="project-dot" /><input aria-label="Nombre del proyecto" readOnly={readOnly} value={room.name} maxLength={80} onChange={event => { if (event.target.value.trim()) change({ ...room, name: event.target.value }); }} /></div>
+      <div className="project-name"><span className="project-dot" /><NameInput label="Nombre del proyecto" readOnly={readOnly} value={room.name} onChange={name => change({ ...room, name })} notify={setNotice} /></div>
       <div className="header-actions"><span className="saved-status" role="status">{readOnly ? 'Solo lectura' : status === 'saving' ? <><LoaderCircle size={16} className="saving-spinner" />Guardando…</> : status === 'error' ? <><CircleHelp size={16} />No guardado</> : <><Check size={16} />Guardado</>}</span><button className="header-help icon-button" aria-label="Controles" onClick={() => setHelpOpen(true)}><CircleHelp size={20} /></button><button className="save-button" aria-label="Compartir diseño" disabled={status === 'saving' || status === 'error'} onClick={() => setShareOpen(true)}><Share2 size={18} /><span>Compartir</span></button></div>
       <input ref={importRef} hidden type="file" accept="application/json,.json" onChange={event => void importRoom(event.target.files?.[0])} />
     </header>
