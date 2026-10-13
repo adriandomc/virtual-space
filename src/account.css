@@ -1,9 +1,9 @@
 .account-page{height:100dvh;overflow-y:auto;background:#f4f6f0;color:#34432e;font-family:inherit}
 .auth-page{display:flex;flex-direction:column;align-items:center;padding:28px 18px}
 .auth-card{width:360px;max-width:100%;flex-shrink:0;margin:auto 0;background:#fcfdf9;border:1px solid #dce3d5;border-radius:12px;padding:30px;box-shadow:0 12px 35px #3143260b}
-.account-brand{display:flex;align-items:center;gap:9px;color:#566e46}
-.account-brand strong{font-size:27px;letter-spacing:-1.2px;color:#253c21}
-.account-brand strong>span{color:#799168}
+.account-brand{display:flex;align-items:center;gap:9px;color:#566e46;flex-shrink:0}
+.account-brand .brand-mark{flex-shrink:0;color:inherit}
+.account-brand strong{font-size:27px;letter-spacing:-.7px;color:#253c21;white-space:nowrap}
 .auth-tabs{display:flex;border-bottom:1px solid #dce3d5;margin:28px 0 25px;gap:22px}
 .auth-tabs>button{padding:0 0 13px;min-height:44px;font-size:14px;color:#75836c;border-bottom:2px solid transparent;margin-bottom:-1px}
 .auth-tabs>button.active{color:#415b33;border-color:#698653;font-weight:600}
@@ -43,3 +43,4 @@
 .library-error{display:flex;gap:16px;align-items:center;margin:0 0 25px;padding:16px;background:#fff8f4;border:1px solid #ead8cc;border-radius:8px}
 .library-error>p{flex:1}
 @media(max-width:640px){.auth-card{padding:26px 23px}.account-header{padding:16px;gap:15px}.account-header>div:last-child{gap:9px}.account-header .account-brand{gap:6px}.account-header .account-brand strong{font-size:24px}.account-username{max-width:24vw;font-size:14px}.account-header .account-secondary{padding:10px}.account-header .account-secondary span{display:none}.design-library{padding:28px 18px 50px}.library-heading h1{font-size:21px}.library-heading{gap:10px;margin-bottom:23px}.library-heading .account-primary{font-size:14px;padding:10px 12px}.design-list{grid-template-columns:1fr}.design-open{padding:18px;gap:13px;min-height:94px}.design-delete{margin-right:8px}.library-error{align-items:flex-start;flex-direction:column}.library-empty{padding:60px 15px}}
+@media(max-width:380px){.account-header .account-brand strong{font-size:21px}.account-header .account-brand .brand-mark{width:25px;height:25px}.account-username{max-width:18vw}}

@@ -7,6 +7,7 @@ export type Opening = {
   id: string;
   type: 'door' | 'window';
   doorStyle?: DoorStyle;
+  open?: boolean;
   wall: number;
   offset: number;
   width: number;

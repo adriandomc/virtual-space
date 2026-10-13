@@ -6,12 +6,12 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 import { RectAreaLightTexturesLib } from 'three/addons/lights/RectAreaLightTexturesLib.js';
-import { LoaderCircle } from 'lucide-react';
-import { bounds, FURNITURE_COLORS, furnitureCorners, furnitureWalkable, interiorPoint, interiorWalkPoint, invalidFurnitureIds, itemWorldPosition, moveSceneItem, pointInPolygon, polygonArea } from './model';
+import { DoorClosed, DoorOpen, Lightbulb, LoaderCircle } from 'lucide-react';
+import { bounds, FURNITURE_COLORS, furnitureCorners, furnitureWalkable, interiorPoint, interiorWalkPoint, invalidFurnitureIds, itemWorldPosition, moveSceneItem, pointInPolygon, polygonArea, toggleSceneInteraction } from './model';
 import { createCeilingMaterial, createFabricMaterial, createFloorMaterial, createFurnitureMaterial, createWallMaterial, createWoodMaterial, disposeArchitecturalTextures } from './materials';
 import { createDuvetGeometry, createPillowGeometry } from './beddingGeometry';
 import { createArchitecturalPostProcessing } from './postProcessing';
-import { daylightFactor, joystickVector, renderPixelRatio } from './navigation';
+import { daylightFactor, daylightOpeningArea, joystickVector, renderPixelRatio } from './navigation';
 import type { FurnitureItem, Point, Room, Selection, ViewMode } from './types';
 import './scene.css';
 
@@ -79,7 +79,7 @@ function updateEnvironment(runtime: Runtime, room: Room, mode: ViewMode) {
   const architectural = room.renderQuality === 'hyperrealistic';
   const detailed = room.renderQuality !== 'standard' || room.furniture.some(item => item.material === 'metal');
   const day = room.sun.enabled ? Math.max(0, Math.sin((room.sun.hour - 6) / 12 * Math.PI)) : 0;
-  const bounce = daylightFactor(day, room.openings.reduce((area, opening) => area + opening.width * opening.height, 0), polygonArea(room.vertices));
+  const bounce = daylightFactor(day, daylightOpeningArea(room), polygonArea(room.vertices));
   const lampLumens = room.lights.filter(light => light.enabled).reduce((sum, light) => sum + light.lumens, 0);
   runtime.scene.environment = architectural ? runtime.architecturalEnvironment?.texture ?? runtime.environment?.texture ?? null : detailed ? runtime.environment?.texture ?? null : null;
   runtime.scene.environmentIntensity = architectural ? bounce * room.sun.intensity / 3 * 0.18 + Math.min(0.14, lampLumens / 40000) : detailed ? Math.min(0.25, bounce * 0.18 + lampLumens / 20000) : 0;
@@ -109,6 +109,7 @@ function updateEnvironment(runtime: Runtime, room: Room, mode: ViewMode) {
 const selectionKey = (selection: Selection) => selection.kind === 'wall' ? `wall:${selection.index}` : 'id' in selection ? `${selection.kind}:${selection.id}` : selection.kind;
 const sameSelection = (a: Selection | null, b: Selection | null) => a != null && b != null && selectionKey(a) === selectionKey(b);
 const canMove = (selection: Selection | null) => selection != null && ['furniture', 'opening', 'light'].includes(selection.kind);
+const canInteract = (room: Room, selection: Selection | null) => selection?.kind === 'light' ? room.lights.some(light => light.id === selection.id) : selection?.kind === 'opening' && room.openings.some(opening => opening.id === selection.id && opening.type === 'door' && opening.doorStyle !== 'frame');
 
 function updateSelection(runtime: Runtime, props: Props) {
   const selection = props.selection;
@@ -508,7 +509,7 @@ function buildRoom(runtime: Runtime, room: Room, furniture: boolean) {
           const hinge = new THREE.Group();
           hinge.userData.architectural = architectural;
           hinge.position.set(opening.offset + (direction === 1 ? frame : opening.width - frame), 0, innerSide * room.thickness / 2);
-          hinge.rotation.y = direction * innerSide * -Math.PI * 0.4;
+          hinge.rotation.y = opening.open === false ? 0 : direction * innerSide * -Math.PI * 0.4;
           openingGroup.add(hinge);
           const leaf = box(hinge, [opening.width - frame * 2, opening.height - frame, 0.04], [direction * (opening.width - frame * 2) / 2, (opening.height - frame) / 2, 0], architectural ? createWoodMaterial('#c7b297', room.renderQuality) : new THREE.MeshStandardMaterial({ color: '#c7b297', roughness: 0.8 }));
           leaf.castShadow = true;
@@ -534,12 +535,13 @@ function buildRoom(runtime: Runtime, room: Room, furniture: boolean) {
   group.add(ceiling);
   runtime.ceiling = ceiling;
   const day = room.sun.enabled ? Math.max(0, Math.sin((room.sun.hour - 6) / 12 * Math.PI)) : 0;
-  const daylightBounce = daylightFactor(day, room.openings.reduce((area, opening) => area + opening.width * opening.height, 0), polygonArea(room.vertices));
+  const daylightBounce = daylightFactor(day, daylightOpeningArea(room), polygonArea(room.vertices));
   // shortcut: hemisphere approximates diffuse daylight bounce; use global illumination for calibrated lighting accuracy.
   group.add(new THREE.HemisphereLight(architectural ? '#eef2ff' : '#f5f7ff', '#d3ceba', architectural ? daylightBounce * 0.14 : 0.035 + daylightBounce * 3.5));
   if (architectural && day > 0) {
     // shortcut: window area lights approximate sky bounce without occlusion; replace with traced GI for calibrated transport.
     for (const opening of room.openings) {
+      if (opening.type === 'door' && opening.doorStyle !== 'frame' && opening.open === false) continue;
       const start = room.vertices[opening.wall], end = room.vertices[(opening.wall + 1) % room.vertices.length];
       const t = (opening.offset + opening.width / 2) / Math.hypot(end.x - start.x, end.z - start.z);
       const inward = runtime.walls[opening.wall].inward;
@@ -644,6 +646,8 @@ function buildRoom(runtime: Runtime, room: Room, furniture: boolean) {
     finally { environmentScene.dispose(); generator.dispose(); }
   }
   updateEnvironment(runtime, room, runtime.viewMode);
+  // Interaction raycasts can run before the first render of rebuilt objects.
+  group.updateWorldMatrix(true, true);
 }
 
 function fitOrbitCamera(runtime: Runtime, room: Room, preserveZoom = false) {
@@ -698,8 +702,10 @@ function resetCamera(runtime: Runtime, room: Room, mode: ViewMode) {
 export default function RoomScene(props: Props) {
   const container = useRef<HTMLDivElement>(null);
   const runtime = useRef<Runtime | null>(null);
+  const [preview, setPreview] = useState<Room | null>(null);
+  const effectiveRoom = props.readOnly ? preview ?? props.room : props.room;
   const current = useRef(props);
-  current.current = props;
+  current.current = { ...props, room: effectiveRoom };
   const directions = useRef(new Set<string>());
   const joystick = useRef({ x: 0, z: 0 });
   const [stick, setStick] = useState({ x: 0, z: 0 });
@@ -708,6 +714,28 @@ export default function RoomScene(props: Props) {
   const [error, setError] = useState('');
   const [walkBlocked, setWalkBlocked] = useState(false);
   const [notice, setNotice] = useState('');
+  const [walkTarget, setWalkTarget] = useState<Selection | null>(null);
+  const walkTargetRef = useRef<Selection | null>(null);
+
+  const changeWalkTarget = (target: Selection | null) => {
+    if (target === null && walkTargetRef.current === null || sameSelection(target, walkTargetRef.current)) return;
+    walkTargetRef.current = target;
+    setWalkTarget(target);
+  };
+  const interact = (target: Selection | null) => {
+    const state = current.current, active = runtime.current;
+    if (!active || state.mode !== 'walk' || !canInteract(state.room, target) || !target) return;
+    const next = toggleSceneInteraction(state.room, target);
+    current.current = { ...state, room: next };
+    updateRoom(active, next, state.showFurniture);
+    updateSelection(active, current.current);
+    changeWalkTarget(target);
+    if (state.readOnly) setPreview(next);
+    else state.onChange(next);
+    setNotice('');
+  };
+
+  useEffect(() => { setPreview(null); }, [props.room, props.readOnly]);
 
   useEffect(() => {
     let cancelled = false;
@@ -737,7 +765,7 @@ export default function RoomScene(props: Props) {
         const camera = new THREE.PerspectiveCamera(43, 1, 0.025, 250);
         const canvas = renderer.domElement;
         canvas.tabIndex = 0;
-        canvas.setAttribute('aria-label', 'Visor 3D del cuarto. Arrastra para mirar. En recorrido: WASD o flechas para moverte, Q y E para girar, R y F para mirar arriba y abajo.');
+        canvas.setAttribute('aria-label', 'Visor 3D del cuarto. Arrastra para mirar. En recorrido: WASD o flechas para moverte, Q y E para girar, R y F para mirar arriba y abajo. Toca puertas y focos, o mira hacia ellos y pulsa Enter o espacio.');
         mount.append(canvas);
         const transform = new TransformControls(camera, canvas);
         transform.enabled = false;
@@ -797,13 +825,32 @@ export default function RoomScene(props: Props) {
           return { x: (event.clientX - rect.left) / rect.width * 2 - 1, y: -(event.clientY - rect.top) / rect.height * 2 + 1, button: event.button };
         };
         const setRay = (event: PointerEvent) => { const position = normalized(event); ray.setFromCamera(new THREE.Vector2(position.x, position.y), camera); };
-        const pick = (event: PointerEvent): Selection | null => {
-          setRay(event);
+        const pickRay = (): Selection | null => {
           const targets = [...active.objects.values()].filter(object => object.visible && object.layers.test(camera.layers));
           const hit = ray.intersectObjects(targets, true)[0];
           let item: THREE.Object3D | null = hit?.object ?? null;
           while (item && !item.userData.selection) item = item.parent;
           return item?.userData.selection ?? null;
+        };
+        const pick = (event: PointerEvent): Selection | null => { setRay(event); return pickRay(); };
+        const findWalkTarget = () => {
+          const state = current.current;
+          camera.updateMatrixWorld();
+          ray.setFromCamera(new THREE.Vector2(), camera);
+          const lookedAt = pickRay();
+          const candidates = [lookedAt, walkTargetRef.current, state.selection];
+          for (const candidate of candidates) {
+            if (!candidate || !canInteract(state.room, candidate)) continue;
+            const position = itemWorldPosition(state.room, candidate);
+            if (!position) continue;
+            const target = new THREE.Vector3(position.x, position.y, position.z);
+            if (target.distanceTo(camera.position) > 5) continue;
+            const screen = target.project(camera);
+            if (screen.z < -1 || screen.z > 1 || Math.abs(screen.x) > 0.95 || Math.abs(screen.y) > 0.95) continue;
+            ray.setFromCamera(new THREE.Vector2(screen.x, screen.y), camera);
+            if (sameSelection(pickRay(), candidate)) return candidate;
+          }
+          return null;
         };
         const commitProxy = (force = false) => {
           if (!active.pendingEdit) return;
@@ -874,6 +921,7 @@ export default function RoomScene(props: Props) {
             return;
           }
           if (current.current.mode !== 'walk') return;
+          if (Math.hypot(event.clientX - pointer.startX, event.clientY - pointer.startY) >= 5) pointer.handled = true;
           active.yaw -= (event.clientX - pointer.x) * 0.004;
           active.pitch = THREE.MathUtils.clamp(active.pitch - (event.clientY - pointer.y) * 0.004, -1.25, 1.25);
           camera.rotation.set(active.pitch, active.yaw, 0, 'YXZ');
@@ -884,7 +932,11 @@ export default function RoomScene(props: Props) {
           pointers.delete(event.pointerId);
           if (!pointer || pointer.id !== event.pointerId) return;
           if (active.directDragging) { event.preventDefault(); event.stopImmediatePropagation(); finishDrag(); if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId); }
-          else if (!pointer.handled && !pointer.multi && Math.hypot(event.clientX - pointer.startX, event.clientY - pointer.startY) < 5) current.current.onSelect(pick(event));
+          else if (!pointer.handled && !pointer.multi && Math.hypot(event.clientX - pointer.startX, event.clientY - pointer.startY) < 5) {
+            const selected = pick(event);
+            if (current.current.mode === 'walk') interact(selected);
+            else current.current.onSelect(selected);
+          }
           pointer = null;
         };
         const cancel = () => { pointers.clear(); if (transform.dragging) transform.pointerUp(null); if (active.directDragging) finishDrag(); pointer = null; controls.enabled = current.current.mode === 'orbit'; };
@@ -907,6 +959,11 @@ export default function RoomScene(props: Props) {
             return;
           }
           if (current.current.mode !== 'walk') return;
+          if (event.target === canvas && (event.code === 'Enter' || event.code === 'Space')) {
+            event.preventDefault();
+            if (!event.repeat) interact(findWalkTarget());
+            return;
+          }
           const direction = KEY_DIRECTIONS[event.code];
           if (direction) { directions.current.add(direction); event.preventDefault(); }
         };
@@ -935,7 +992,7 @@ export default function RoomScene(props: Props) {
           window.removeEventListener('keyup', keyUp);
           window.removeEventListener('blur', blur);
         };
-        let previous = 0;
+        let previous = 0, lastWalkTargetUpdate = 0;
         await renderer.setAnimationLoop(time => {
           if (cancelled) return;
           const delta = Math.min(0.04, previous ? (time - previous) / 1000 : 0);
@@ -954,6 +1011,7 @@ export default function RoomScene(props: Props) {
             const dz = (-Math.cos(active.yaw) * forward - Math.sin(active.yaw) * right) * distance;
             if (furnitureWalkable({ x: camera.position.x + dx, z: camera.position.z }, state.room)) camera.position.x += dx;
             if (furnitureWalkable({ x: camera.position.x, z: camera.position.z + dz }, state.room)) camera.position.z += dz;
+            if (time - lastWalkTargetUpdate >= 80) { changeWalkTarget(findWalkTarget()); lastWalkTargetUpdate = time; }
           } else if (!transform.dragging && !active.directDragging) controls.update();
           for (const wall of active.walls) wall.group.visible = state.mode === 'walk' || state.selection?.kind === 'wall' && state.selection.index === wall.index || (camera.position.x - wall.midpoint.x) * wall.inward.x + (camera.position.z - wall.midpoint.z) * wall.inward.z > -0.03;
           for (const [key, item] of active.objects) if (key.startsWith('opening:')) item.visible = state.mode === 'walk' || state.selection?.kind === 'opening' && key === selectionKey(state.selection) || active.walls[item.userData.wall]?.group.visible === true;
@@ -1027,22 +1085,23 @@ export default function RoomScene(props: Props) {
   useEffect(() => {
     const active = runtime.current;
     if (!active || !ready) return;
-    updateRoom(active, props.room, props.showFurniture);
-    updateSelection(active, props);
+    updateRoom(active, effectiveRoom, props.showFurniture);
+    updateSelection(active, current.current);
     if (props.mode === 'walk') {
-      active.camera.position.y = Math.min(1.65, props.room.height - 0.2);
-      if (!furnitureWalkable({ x: active.camera.position.x, z: active.camera.position.z }, props.room)) resetCamera(active, props.room, props.mode);
+      active.camera.position.y = Math.min(1.65, effectiveRoom.height - 0.2);
+      if (!furnitureWalkable({ x: active.camera.position.x, z: active.camera.position.z }, effectiveRoom)) resetCamera(active, effectiveRoom, props.mode);
       setWalkBlocked(active.walkBlocked);
     }
-  }, [props.room, props.showFurniture, ready]);
+  }, [effectiveRoom, props.showFurniture, ready]);
 
   useEffect(() => {
     if (runtime.current && ready) {
       directions.current.clear();
       joystick.current = { x: 0, z: 0 };
       setStick({ x: 0, z: 0 });
-      resetCamera(runtime.current, props.room, props.mode);
-      updateSelection(runtime.current, props);
+      changeWalkTarget(null);
+      resetCamera(runtime.current, current.current.room, props.mode);
+      updateSelection(runtime.current, current.current);
       setWalkBlocked(runtime.current.walkBlocked);
     }
   }, [props.mode, props.resetKey, ready]);
@@ -1057,7 +1116,7 @@ export default function RoomScene(props: Props) {
       active.manipulating = null;
       active.controls.enabled = props.mode === 'orbit';
     }
-    updateSelection(active, props);
+    updateSelection(active, current.current);
     setNotice('');
   }, [props.selection, props.readOnly, props.transformMode, props.mode, ready]);
 
@@ -1072,11 +1131,14 @@ export default function RoomScene(props: Props) {
     joystick.current = { x: 0, z: 0 };
     setStick({ x: 0, z: 0 });
   };
+  const targetDoor = walkTarget?.kind === 'opening' ? effectiveRoom.openings.find(opening => opening.id === walkTarget.id && opening.type === 'door' && opening.doorStyle !== 'frame') : null;
+  const targetLight = walkTarget?.kind === 'light' ? effectiveRoom.lights.find(light => light.id === walkTarget.id) : null;
+  const interactionLabel = targetDoor ? targetDoor.open === false ? 'Abrir puerta' : 'Cerrar puerta' : targetLight ? `${targetLight.enabled ? 'Apagar' : 'Encender'} ${targetLight.name}` : null;
 
   return <div className="room-scene" ref={container}>
     {!ready && !error && <div className="scene-loading"><LoaderCircle size={24} /><span>Cargando…</span></div>}
     {error && <div className="scene-error" role="alert"><strong>No pudimos iniciar el visor</strong><p>{error}</p></div>}
     {notice && !error && <div className="scene-notice" role="status">{notice}</div>}
-    {ready && !error && props.mode === 'walk' && <><div className="walk-hint">{walkBlocked ? 'No queda espacio libre para caminar. Mueve algún mueble.' : <>Arrastra para mirar <span>· WASD · Q/E · R/F</span></>}</div><div className="walk-joystick"><button type="button" tabIndex={-1} className="joystick-base" aria-label="Joystick de movimiento: arrastra para caminar. Con teclado usa WASD en el visor." onPointerDown={event => { event.preventDefault(); event.stopPropagation(); joystickPointer.current = event.pointerId; event.currentTarget.setPointerCapture(event.pointerId); moveJoystick(event); }} onPointerMove={event => { if (joystickPointer.current === event.pointerId) { event.stopPropagation(); moveJoystick(event); } }} onPointerUp={releaseJoystick} onPointerCancel={releaseJoystick} onLostPointerCapture={releaseJoystick}><span className="joystick-knob" style={{ transform: `translate(${stick.x * 34}px, ${stick.z * 34}px)` }} /></button></div></>}
+    {ready && !error && props.mode === 'walk' && <><div className="walk-hint">{walkBlocked ? 'No queda espacio libre para caminar. Mueve algún mueble.' : 'Arrastra para mirar · Toca puertas y focos'}</div>{interactionLabel && <button type="button" className="walk-interaction" aria-pressed={targetDoor ? targetDoor.open !== false : targetLight?.enabled} onClick={() => interact(walkTargetRef.current)}>{targetDoor ? targetDoor.open === false ? <DoorOpen size={20} /> : <DoorClosed size={20} /> : <Lightbulb size={20} />}<span>{interactionLabel}</span></button>}<div className="walk-joystick"><button type="button" tabIndex={-1} className="joystick-base" aria-label="Joystick de movimiento: arrastra para caminar. Con teclado usa WASD en el visor." onPointerDown={event => { event.preventDefault(); event.stopPropagation(); joystickPointer.current = event.pointerId; event.currentTarget.setPointerCapture(event.pointerId); moveJoystick(event); }} onPointerMove={event => { if (joystickPointer.current === event.pointerId) { event.stopPropagation(); moveJoystick(event); } }} onPointerUp={releaseJoystick} onPointerCancel={releaseJoystick} onLostPointerCapture={releaseJoystick}><span className="joystick-knob" style={{ transform: `translate(${stick.x * 34}px, ${stick.z * 34}px)` }} /></button></div></>}
   </div>;
 }

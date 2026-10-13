@@ -14,3 +14,7 @@ export function joystickVector(x: number, z: number) {
 export function daylightFactor(day: number, openingArea: number, floorArea: number) {
   return day * Math.min(1, openingArea / floorArea * 5);
 }
+
+export function daylightOpeningArea(room: Room) {
+  return room.openings.reduce((area, opening) => area + (opening.type === 'door' && opening.doorStyle !== 'frame' && opening.open === false ? 0 : opening.width * opening.height), 0);
+}

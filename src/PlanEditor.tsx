@@ -179,9 +179,9 @@ export default function PlanEditor({ room, onChange, selection: selected, onSele
               const midpoint = { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 };
               const inside = pointInPolygon({ x: midpoint.x + inward.x * 0.01, z: midpoint.z + inward.z * 0.01 }, room.vertices) ? 1 : -1;
               const direction = item.doorStyle === 'left' ? -1 : 1, hinge = direction === 1 ? start : end, closed = direction === 1 ? end : start;
-              const radius = item.width * view.scale, angle = Math.PI * 0.4;
+              const radius = item.width * view.scale, angle = item.open === false ? 0 : Math.PI * 0.4;
               const leaf = { x: hinge.x + direction * (end.x - start.x) * Math.cos(angle) + inward.x * inside * radius * Math.sin(angle), y: hinge.y + direction * (end.y - start.y) * Math.cos(angle) + inward.z * inside * radius * Math.sin(angle) };
-              swing = { hinge, leaf, arc: `M ${closed.x} ${closed.y} A ${radius} ${radius} 0 0 ${direction * inside > 0 ? 1 : 0} ${leaf.x} ${leaf.y}` };
+              swing = { hinge, leaf, arc: angle === 0 ? '' : `M ${closed.x} ${closed.y} A ${radius} ${radius} 0 0 ${direction * inside > 0 ? 1 : 0} ${leaf.x} ${leaf.y}` };
             }
             return <g key={item.id} className="plan-opening" role="button" tabIndex={0} aria-pressed={active} aria-label={`${item.type === 'door' ? item.doorStyle === 'frame' ? 'Marco de puerta' : 'Puerta' : 'Ventana'}, arrastra para mover a otra pared`} onClick={() => select(selection)} onPointerDown={event => startItem(event, selection)} onKeyDown={event => itemKeys(event, selection)}><line x1={start.x} y1={start.y} x2={end.x} y2={end.y} stroke="#fffdfa" strokeWidth="16" /><line x1={start.x} y1={start.y} x2={end.x} y2={end.y} stroke={active ? '#315e44' : item.type === 'door' ? '#a47750' : '#75a8bf'} strokeWidth={active ? 7 : 5} strokeDasharray={item.type === 'door' ? '5 3' : undefined} />{swing && <g stroke={active ? '#315e44' : '#a47750'} fill="none" strokeWidth="1.5" pointerEvents="none"><line x1={swing.hinge.x} y1={swing.hinge.y} x2={swing.leaf.x} y2={swing.leaf.y} /><path d={swing.arc} strokeOpacity=".65" /></g>}{active && <circle cx={center.x} cy={center.y} r="6" className="plan-move-handle" />}</g>;
           })}

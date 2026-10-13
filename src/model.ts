@@ -294,6 +294,8 @@ export function validateRoom(value: unknown): Room {
     if (p.type !== 'door' && p.type !== 'window') throw new Error('El tipo de abertura debe ser puerta o ventana.');
     const doorStyle = p.doorStyle;
     if (doorStyle !== undefined && (p.type !== 'door' || doorStyle !== 'right' && doorStyle !== 'left' && doorStyle !== 'frame')) throw new Error('La apertura de puerta debe ser derecha, izquierda o sólo marco.');
+    if (p.open !== undefined && p.type !== 'door') throw new Error('El estado de puerta sólo corresponde a las puertas.');
+    const open = p.open === undefined ? undefined : boolean(p.open, 'El estado de puerta');
     const wall = number(p.wall, 0, vertices.length - 1, `Pared de abertura ${i + 1}`);
     if (!Number.isInteger(wall)) throw new Error('El índice de pared debe ser entero.');
     const length = Math.hypot(vertices[wall].x - vertices[(wall + 1) % vertices.length].x, vertices[wall].z - vertices[(wall + 1) % vertices.length].z);
@@ -301,7 +303,7 @@ export function validateRoom(value: unknown): Room {
     const openingHeight = number(p.height, 0.3, height, `Altura de abertura ${i + 1}`);
     const sill = number(p.sill, 0, height - openingHeight, `Antepecho de abertura ${i + 1}`);
     if (p.type === 'door' && sill !== 0) throw new Error('Las puertas deben comenzar en el piso.');
-    return { id: text(p.id, 'Identificador de abertura'), type: p.type, ...(doorStyle === undefined ? {} : { doorStyle }), wall, width, height: openingHeight, sill, offset: number(p.offset, 0, length - width, `Posición de abertura ${i + 1}`) };
+    return { id: text(p.id, 'Identificador de abertura'), type: p.type, ...(doorStyle === undefined ? {} : { doorStyle }), ...(open === undefined ? {} : { open }), wall, width, height: openingHeight, sill, offset: number(p.offset, 0, length - width, `Posición de abertura ${i + 1}`) };
   });
   for (let i = 0; i < openings.length; i++) for (let j = i + 1; j < openings.length; j++) {
     if (openings[i].id === openings[j].id) throw new Error('Las aberturas necesitan identificadores únicos.');
@@ -380,7 +382,18 @@ export function addOpening(room: Room, type: 'door' | 'window', wall: number, op
   const width = options ? number(options.width, 0.3, wallLength(room, wall), 'El ancho de abertura') : Math.min(type === 'door' ? 0.9 : 1.5, gap.width - 0.1);
   if (width < 0.3) throw new Error('No queda espacio suficiente en esta pared para otra abertura.');
   if (width > gap.width + EPS) throw new Error('No queda espacio suficiente en esta pared para otra abertura.');
-  return validateRoom({ ...room, openings: [...room.openings, { id: itemId(), type, ...(options?.doorStyle === undefined ? {} : { doorStyle: options.doorStyle }), wall, offset: gap.start + (gap.width - width) / 2, width, height, sill }] });
+  return validateRoom({ ...room, openings: [...room.openings, { id: itemId(), type, ...(options?.doorStyle === undefined ? {} : { doorStyle: options.doorStyle }), ...(type === 'door' && options?.doorStyle !== 'frame' ? { open: false } : {}), wall, offset: gap.start + (gap.width - width) / 2, width, height, sill }] });
+}
+
+export function toggleSceneInteraction(room: Room, selection: Selection): Room {
+  if (selection.kind === 'light') {
+    const item = room.lights.find(p => p.id === selection.id);
+    return item ? validateRoom({ ...room, lights: room.lights.map(p => p.id === item.id ? { ...p, enabled: !p.enabled } : p) }) : room;
+  }
+  if (selection.kind !== 'opening') return room;
+  const item = room.openings.find(p => p.id === selection.id);
+  if (!item || item.type !== 'door' || item.doorStyle === 'frame') return room;
+  return validateRoom({ ...room, openings: room.openings.map(p => p.id === item.id ? { ...p, open: !(p.open ?? true) } : p) });
 }
 
 export function addLight(room: Room): Room {

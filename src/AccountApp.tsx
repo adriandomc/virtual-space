@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from 'react';
 import { Box, Eye, EyeOff, LoaderCircle, LogOut, Plus, Trash2 } from 'lucide-react';
+import Brand from './Brand';
 import { createBlankRoom } from './onboardingModel';
 import { accountRequest } from './accountApi';
 import './account.css';
@@ -9,10 +10,6 @@ const SetupApp = lazy(() => import('./SetupApp'));
 
 type User = { id: string; username: string };
 type Design = { id: string; name: string; updatedAt: string; setupStep?: 0 | 1 | 2 };
-
-function Brand() {
-  return <div className="account-brand"><Box size={24} strokeWidth={1.5} /><strong>espacio<span>.</span></strong></div>;
-}
 
 function PasswordField({ label, name, value, onChange, register, disabled }: { label: string; name: string; value: string; onChange: (value: string) => void; register: boolean; disabled: boolean }) {
   const [visible, setVisible] = useState(false);

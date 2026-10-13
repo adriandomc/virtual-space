@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useId, useRef, useState } from 'react';
-import { Archive, ArrowLeft, ArrowRight, BedDouble, Box, Check, Copy, DoorClosed, DoorOpen, Grid2X2, Lightbulb, LoaderCircle, Plus, Table2, Trash2 } from 'lucide-react';
+import { Archive, ArrowLeft, ArrowRight, BedDouble, Check, Copy, DoorClosed, DoorOpen, Grid2X2, Lightbulb, LoaderCircle, Plus, Table2, Trash2 } from 'lucide-react';
+import Brand from './Brand';
 import PlanEditor from './PlanEditor';
 import { parseColor } from './fieldDraft';
 import useFieldDraft from './useFieldDraft';
@@ -134,7 +135,7 @@ export default function Onboarding({ room, onChange, sketchUrl, onSketchChange, 
   ];
 
   return <div className="setup-page">
-    <header className="setup-header"><div className="account-brand"><Box size={24} strokeWidth={1.5} /><strong>espacio<span>.</span></strong></div><button type="button" className="setup-secondary" disabled={disabled} onClick={onCancel}><ArrowLeft size={18} />Mis diseños</button></header>
+    <header className="setup-header"><Brand /><button type="button" className="setup-secondary" disabled={disabled} onClick={onCancel}><ArrowLeft size={18} />Mis diseños</button></header>
     <div className="setup-heading"><h1>Nuevo diseño</h1><ol className="setup-steps" aria-label="Pasos del nuevo diseño">{STEPS.map((item, index) => <li key={item.id} className={index === step ? 'current' : index < step ? 'complete' : ''} aria-current={index === step ? 'step' : undefined}><span>{index < step ? <Check size={17} /> : index + 1}</span>{item.label}</li>)}</ol></div>
     <main className={'setup-content setup-step-' + current.id}>
       <fieldset className="setup-controls" disabled={disabled}>

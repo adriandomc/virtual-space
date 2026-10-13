@@ -22,7 +22,7 @@ test('el servidor persiste proyectos y croquis con permisos, revisiones y rutas 
   const directory = mkdtempSync(join(tmpdir(), 'virtual-room-test-'));
   const dataDir = join(directory, 'data'), staticDir = join(directory, 'dist');
   mkdirSync(join(staticDir, 'assets'), { recursive: true });
-  writeFileSync(join(staticDir, 'index.html'), '<html>Espacio</html>');
+  writeFileSync(join(staticDir, 'index.html'), '<html><title>3D Space</title></html>');
   writeFileSync(join(staticDir, 'assets', 'app.js'), 'console.log("room");'.repeat(1000));
   writeFileSync(join(directory, 'secret.txt'), 'private');
   let server = createServer({ dataDir, staticDir });
@@ -178,7 +178,7 @@ test('el servidor persiste proyectos y croquis con permisos, revisiones y rutas 
     });
     await t.test('sirve la aplicación, comprime recursos y bloquea rutas fuera de dist', async () => {
       const html = await send('/');
-      assert.equal(html.status, 200); assert.equal(html.headers.get('cache-control'), 'no-cache'); assert.match(await html.text(), /Espacio/);
+      assert.equal(html.status, 200); assert.equal(html.headers.get('cache-control'), 'no-cache'); assert.match(await html.text(), /<title>3D Space<\/title>/);
       assert.equal((await send('/another-room')).status, 200);
       assert.equal((await send('/api/unknown')).status, 404);
       assert.equal((await send('/missing.js')).status, 404);

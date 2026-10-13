@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { daylightFactor, joystickVector, renderPixelRatio } from './navigation';
+import { createDefaultRoom } from './model';
+import { daylightFactor, daylightOpeningArea, joystickVector, renderPixelRatio } from './navigation';
 
 test('render density normalizes fractional device ratios and keeps desktop/mobile limits', () => {
   assert.equal(renderPixelRatio(1.0000000298, 'hyperrealistic', true), 1);
@@ -27,4 +28,20 @@ test('indirect daylight requires openings, follows the day, and saturates for la
   assert.equal(daylightFactor(0, 4, 20), 0);
   assert.equal(daylightFactor(0.8, 1, 20), 0.2);
   assert.equal(daylightFactor(0.8, 10, 20), 0.8);
+});
+
+test('daylight enters windows, open and legacy doors, and empty frames, but not closed door leaves', () => {
+  const room = createDefaultRoom();
+  const door = { id: 'closed', type: 'door' as const, wall: 0, offset: 0, width: 1, height: 2, sill: 0 };
+  room.openings = [
+    { ...door, id: 'window', type: 'window', width: 1.5, height: 1 },
+    { ...door, open: false, doorStyle: 'right' },
+    { ...door, id: 'open', open: true, doorStyle: 'left' },
+    { ...door, id: 'legacy' },
+    { ...door, id: 'frame', doorStyle: 'frame', open: false },
+  ];
+  assert.equal(daylightOpeningArea(room), 7.5);
+  assert.equal(daylightOpeningArea({ ...room, openings: [room.openings[1]] }), 0);
+  assert.equal(daylightOpeningArea({ ...room, openings: [{ ...room.openings[1], open: true }] }), 2);
+  assert.equal(daylightOpeningArea({ ...room, openings: [] }), 0);
 });

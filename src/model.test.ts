@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { addFurniture, addLight, addOpening, BED_SIZES, bounds, createDefaultRoom, fitFurniture, fitRoom, furnitureContains, furnitureCorners, furnitureInside, furniturePlacementIssues, furnitureWalkable, interiorPoint, interiorWalkPoint, invalidFurnitureIds, itemWorldPosition, moveSceneItem, pointInPolygon, polygonArea, resizeRoom, snapPlanPoint, validateRoom, walkablePoint } from './model';
+import { addFurniture, addLight, addOpening, BED_SIZES, bounds, createDefaultRoom, fitFurniture, fitRoom, furnitureContains, furnitureCorners, furnitureInside, furniturePlacementIssues, furnitureWalkable, interiorPoint, interiorWalkPoint, invalidFurnitureIds, itemWorldPosition, moveSceneItem, pointInPolygon, polygonArea, resizeRoom, snapPlanPoint, toggleSceneInteraction, validateRoom, walkablePoint } from './model';
 import type { BedSize, FurnitureItem } from './types';
 
 test('el cuarto inicial es válido, tiene 20 m² y aberturas reales', () => {
@@ -157,6 +157,40 @@ test('el alta manual permite una ventana sobre una puerta sin superponerlas vert
   assert.equal(contact.openings.length, 2);
   assert.doesNotThrow(() => validateRoom(contact));
   assert.throws(() => addOpening(room, 'window', 0, { width: 1.25, height: 0.4, sill: 2.09 }), /espacio/);
+});
+
+test('las puertas nuevas empiezan cerradas y el estado se conserva al mover, ajustar y guardar', () => {
+  const base = { ...createDefaultRoom(), openings: [] };
+  for (const doorStyle of ['right', 'left'] as const) {
+    const room = addOpening(base, 'door', 0, { width: 0.9, height: 2.1, doorStyle });
+    assert.equal(room.openings[0].open, false);
+    const selection = { kind: 'opening' as const, id: room.openings[0].id };
+    const opened = toggleSceneInteraction(room, selection);
+    assert.equal(opened.openings[0].open, true);
+    for (const result of [fitRoom(opened), resizeRoom(opened, 6, 5), moveSceneItem(opened, selection, { x: -2.5, z: 0 }), validateRoom(JSON.parse(JSON.stringify(opened)))]) assert.equal(result.openings[0].open, true);
+    assert.deepEqual(toggleSceneInteraction(opened, selection), room);
+  }
+  assert.equal('open' in addOpening(base, 'door', 0).openings[0], true);
+  assert.equal('open' in addOpening(base, 'door', 0, { width: 0.9, height: 2.1, doorStyle: 'frame' }).openings[0], false);
+  assert.equal('open' in addOpening(base, 'window', 0, { width: 0.9, height: 1 }).openings[0], false);
+  const legacy = validateRoom(createDefaultRoom());
+  assert.equal('open' in legacy.openings[0], false);
+  assert.equal(toggleSceneInteraction(legacy, { kind: 'opening', id: legacy.openings[0].id }).openings[0].open, false);
+});
+
+test('interactúa sólo con puertas con hoja y focos sin modificar otras propiedades', () => {
+  const base = createDefaultRoom();
+  const room = { ...base, openings: [...base.openings, { ...base.openings[0], id: 'frame', wall: 0, doorStyle: 'frame' as const, open: false }] };
+  const lit = toggleSceneInteraction(room, { kind: 'light', id: room.lights[0].id });
+  assert.deepEqual(lit, { ...room, lights: [{ ...room.lights[0], enabled: true }] });
+  assert.deepEqual(toggleSceneInteraction(lit, { kind: 'light', id: room.lights[0].id }), room);
+  for (const selection of [{ kind: 'opening' as const, id: room.openings[1].id }, { kind: 'opening' as const, id: 'frame' }, { kind: 'opening' as const, id: 'missing' }, { kind: 'light' as const, id: 'missing' }, { kind: 'furniture' as const, id: 'missing' }, { kind: 'floor' as const }]) assert.equal(toggleSceneInteraction(room, selection), room);
+});
+
+test('rechaza estados corruptos de puertas y estados en ventanas', () => {
+  const room = createDefaultRoom();
+  for (const open of [null, '', 'false', 0, 1, {}, []]) assert.throws(() => validateRoom({ ...room, openings: [{ ...room.openings[0], open }] }), /estado de puerta/);
+  for (const open of [true, false]) assert.throws(() => validateRoom({ ...room, openings: [{ ...room.openings[1], open }] }), /sólo corresponde/);
 });
 
 test('importa cuartos antiguos sin muebles y conserva la nueva colección', () => {
