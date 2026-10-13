@@ -46,6 +46,7 @@
 .landing-dots>button>span{width:8px;height:8px;border-radius:50%;background:#c3ceba}
 .landing-dots>button.active>span{background:#536b45}
 .landing-dots>button:hover>span{background:#8ba479}
+.landing-footer{display:flex;justify-content:center;padding:0 20px max(16px,env(safe-area-inset-bottom))}
 @media(max-width:850px){.landing-header{height:80px;padding:16px 24px}.landing-main{min-height:calc(100dvh - 80px);padding:24px 20px 40px}.landing-stage{--canvas-height:440px;padding:0 52px}.demo-properties{width:218px;padding:16px 14px;gap:14px}}
 @media(max-width:640px){
  .landing-header{height:76px;padding:14px 16px;gap:12px}.landing-logo{width:44px;height:44px}.landing-logo .brand-mark{width:38px;height:38px}.landing-enter{padding:11px 13px;font-size:15px;gap:8px}

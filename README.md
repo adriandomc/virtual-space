@@ -14,11 +14,23 @@ El acceso sólo necesita usuario y contraseña. El usuario se normaliza en minú
 
 Los diseños son privados inicialmente. **Compartir → Crear enlace** habilita una dirección de lectura `/editor?room=<identificador>`: quien reciba ese enlace puede ver el diseño y su croquis, y recorrerlo sin iniciar sesión. **Desactivar enlace** revoca ese acceso. El enlace no concede permisos de edición.
 
-Las cuentas, sesiones, diseños, croquis y contadores de seguridad se guardan en `/data/accounts.sqlite`. La base anterior `rooms.sqlite` no se lee ni se migra; se inicia el sistema de cuentas desde cero. Las contraseñas se guardan con scrypt y sal aleatoria; los tokens de sesión sólo se guardan como hashes. La sesión dura 30 días y se revoca al cerrar sesión.
+Las cuentas, sesiones, diseños, croquis y contadores de seguridad se guardan en `/data/accounts.sqlite`. La base anterior `rooms.sqlite` no se lee ni se migra; se inicia el sistema de cuentas desde cero. Las contraseñas se guardan con scrypt y sal aleatoria; los tokens de sesión sólo se guardan como hashes. El token de sesión vence como máximo a los 30 días y se revoca al cerrar sesión. La cookie es de sesión por defecto; sólo se conserva durante 30 días si el usuario marca **Recordar sesión 30 días (usa cookies)** al entrar o registrarse. Esta opción está desmarcada inicialmente y se valida también en el servidor.
 
 Los límites persisten tras reinicios: 5 intentos de acceso por usuario/IP en 15 minutos, 30 intentos totales por IP en ese intervalo y bloqueo progresivo tras 10 fallos, de 15 minutos hasta 24 horas. Se agrupan direcciones IPv6 por `/64`. El registro se limita a 5 cuentas por IP/hora; también hay límites de peticiones, creación de diseños y cargas. La derivación de contraseñas limita su concurrencia para mantener controlado el uso de memoria. Los límites de una IP no bloquean globalmente una cuenta.
 
 Los datos se conservan en el servidor, sin depender del almacenamiento local del navegador. La exportación JSON permite respaldar los parámetros del cuarto; el respaldo completo de los proyectos y croquis se hace desde el volumen de datos del servidor.
+
+## Privacidad
+
+`/privacy` muestra el aviso público sin exigir una cuenta ni cargar el editor. Es accesible desde la portada, el acceso, la biblioteca, los ajustes del editor y la preparación de diseños. Los enlaces del editor y la preparación abren otra pestaña para conservar el trabajo en curso.
+
+La aplicación no incluye analíticas, publicidad, rastreadores ni peticiones automáticas a proveedores externos. El aviso describe los datos mínimos de cuenta y seguridad, el guardado de diseños, las cookies, los enlaces compartidos, la conservación y las solicitudes de derechos. Los datos guardados son accesibles operativamente por la administración del servidor; no hay cifrado extremo a extremo. Los croquis conservan el archivo original y sus metadatos.
+
+No se añade un banner general de aceptación: el acceso normal usa una cookie necesaria de sesión y la persistencia se elige de forma informada en el formulario. La selección nueva se aplica al siguiente acceso; para retirar la elección se cierra sesión y se vuelve a entrar sin recordarla. Si se incorporan cookies de otras finalidades, habrá que revisar el aviso y solicitar la elección correspondiente antes de utilizarlas.
+
+Antes de publicar el aviso, completa `details` en `src/Privacy.tsx` con la identidad del responsable, domicilio para notificaciones, contacto, país del servidor y las políticas reales de registros y respaldos. Mientras esos campos estén vacíos, la página se identifica como un borrador. Los registros de acceso de Coolify y su proxy, y los respaldos, dependen del operador: no se desactivan ni se borran desde esta aplicación. El aviso no sustituye la revisión de la configuración del servidor o de las obligaciones aplicables en cada jurisdicción.
+
+La configuración publicada corresponde a `3d.adriandomc.com`. Si despliegas otra instancia, reemplaza los datos del responsable y verifica las políticas de tu infraestructura. En esta instalación, revisada el 13 de octubre de 2026, el proxy activo es Caddy: no tiene registro de accesos HTTP habilitado. Los contenedores de la aplicación y del proxy usan `json-file` con rotación de tres archivos de 10 MB; no hay un plazo fijo de conservación en días. Los destinos de Log Drains están desactivados y Sentinel conserva siete días de métricas de estado del servidor. No se modificó esa configuración durante la revisión.
 
 ## Uso del editor
 

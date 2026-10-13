@@ -1,7 +1,8 @@
-export type SitePage = 'landing' | 'login' | 'designs' | 'editor';
+export type SitePage = 'landing' | 'login' | 'designs' | 'editor' | 'privacy';
 
 export const LOGIN_PATH = '/login';
 export const DESIGNS_PATH = '/designs';
+export const PRIVACY_PATH = '/privacy';
 
 export function editorPath(id: string, setup = false) {
   const query = new URLSearchParams({ room: id });
@@ -19,6 +20,7 @@ export function siteRoute(url: URL): { page: SitePage; redirect?: string } {
   if (path === '/editor') return id ? { page: 'editor' } : { page: 'designs', redirect: DESIGNS_PATH };
   if (path === LOGIN_PATH) return { page: 'login' };
   if (path === DESIGNS_PATH) return { page: 'designs' };
+  if (path === PRIVACY_PATH) return { page: 'privacy' };
   return path === '/' ? { page: 'landing' } : { page: 'landing', redirect: '/' };
 }
 

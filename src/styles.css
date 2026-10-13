@@ -40,4 +40,6 @@
 @media(max-height:550px){.large-plan>.plan-editor-large{height:auto;min-height:100%}.large-plan .plan-editor-large .plan-canvas{height:230px;flex:none}}
 @keyframes scene-spin{to{transform:rotate(360deg)}}
 .field-feedback{font-size:14px;line-height:1.45;color:#8a5237}
+.privacy-link{display:inline-flex;align-items:center;justify-content:center;min-height:44px;color:#637259;font-size:14px;line-height:1.5;text-decoration:underline;text-underline-offset:3px}
+.privacy-link:hover{color:#415b33}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important;scroll-behavior:auto!important}}

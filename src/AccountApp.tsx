@@ -25,6 +25,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [rememberSession, setRememberSession] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -34,7 +35,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
     if (register && password !== confirmPassword) { setError('Las contraseñas no coinciden.'); return; }
     setPending(true); setError('');
     try {
-      const result = await accountRequest<{ user: User }>('/api/auth/' + (register ? 'register' : 'login'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: username.trim().toLowerCase(), password, ...(register ? { confirmPassword } : {}) }) });
+      const result = await accountRequest<{ user: User }>('/api/auth/' + (register ? 'register' : 'login'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: username.trim().toLowerCase(), password, rememberSession, ...(register ? { confirmPassword } : {}) }) });
       setPassword(''); setConfirmPassword(''); onAuthenticated(result.user);
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudo ingresar. Inténtalo de nuevo.'); }
     finally { setPending(false); }
@@ -46,14 +47,15 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
       <PasswordField label="Contraseña" name="password" value={password} onChange={setPassword} register={register} disabled={pending} />
       {register && <PasswordField label="Confirmar contraseña" name="confirmPassword" value={confirmPassword} onChange={setConfirmPassword} register disabled={pending} />}
       {register && <p className="account-note">Nota: recuerda tu contraseña. No hay forma de recuperarla.</p>}
+      <label className="account-remember"><input type="checkbox" name="rememberSession" checked={rememberSession} disabled={pending} onChange={event => setRememberSession(event.target.checked)} /><span>Recordar sesión 30 días (usa cookies)</span></label>
       {error && <p className="account-error" role="alert">{error}</p>}
       <button type="submit" className="account-primary" disabled={pending}>{pending && <LoaderCircle size={17} className="saving-spinner" />}{register ? 'Crear cuenta' : 'Entrar'}</button>
     </form>
-    <a href="/" className="auth-home">Volver al inicio</a>
+    <nav className="auth-links" aria-label="Enlaces de cuenta"><a href="/" className="auth-home">Volver al inicio</a><a className="privacy-link" href="/privacy" target="_blank" rel="noopener">Aviso de privacidad</a></nav>
   </section></main>;
 }
 
-export default function AccountApp({ page }: { page: Exclude<SitePage, 'landing'> }) {
+export default function AccountApp({ page }: { page: Exclude<SitePage, 'landing' | 'privacy'> }) {
   const [user, setUser] = useState<User | null>(null);
   const [loadingSession, setLoadingSession] = useState(true);
   const [sessionError, setSessionError] = useState('');
@@ -118,5 +120,6 @@ export default function AccountApp({ page }: { page: Exclude<SitePage, 'landing'
       {error && <div className="library-error"><p className="account-error" role="alert">{error}</p><button type="button" className="account-secondary" disabled={!!pending} onClick={() => setLibraryAttempt(current => current + 1)}>Reintentar</button></div>}
       {loadingDesigns ? <div className="library-empty" aria-label="Cargando diseños"><LoaderCircle size={23} className="saving-spinner" /></div> : designs.length ? <ul className="design-list">{designs.map(design => <li key={design.id}><a href={editorPath(design.id, design.setupStep !== undefined)} className="design-open"><span className="design-icon"><Box size={27} strokeWidth={1.3} /></span><span><strong>{design.name}</strong><>{design.setupStep === undefined ? <time dateTime={new Date(design.updatedAt).toISOString()}>{new Date(design.updatedAt).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' })}</time> : <span className="design-progress">Continuar preparación</span>}</></span></a><button type="button" className="design-delete" aria-label={'Eliminar ' + design.name} disabled={!!pending} onClick={() => void deleteDesign(design)}>{pending === design.id ? <LoaderCircle size={19} className="saving-spinner" /> : <Trash2 size={19} />}</button></li>)}</ul> : !error && <p className="library-empty">Sin diseños</p>}
     </section>
+    <footer className="account-footer"><a className="privacy-link" href="/privacy">Aviso de privacidad</a></footer>
   </main>;
 }

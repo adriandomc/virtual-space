@@ -57,7 +57,7 @@ export default function Landing() {
       <a className="landing-enter" href="/login">Entrar o crear cuenta<ArrowRight size={18} /></a>
     </header>
     <main className="landing-main">
-      <h1 className="landing-title">Diseña tus espacio en 3D. Totalmente gratis</h1>
+      <h1 className="landing-title">Diseña tu espacio en 3D. ¡Totalmente gratis!</h1>
       <section className="landing-demo" aria-label="Demo de 3D Space" aria-roledescription="presentación">
         <div className="landing-stage">
           <button type="button" className="landing-arrow landing-previous" aria-label="Demo anterior" disabled={step === 0} onClick={() => changeStep(step - 1)}><ArrowLeft size={23} /></button>
@@ -92,5 +92,6 @@ export default function Landing() {
         <nav className="landing-dots" aria-label="Demos">{STEPS.map((item, index) => <button key={item.label} type="button" className={index === step ? 'active' : ''} aria-label={item.label} aria-current={index === step ? 'step' : undefined} onClick={() => changeStep(index)}><span /></button>)}</nav>
       </section>
     </main>
+    <footer className="landing-footer"><a className="privacy-link" href="/privacy">Aviso de privacidad</a></footer>
   </div>;
 }

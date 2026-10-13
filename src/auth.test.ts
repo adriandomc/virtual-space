@@ -18,7 +18,7 @@ const close = (server: Server) => new Promise<void>((accept, reject) => server.c
 const credentials = { username: 'Owner', password: 'test-password', confirmPassword: 'test-password' };
 const cookieFor = (response: Response) => response.headers.get('set-cookie')!.split(';')[0];
 
-test('cuentas sin datos personales, sesiones persistentes y aislamiento de diseños', async () => {
+test('cuentas sin correo, sesiones del servidor y aislamiento de diseños', async () => {
   const dataDir = mkdtempSync(join(tmpdir(), 'virtual-space-accounts-'));
   writeFileSync(join(dataDir, 'rooms.sqlite'), 'legacy untouched');
   let clock = 1_800_000_000_000;
@@ -35,7 +35,7 @@ test('cuentas sin datos personales, sesiones persistentes y aislamiento de dise�
     ]) assert.equal((await send('/api/auth/register', 'POST', { ...credentials, ...patch })).status, 400);
     const registered = await send('/api/auth/register', 'POST', { ...credentials, username: ' Owner ' });
     assert.equal(registered.status, 201);
-    assert.match(registered.headers.get('set-cookie')!, /^__Host-vs_session=[a-f0-9]{64}; Path=\/; HttpOnly; SameSite=Lax; Max-Age=2592000; Secure$/);
+    assert.match(registered.headers.get('set-cookie')!, /^__Host-vs_session=[a-f0-9]{64}; Path=\/; HttpOnly; SameSite=Lax; Secure$/);
     const user = (await registered.json()).user, originalCookie = cookieFor(registered);
     assert.equal(user.username, 'owner'); assert.deepEqual(Object.keys(user).sort(), ['id', 'username']);
     assert.equal((await send('/api/auth/register', 'POST', { ...credentials, username: 'OWNER' })).status, 409);
@@ -81,6 +81,55 @@ test('cuentas sin datos personales, sesiones persistentes y aislamiento de dise�
     const again = await send('/api/auth/login', 'POST', credentials); const expiredCookie = cookieFor(again);
     clock += 30 * 24 * 60 * 60_000;
     assert.equal((await (await send('/api/auth/session', 'GET', undefined, expiredCookie)).json()).user, null);
+  } finally { await close(server); rmSync(dataDir, { recursive: true, force: true }); }
+});
+
+test('registro y acceso usan cookies de sesión salvo elección explícita de recordar 30 días', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'virtual-space-session-cookies-'));
+  const server = createServer({ dataDir, secureCookie: true }), base = await listen(server);
+  const send = (path: string, body?: unknown, cookie = '') => fetch(base + path, {
+    method: body === undefined ? 'GET' : 'POST',
+    headers: { Origin: base, 'Content-Type': 'application/json', ...(cookie ? { Cookie: cookie } : {}) },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const assertSessionCookie = (response: Response, remembered: boolean) => {
+    const header = response.headers.get('set-cookie')!;
+    assert.match(header, /^__Host-vs_session=[a-f0-9]{64}; Path=\/; HttpOnly; SameSite=Lax;/);
+    assert.match(header, /; Secure$/); assert.doesNotMatch(header, /Domain=|Expires=/);
+    if (remembered) assert.match(header, /; Max-Age=2592000; Secure$/);
+    else assert.doesNotMatch(header, /Max-Age=/);
+  };
+  try {
+    const choices = [{}, { rememberSession: false }, { rememberSession: true }];
+    for (const [index, choice] of choices.entries()) {
+      const body = { ...credentials, username: 'cookie_owner_' + index, ...choice };
+      const registered = await send('/api/auth/register', body);
+      assert.equal(registered.status, 201); assertSessionCookie(registered, choice.rememberSession === true);
+      const original = cookieFor(registered), session = await send('/api/auth/session', undefined, original);
+      assert.equal((await session.json()).user.username, body.username);
+      assert.equal(session.headers.get('set-cookie'), null);
+      const login = await send('/api/auth/login', body, original);
+      assert.equal(login.status, 200); assertSessionCookie(login, choice.rememberSession === true);
+      const rotated = cookieFor(login); assert.notEqual(rotated, original);
+      assert.equal((await (await send('/api/auth/session', undefined, original)).json()).user, null);
+      const logout = await send('/api/auth/logout', {}, rotated);
+      assert.equal(logout.status, 200);
+      assert.match(logout.headers.get('set-cookie')!, /^__Host-vs_session=; Path=\/; HttpOnly; SameSite=Lax; Max-Age=0; Secure$/);
+      assert.equal((await (await send('/api/auth/session', undefined, rotated)).json()).user, null);
+    }
+    const valid = await send('/api/auth/login', { ...credentials, username: 'cookie_owner_0' });
+    assert.equal(valid.status, 200);
+    const current = cookieFor(valid);
+    for (const rememberSession of [null, 'true', 'false', 0, 1, [], {}]) {
+      for (const endpoint of ['register', 'login']) {
+        const invalid = await send('/api/auth/' + endpoint, { ...credentials, username: endpoint === 'register' ? 'invalid_choice' : 'cookie_owner_0', rememberSession }, current);
+        assert.equal(invalid.status, 400); assert.equal(invalid.headers.get('set-cookie'), null);
+      }
+    }
+    assert.equal((await (await send('/api/auth/session', undefined, current)).json()).user.username, 'cookie_owner_0');
+    const database = new DatabaseSync(join(dataDir, 'accounts.sqlite'));
+    try { assert.equal(database.prepare('SELECT COUNT(*) AS count FROM users').get()!.count, 3); }
+    finally { database.close(); }
   } finally { await close(server); rmSync(dataDir, { recursive: true, force: true }); }
 });
 
