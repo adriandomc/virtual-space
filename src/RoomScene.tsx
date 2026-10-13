@@ -12,6 +12,8 @@ import { createCeilingMaterial, createFabricMaterial, createFloorMaterial, creat
 import { createDuvetGeometry, createPillowGeometry } from './beddingGeometry';
 import { createArchitecturalPostProcessing } from './postProcessing';
 import { daylightFactor, daylightOpeningArea, joystickVector, renderPixelRatio } from './navigation';
+import { createCameraTransition, sampleCameraTransition } from './cameraTransition';
+import type { CameraPose, CameraTransition } from './cameraTransition';
 import type { FurnitureItem, Point, Room, Selection, ViewMode } from './types';
 import './scene.css';
 
@@ -26,6 +28,7 @@ type Props = {
   showFurniture: boolean;
   resetKey: number;
   onReady?: (backend: string) => void;
+  animateView?: boolean;
 };
 type WallView = { group: THREE.Group; midpoint: THREE.Vector3; inward: THREE.Vector3; material: THREE.MeshStandardNodeMaterial; index: number };
 const KEY_DIRECTIONS: Record<string, string> = { KeyW: 'forward', ArrowUp: 'forward', KeyS: 'back', ArrowDown: 'back', KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right', KeyQ: 'lookLeft', KeyE: 'lookRight', KeyR: 'lookUp', KeyF: 'lookDown' };
@@ -62,6 +65,10 @@ type Runtime = {
   structure: string;
   outlinedKey: string | null;
   walkBlocked: boolean;
+  viewTransition: CameraTransition | null;
+  orbitPose: (CameraPose & { target: THREE.Vector3 }) | null;
+  animateView: boolean;
+  ceilingOpacity: number;
 };
 
 function disposeArchitecture(runtime: Runtime) {
@@ -141,7 +148,7 @@ function updateSelection(runtime: Runtime, props: Props) {
   if (runtime.transform.dragging || runtime.directDragging) return;
   runtime.manipulating = null;
   const position = selection ? itemWorldPosition(props.room, selection) : null;
-  const editable = canMove(selection) && !props.readOnly && props.mode === 'orbit';
+  const editable = canMove(selection) && !props.readOnly && props.mode === 'orbit' && !runtime.viewTransition;
   if (!editable || !position) { runtime.transform.detach(); runtime.transform.enabled = false; return; }
   runtime.proxy.position.set(position.x, position.y, position.z);
   const furniture = selection?.kind === 'furniture' ? props.room.furniture.find(item => item.id === selection.id) : null;
@@ -534,6 +541,19 @@ function buildRoom(runtime: Runtime, room: Room, furniture: boolean) {
   runtime.objects.set('ceiling', ceiling);
   group.add(ceiling);
   runtime.ceiling = ceiling;
+  if (runtime.animateView) {
+    const material = ceiling.material as THREE.Material;
+    material.transparent = true;
+    material.depthWrite = false;
+    material.opacity = runtime.ceilingOpacity;
+    ceiling.castShadow = false;
+    const ceilingShadow = new THREE.Mesh(ceiling.geometry, shadowMaterial);
+    ceilingShadow.position.copy(ceiling.position);
+    ceilingShadow.rotation.copy(ceiling.rotation);
+    ceilingShadow.layers.set(1);
+    ceilingShadow.castShadow = true;
+    group.add(ceilingShadow);
+  }
   const day = room.sun.enabled ? Math.max(0, Math.sin((room.sun.hour - 6) / 12 * Math.PI)) : 0;
   const daylightBounce = daylightFactor(day, daylightOpeningArea(room), polygonArea(room.vertices));
   // shortcut: hemisphere approximates diffuse daylight bounce; use global illumination for calibrated lighting accuracy.
@@ -666,6 +686,7 @@ function fitOrbitCamera(runtime: Runtime, room: Room, preserveZoom = false) {
 }
 
 function resetCamera(runtime: Runtime, room: Room, mode: ViewMode) {
+  runtime.viewTransition = null;
   runtime.viewMode = mode;
   updateEnvironment(runtime, room, mode);
   const b = mode === 'orbit' ? sceneBounds(room) : bounds(room.vertices);
@@ -699,6 +720,67 @@ function resetCamera(runtime: Runtime, room: Room, mode: ViewMode) {
   runtime.camera.updateProjectionMatrix();
 }
 
+function finishViewTransition(runtime: Runtime) {
+  runtime.viewTransition = null;
+  runtime.camera.rotation.reorder('YXZ');
+  runtime.yaw = runtime.camera.rotation.y;
+  runtime.pitch = runtime.camera.rotation.x;
+  if (runtime.viewMode === 'orbit' && runtime.orbitPose) {
+    runtime.controls.target.copy(runtime.orbitPose.target);
+    runtime.controls.enabled = true;
+    runtime.controls.update();
+  } else {
+    runtime.controls.enabled = false;
+    runtime.renderer.domElement.focus({ preventScroll: true });
+  }
+}
+
+function startViewTransition(runtime: Runtime, room: Room, mode: ViewMode) {
+  const { camera, controls } = runtime;
+  if (runtime.viewMode === 'orbit' && !runtime.viewTransition) {
+    runtime.orbitPose = { position: camera.position.clone(), quaternion: camera.quaternion.clone(), target: controls.target.clone() };
+  }
+  const from = { position: camera.position.clone(), quaternion: camera.quaternion.clone() };
+  // Drain pending orbit inertia while retaining the exact pose at the user's click.
+  const damping = controls.enableDamping;
+  controls.enableDamping = false;
+  controls.update();
+  controls.enableDamping = damping;
+  camera.position.copy(from.position);
+  camera.quaternion.copy(from.quaternion);
+  controls.enabled = false;
+  runtime.transform.detach();
+  runtime.transform.enabled = false;
+  runtime.viewMode = mode;
+  runtime.walkBlocked = false;
+  let to: CameraPose;
+  if (mode === 'walk') {
+    const free = interiorWalkPoint(room);
+    const position = free ?? interiorPoint(room.vertices, Math.max(0.2, room.thickness / 2 + 0.12));
+    runtime.walkBlocked = free === null;
+    to = { position: new THREE.Vector3(position.x, Math.min(1.65, room.height - 0.2), position.z), quaternion: new THREE.Quaternion() };
+  } else {
+    if (!runtime.orbitPose) {
+      // An animated scene can also be initialized in walk mode.
+      const b = sceneBounds(room), span = Math.max(b.width, b.depth, room.height);
+      const target = new THREE.Vector3((b.minX + b.maxX) / 2, room.height * 0.28, (b.minZ + b.maxZ) / 2);
+      const view = camera.clone();
+      view.position.set(target.x - span * 1.05, span * 0.9, target.z + span * 1.2);
+      view.lookAt(target);
+      runtime.orbitPose = { position: view.position.clone(), quaternion: view.quaternion.clone(), target };
+    }
+    to = runtime.orbitPose;
+  }
+  runtime.viewTransition = createCameraTransition(from, to, performance.now());
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    sampleCameraTransition(runtime.viewTransition, runtime.viewTransition.startedAt + runtime.viewTransition.duration, camera);
+    runtime.ceilingOpacity = mode === 'walk' ? 1 : 0;
+    finishViewTransition(runtime);
+  }
+  updateFurniturePlacement(runtime, room);
+  updateEnvironment(runtime, room, mode);
+}
+
 export default function RoomScene(props: Props) {
   const container = useRef<HTMLDivElement>(null);
   const runtime = useRef<Runtime | null>(null);
@@ -713,6 +795,8 @@ export default function RoomScene(props: Props) {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState('');
   const [walkBlocked, setWalkBlocked] = useState(false);
+  const [transitioning, setTransitioning] = useState(false);
+  const lastResetKey = useRef(props.resetKey);
   const [notice, setNotice] = useState('');
   const [walkTarget, setWalkTarget] = useState<Selection | null>(null);
   const walkTargetRef = useRef<Selection | null>(null);
@@ -724,7 +808,7 @@ export default function RoomScene(props: Props) {
   };
   const interact = (target: Selection | null) => {
     const state = current.current, active = runtime.current;
-    if (!active || state.mode !== 'walk' || !canInteract(state.room, target) || !target) return;
+    if (!active || active.viewTransition || state.mode !== 'walk' || !canInteract(state.room, target) || !target) return;
     const next = toggleSceneInteraction(state.room, target);
     current.current = { ...state, room: next };
     updateRoom(active, next, state.showFurniture);
@@ -779,7 +863,7 @@ export default function RoomScene(props: Props) {
         controls.enablePan = true;
         const content = new THREE.Group();
         scene.add(content);
-        const active: Runtime = { renderer, scene, camera, controls, content, walls: [], ceiling: null, yaw: 0, pitch: 0, fittedDistance: 0, objects: new Map(), invalidFurniture: new Set(), selectionBox: null, walkBlocked: false, transform, proxy, manipulating: null, directDragging: false, pendingEdit: false, lastOpeningBuild: 0, environment: null, architecturalEnvironment: null, sky: null, loadingSky: false, disposed: false, areaTextures: null, postProcessing: null, postFailed: false, viewMode: current.current.mode, builtRoom: null, structure: '', outlinedKey: null };
+        const active: Runtime = { renderer, scene, camera, controls, content, walls: [], ceiling: null, yaw: 0, pitch: 0, fittedDistance: 0, objects: new Map(), invalidFurniture: new Set(), selectionBox: null, walkBlocked: false, viewTransition: null, orbitPose: null, animateView: !!current.current.animateView, ceilingOpacity: current.current.mode === 'walk' ? 1 : 0, transform, proxy, manipulating: null, directDragging: false, pendingEdit: false, lastOpeningBuild: 0, environment: null, architecturalEnvironment: null, sky: null, loadingSky: false, disposed: false, areaTextures: null, postProcessing: null, postFailed: false, viewMode: current.current.mode, builtRoom: null, structure: '', outlinedKey: null };
         runtime.current = active;
         buildRoom(active, current.current.room, current.current.showFurniture);
         resetCamera(active, current.current.room, current.current.mode);
@@ -803,11 +887,11 @@ export default function RoomScene(props: Props) {
             if (object.shadow.mapSize.x !== size) { object.shadow.mapSize.set(size, size); object.shadow.needsUpdate = true; shadowProfileChanged = true; }
           });
           // Recreate shadow nodes when switching profiles so GPU bindings do not retain the old maps.
-          if (shadowProfileChanged && current.current.room.renderQuality === 'hyperrealistic') { buildRoom(active, current.current.room, current.current.showFurniture); updateSelection(active, current.current); }
+          if (shadowProfileChanged) { buildRoom(active, current.current.room, current.current.showFurniture); updateSelection(active, current.current); }
           const aspect = width / height;
           if (Math.abs(camera.aspect - aspect) > 0.001) {
             camera.aspect = aspect;
-            if (current.current.mode === 'orbit') fitOrbitCamera(active, current.current.room, true);
+            if (current.current.mode === 'orbit' && !active.viewTransition) fitOrbitCamera(active, current.current.room, true);
           }
           camera.updateProjectionMatrix();
         };
@@ -878,7 +962,7 @@ export default function RoomScene(props: Props) {
           active.manipulating = null;
           active.pendingEdit = false;
           directPlane = null;
-          controls.enabled = current.current.mode === 'orbit';
+          controls.enabled = current.current.mode === 'orbit' && !active.viewTransition;
           updateSelection(active, current.current);
         };
         const changed = () => { if (active.transform.dragging) active.pendingEdit = true; };
@@ -889,6 +973,7 @@ export default function RoomScene(props: Props) {
         transform.addEventListener('objectChange', changed);
         transform.addEventListener('dragging-changed', dragging);
         const down = (event: PointerEvent) => {
+          if (active.viewTransition) { event.preventDefault(); event.stopImmediatePropagation(); return; }
           if ((transform.dragging || active.directDragging) && pointer && event.pointerId !== pointer.id) { event.preventDefault(); event.stopImmediatePropagation(); return; }
           canvas.focus({ preventScroll: true });
           pointers.add(event.pointerId);
@@ -912,6 +997,7 @@ export default function RoomScene(props: Props) {
           canvas.setPointerCapture(event.pointerId);
         };
         const move = (event: PointerEvent) => {
+          if (active.viewTransition) { event.preventDefault(); event.stopImmediatePropagation(); return; }
           if (!pointer || pointer.id !== event.pointerId) return;
           if (active.directDragging && directPlane) {
             event.preventDefault(); event.stopImmediatePropagation();
@@ -930,6 +1016,7 @@ export default function RoomScene(props: Props) {
         };
         const up = (event: PointerEvent) => {
           pointers.delete(event.pointerId);
+          if (active.viewTransition) { pointer = null; event.preventDefault(); event.stopImmediatePropagation(); return; }
           if (!pointer || pointer.id !== event.pointerId) return;
           if (active.directDragging) { event.preventDefault(); event.stopImmediatePropagation(); finishDrag(); if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId); }
           else if (!pointer.handled && !pointer.multi && Math.hypot(event.clientX - pointer.startX, event.clientY - pointer.startY) < 5) {
@@ -939,9 +1026,10 @@ export default function RoomScene(props: Props) {
           }
           pointer = null;
         };
-        const cancel = () => { pointers.clear(); if (transform.dragging) transform.pointerUp(null); if (active.directDragging) finishDrag(); pointer = null; controls.enabled = current.current.mode === 'orbit'; };
+        const cancel = () => { pointers.clear(); if (transform.dragging) transform.pointerUp(null); if (active.directDragging) finishDrag(); pointer = null; controls.enabled = current.current.mode === 'orbit' && !active.viewTransition; };
         const keyDown = (event: KeyboardEvent) => {
           if (event.target !== canvas) return;
+          if (active.viewTransition) { if (KEY_DIRECTIONS[event.code] || event.code === 'Enter' || event.code === 'Space') event.preventDefault(); return; }
           if (event.code === 'Escape') { cancel(); current.current.onSelect(null); return; }
           if (current.current.mode === 'orbit' && !current.current.readOnly && canMove(current.current.selection)) {
             const selected = current.current.selection;
@@ -999,7 +1087,14 @@ export default function RoomScene(props: Props) {
           previous = time;
           const state = current.current;
           commitProxy();
-          if (state.mode === 'walk') {
+          if (active.viewTransition) {
+            if (sampleCameraTransition(active.viewTransition, performance.now(), camera)) {
+              finishViewTransition(active);
+              updateSelection(active, current.current);
+              setTransitioning(false);
+              setWalkBlocked(active.walkBlocked);
+            }
+          } else if (state.mode === 'walk') {
             active.yaw += (Number(directions.current.has('lookLeft')) - Number(directions.current.has('lookRight'))) * delta * 1.4;
             active.pitch = THREE.MathUtils.clamp(active.pitch + (Number(directions.current.has('lookUp')) - Number(directions.current.has('lookDown'))) * delta, -1.25, 1.25);
             camera.rotation.set(active.pitch, active.yaw, 0, 'YXZ');
@@ -1013,10 +1108,22 @@ export default function RoomScene(props: Props) {
             if (furnitureWalkable({ x: camera.position.x, z: camera.position.z + dz }, state.room)) camera.position.z += dz;
             if (time - lastWalkTargetUpdate >= 80) { changeWalkTarget(findWalkTarget()); lastWalkTargetUpdate = time; }
           } else if (!transform.dragging && !active.directDragging) controls.update();
-          for (const wall of active.walls) wall.group.visible = state.mode === 'walk' || state.selection?.kind === 'wall' && state.selection.index === wall.index || (camera.position.x - wall.midpoint.x) * wall.inward.x + (camera.position.z - wall.midpoint.z) * wall.inward.z > -0.03;
-          for (const [key, item] of active.objects) if (key.startsWith('opening:')) item.visible = state.mode === 'walk' || state.selection?.kind === 'opening' && key === selectionKey(state.selection) || active.walls[item.userData.wall]?.group.visible === true;
-          if (active.ceiling) active.ceiling.layers.set(state.mode === 'walk' || state.selection?.kind === 'ceiling' ? 0 : 1);
-          for (const object of active.content.children) if (object.userData.exterior) object.layers.set(state.mode === 'walk' ? 1 : 0);
+          // Cutaway follows the actual eye position while travelling, so enclosing geometry
+          // becomes visible behind the camera rather than covering the outside view at the click.
+          const inside = !!active.viewTransition && camera.position.y < state.room.height - 0.03 && pointInPolygon({ x: camera.position.x, z: camera.position.z }, state.room.vertices);
+          const enclosed = active.viewTransition ? inside : state.mode === 'walk';
+          for (const wall of active.walls) wall.group.visible = enclosed || state.selection?.kind === 'wall' && state.selection.index === wall.index || (camera.position.x - wall.midpoint.x) * wall.inward.x + (camera.position.z - wall.midpoint.z) * wall.inward.z > -0.03;
+          for (const [key, item] of active.objects) if (key.startsWith('opening:')) item.visible = enclosed || state.selection?.kind === 'opening' && key === selectionKey(state.selection) || active.walls[item.userData.wall]?.group.visible === true;
+          if (active.ceiling) {
+            if (active.animateView) {
+              const target = enclosed || state.selection?.kind === 'ceiling' ? 1 : 0;
+              active.ceilingOpacity = THREE.MathUtils.damp(active.ceilingOpacity, target, 14, delta);
+              if (Math.abs(active.ceilingOpacity - target) < 0.002) active.ceilingOpacity = target;
+              (active.ceiling.material as THREE.Material).opacity = active.ceilingOpacity;
+              active.ceiling.layers.set(active.ceilingOpacity > 0 ? 0 : 1);
+            } else active.ceiling.layers.set(enclosed || state.selection?.kind === 'ceiling' ? 0 : 1);
+          }
+          for (const object of active.content.children) if (object.userData.exterior) object.layers.set(enclosed ? 1 : 0);
           try {
             if (state.room.renderQuality === 'hyperrealistic' && !active.postProcessing && !active.postFailed) {
               try { active.postProcessing = createArchitecturalPostProcessing(active.renderer, scene, camera); }
@@ -1087,7 +1194,7 @@ export default function RoomScene(props: Props) {
     if (!active || !ready) return;
     updateRoom(active, effectiveRoom, props.showFurniture);
     updateSelection(active, current.current);
-    if (props.mode === 'walk') {
+    if (props.mode === 'walk' && active.viewMode === props.mode && !active.viewTransition) {
       active.camera.position.y = Math.min(1.65, effectiveRoom.height - 0.2);
       if (!furnitureWalkable({ x: active.camera.position.x, z: active.camera.position.z }, effectiveRoom)) resetCamera(active, effectiveRoom, props.mode);
       setWalkBlocked(active.walkBlocked);
@@ -1096,15 +1203,31 @@ export default function RoomScene(props: Props) {
 
   useEffect(() => {
     if (runtime.current && ready) {
+      const active = runtime.current;
       directions.current.clear();
+      joystickPointer.current = null;
       joystick.current = { x: 0, z: 0 };
       setStick({ x: 0, z: 0 });
       changeWalkTarget(null);
-      resetCamera(runtime.current, current.current.room, props.mode);
-      updateSelection(runtime.current, current.current);
-      setWalkBlocked(runtime.current.walkBlocked);
+      const resetRequested = lastResetKey.current !== props.resetKey;
+      lastResetKey.current = props.resetKey;
+      if (props.animateView && !resetRequested && props.mode !== 'plan' && active.viewMode !== 'plan') {
+        if (active.viewMode !== props.mode) {
+          active.transform.pointerUp(null);
+          active.directDragging = false;
+          active.pendingEdit = false;
+          active.manipulating = null;
+          startViewTransition(active, current.current.room, props.mode);
+          setTransitioning(!!active.viewTransition);
+        }
+      } else {
+        resetCamera(active, current.current.room, props.mode);
+        setTransitioning(false);
+      }
+      updateSelection(active, current.current);
+      setWalkBlocked(active.walkBlocked);
     }
-  }, [props.mode, props.resetKey, ready]);
+  }, [props.mode, props.resetKey, props.animateView, ready]);
 
   useEffect(() => {
     const active = runtime.current;
@@ -1114,13 +1237,14 @@ export default function RoomScene(props: Props) {
       active.directDragging = false;
       active.pendingEdit = false;
       active.manipulating = null;
-      active.controls.enabled = props.mode === 'orbit';
+      active.controls.enabled = props.mode === 'orbit' && !active.viewTransition;
     }
     updateSelection(active, current.current);
     setNotice('');
   }, [props.selection, props.readOnly, props.transformMode, props.mode, ready]);
 
   const moveJoystick = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (runtime.current?.viewTransition) return;
     const rect = event.currentTarget.getBoundingClientRect();
     const vector = joystickVector((event.clientX - rect.left - rect.width / 2) / 34, (event.clientY - rect.top - rect.height / 2) / 34);
     joystick.current = vector;
@@ -1139,6 +1263,6 @@ export default function RoomScene(props: Props) {
     {!ready && !error && <div className="scene-loading"><LoaderCircle size={24} /><span>Cargando…</span></div>}
     {error && <div className="scene-error" role="alert"><strong>No pudimos iniciar el visor</strong><p>{error}</p></div>}
     {notice && !error && <div className="scene-notice" role="status">{notice}</div>}
-    {ready && !error && props.mode === 'walk' && <><div className="walk-hint">{walkBlocked ? 'No queda espacio libre para caminar. Mueve algún mueble.' : 'Arrastra para mirar · Toca puertas y focos'}</div>{interactionLabel && <button type="button" className="walk-interaction" aria-pressed={targetDoor ? targetDoor.open !== false : targetLight?.enabled} onClick={() => interact(walkTargetRef.current)}>{targetDoor ? targetDoor.open === false ? <DoorOpen size={20} /> : <DoorClosed size={20} /> : <Lightbulb size={20} />}<span>{interactionLabel}</span></button>}<div className="walk-joystick"><button type="button" tabIndex={-1} className="joystick-base" aria-label="Joystick de movimiento: arrastra para caminar. Con teclado usa WASD en el visor." onPointerDown={event => { event.preventDefault(); event.stopPropagation(); joystickPointer.current = event.pointerId; event.currentTarget.setPointerCapture(event.pointerId); moveJoystick(event); }} onPointerMove={event => { if (joystickPointer.current === event.pointerId) { event.stopPropagation(); moveJoystick(event); } }} onPointerUp={releaseJoystick} onPointerCancel={releaseJoystick} onLostPointerCapture={releaseJoystick}><span className="joystick-knob" style={{ transform: `translate(${stick.x * 34}px, ${stick.z * 34}px)` }} /></button></div></>}
+    {ready && !error && !transitioning && props.mode === 'walk' && <><div className="walk-hint">{walkBlocked ? 'No queda espacio libre para caminar. Mueve algún mueble.' : 'Arrastra para mirar · Toca puertas y focos'}</div>{interactionLabel && <button type="button" className="walk-interaction" aria-pressed={targetDoor ? targetDoor.open !== false : targetLight?.enabled} onClick={() => interact(walkTargetRef.current)}>{targetDoor ? targetDoor.open === false ? <DoorOpen size={20} /> : <DoorClosed size={20} /> : <Lightbulb size={20} />}<span>{interactionLabel}</span></button>}<div className="walk-joystick"><button type="button" tabIndex={-1} className="joystick-base" aria-label="Joystick de movimiento: arrastra para caminar. Con teclado usa WASD en el visor." onPointerDown={event => { event.preventDefault(); event.stopPropagation(); joystickPointer.current = event.pointerId; event.currentTarget.setPointerCapture(event.pointerId); moveJoystick(event); }} onPointerMove={event => { if (joystickPointer.current === event.pointerId) { event.stopPropagation(); moveJoystick(event); } }} onPointerUp={releaseJoystick} onPointerCancel={releaseJoystick} onLostPointerCapture={releaseJoystick}><span className="joystick-knob" style={{ transform: `translate(${stick.x * 34}px, ${stick.z * 34}px)` }} /></button></div></>}
   </div>;
 }

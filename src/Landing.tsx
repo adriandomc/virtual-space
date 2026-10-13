@@ -57,17 +57,17 @@ export default function Landing() {
       <a className="landing-enter" href="/login">Entrar o crear cuenta<ArrowRight size={18} /></a>
     </header>
     <main className="landing-main">
-      <h1 className="landing-sr-only">3D Space</h1>
+      <h1 className="landing-title">Diseña tus espacio en 3D. Totalmente gratis</h1>
       <section className="landing-demo" aria-label="Demo de 3D Space" aria-roledescription="presentación">
         <div className="landing-stage">
           <button type="button" className="landing-arrow landing-previous" aria-label="Demo anterior" disabled={step === 0} onClick={() => changeStep(step - 1)}><ArrowLeft size={23} /></button>
-          <div className={'demo-card' + (editing ? ' demo-editing' : '')}>
+          <div className="demo-card">
             <div className="demo-viewport">
               <Suspense fallback={<div className="demo-loading"><LoaderCircle size={24} /><span>Cargando…</span></div>}>
-                <RoomScene room={room} mode={step === 2 ? 'walk' : 'orbit'} selection={selection} onSelect={next => { if (editing && next?.kind === 'furniture' && next.id === LANDING_WARDROBE_ID) setSelection(next); }} onChange={setRoom} readOnly={step === 0} transformMode="translate" showFurniture={false} resetKey={0} />
+                <RoomScene room={room} mode={step === 2 ? 'walk' : 'orbit'} animateView selection={selection} onSelect={next => { if (editing && next?.kind === 'furniture' && next.id === LANDING_WARDROBE_ID) setSelection(next); }} onChange={setRoom} readOnly={step === 0} transformMode="translate" showFurniture={false} resetKey={0} />
               </Suspense>
             </div>
-            {editing && <aside className="demo-properties" aria-label="Ropero del demo">
+            <aside className={'demo-properties' + (editing ? ' is-visible' : '')} aria-label="Ropero del demo" aria-hidden={!editing} inert={!editing}>
               <h2>Ropero</h2>
               <div className="demo-property-tabs" aria-label="Medidas del ropero"><button type="button" aria-pressed={!dimensions} onClick={() => setDimensions(false)}>Posición</button><button type="button" aria-pressed={dimensions} onClick={() => setDimensions(true)}>Tamaño</button></div>
               <div className="demo-fields">
@@ -83,7 +83,7 @@ export default function Landing() {
               <label className="demo-field"><span>Material</span><select aria-label="Material del ropero" value={wardrobe.material ?? 'wood'} onChange={event => editWardrobe({ material: event.target.value as FurnitureMaterial })}><option value="wood">Madera</option><option value="plastic">Plástico</option><option value="metal">Metal</option></select></label>
               <DemoColor value={wardrobe.color ?? '#ba9773'} onChange={color => editWardrobe({ color })} onNotice={setNotice} />
               {notice && <p className="demo-notice" role="status">{notice}</p>}
-            </aside>}
+            </aside>
           </div>
           <button type="button" className="landing-arrow landing-next" aria-label="Demo siguiente" disabled={step === STEPS.length - 1} onClick={() => changeStep(step + 1)}><ArrowRight size={23} /></button>
         </div>
