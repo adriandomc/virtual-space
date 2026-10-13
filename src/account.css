@@ -5,14 +5,14 @@
 .account-brand strong{font-size:27px;letter-spacing:-1.2px;color:#253c21}
 .account-brand strong>span{color:#799168}
 .auth-tabs{display:flex;border-bottom:1px solid #dce3d5;margin:28px 0 25px;gap:22px}
-.auth-tabs>button{padding:0 0 13px;font-size:14px;color:#75836c;border-bottom:2px solid transparent;margin-bottom:-1px}
+.auth-tabs>button{padding:0 0 13px;min-height:44px;font-size:14px;color:#75836c;border-bottom:2px solid transparent;margin-bottom:-1px}
 .auth-tabs>button.active{color:#415b33;border-color:#698653;font-weight:600}
 .auth-card form{display:flex;flex-direction:column;gap:20px}
 .account-field{display:flex;flex-direction:column;gap:8px;font-size:14px}
 .account-field input{width:100%;border:1px solid #cdd7c4;border-radius:6px;padding:11px 12px;background:#fff;color:#31412c;font-size:16px;min-height:44px}
 .account-password{position:relative}
 .account-password input{padding-right:49px}
-.account-password>button{position:absolute;right:2px;top:2px;width:43px;height:40px;display:flex;align-items:center;justify-content:center;color:#728367;border-radius:4px}
+.account-password>button{position:absolute;right:1px;top:1px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;color:#728367;border-radius:4px}
 .account-password>button:hover{background:#f0f4e9}
 .account-primary,.account-secondary{display:flex;align-items:center;justify-content:center;gap:8px;min-height:44px;border-radius:6px;font-size:14px;font-weight:500;padding:10px 15px}
 .account-primary{color:#fff;background:#607a4e;border:1px solid #577044}

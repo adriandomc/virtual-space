@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { Check, ImageOff, Pencil, Undo2, Upload, X } from 'lucide-react';
-import { bounds, FURNITURE_LABELS, fitRoom, furnitureCorners, itemWorldPosition, moveSceneItem, polygonArea, snapPlanPoint, wallLength } from './model';
+import { bounds, FURNITURE_LABELS, fitRoom, furnitureCorners, invalidFurnitureIds, itemWorldPosition, moveSceneItem, pointInPolygon, polygonArea, snapPlanPoint, wallLength } from './model';
 import type { Point, Room, Selection } from './types';
 import { parseNumber } from './fieldDraft';
 import './plan.css';
@@ -28,9 +28,14 @@ export default function PlanEditor({ room, onChange, selection: selected, onSele
   const [referenceWidth, setReferenceWidth] = useState('5'), [cornerX, setCornerX] = useState('0'), [cornerZ, setCornerZ] = useState('0');
   const [error, setError] = useState(''), [fixedView, setFixedView] = useState<Viewport | null>(null);
   const box = bounds(room.vertices);
-  const visibleBox = room.editing.bounds ? box : bounds([...room.vertices, ...room.furniture.flatMap(furnitureCorners), ...room.lights]);
+  const visibleBox = bounds([...room.vertices, ...room.furniture.flatMap(furnitureCorners), ...room.lights]);
+  const invalidFurniture = useMemo(() => invalidFurnitureIds(room), [room]);
+  const visibleFurniture = selected?.kind === 'furniture' ? [...room.furniture.filter(item => item.id !== selected.id), ...room.furniture.filter(item => item.id === selected.id)] : room.furniture;
   const view = fixedView ?? { scale: Math.min(540 / visibleBox.width, 330 / visibleBox.depth), cx: (visibleBox.minX + visibleBox.maxX) / 2, cz: (visibleBox.minZ + visibleBox.maxZ) / 2 };
   const project = (p: Point) => ({ x: 340 + (p.x - view.cx) * view.scale, y: 230 + (p.z - view.cz) * view.scale });
+  const activeFurniture = selected?.kind === 'furniture' ? room.furniture.find(item => item.id === selected.id) : null;
+  const activeFurniturePoint = activeFurniture ? project(activeFurniture) : null;
+  const furnitureHandleY = activeFurniture ? -activeFurniture.depth * view.scale / 2 : 0;
   const polygon = (drawing ? points : room.vertices).map(p => { const s = project(p); return `${s.x},${s.y}`; }).join(' ');
   const isSelected = (item: Selection) => selected?.kind === item.kind && ('id' in item ? 'id' in selected && selected.id === item.id : item.kind === 'wall' ? selected.kind === 'wall' && selected.index === item.index : true);
 
@@ -168,15 +173,25 @@ export default function PlanEditor({ room, onChange, selection: selected, onSele
           {room.openings.map(item => {
             const a = room.vertices[item.wall], b = room.vertices[(item.wall + 1) % room.vertices.length], length = wallLength(room, item.wall), selection: Selection = { kind: 'opening', id: item.id }, active = isSelected(selection);
             const start = project({ x: a.x + (b.x - a.x) * item.offset / length, z: a.z + (b.z - a.z) * item.offset / length }), end = project({ x: a.x + (b.x - a.x) * (item.offset + item.width) / length, z: a.z + (b.z - a.z) * (item.offset + item.width) / length }), center = project(itemWorldPosition(room, selection)!);
-            return <g key={item.id} className="plan-opening" role="button" tabIndex={0} aria-pressed={active} aria-label={`${item.type === 'door' ? 'Puerta' : 'Ventana'}, arrastra para mover a otra pared`} onClick={() => select(selection)} onPointerDown={event => startItem(event, selection)} onKeyDown={event => itemKeys(event, selection)}><line x1={start.x} y1={start.y} x2={end.x} y2={end.y} stroke="#fffdfa" strokeWidth="16" /><line x1={start.x} y1={start.y} x2={end.x} y2={end.y} stroke={active ? '#315e44' : item.type === 'door' ? '#a47750' : '#75a8bf'} strokeWidth={active ? 7 : 5} strokeDasharray={item.type === 'door' ? '5 3' : undefined} />{active && <circle cx={center.x} cy={center.y} r="6" className="plan-move-handle" />}</g>;
+            let swing: { hinge: { x: number; y: number }; leaf: { x: number; y: number }; arc: string } | null = null;
+            if (item.type === 'door' && item.doorStyle !== 'frame') {
+              const inward = { x: -(b.z - a.z) / length, z: (b.x - a.x) / length };
+              const midpoint = { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 };
+              const inside = pointInPolygon({ x: midpoint.x + inward.x * 0.01, z: midpoint.z + inward.z * 0.01 }, room.vertices) ? 1 : -1;
+              const direction = item.doorStyle === 'left' ? -1 : 1, hinge = direction === 1 ? start : end, closed = direction === 1 ? end : start;
+              const radius = item.width * view.scale, angle = Math.PI * 0.4;
+              const leaf = { x: hinge.x + direction * (end.x - start.x) * Math.cos(angle) + inward.x * inside * radius * Math.sin(angle), y: hinge.y + direction * (end.y - start.y) * Math.cos(angle) + inward.z * inside * radius * Math.sin(angle) };
+              swing = { hinge, leaf, arc: `M ${closed.x} ${closed.y} A ${radius} ${radius} 0 0 ${direction * inside > 0 ? 1 : 0} ${leaf.x} ${leaf.y}` };
+            }
+            return <g key={item.id} className="plan-opening" role="button" tabIndex={0} aria-pressed={active} aria-label={`${item.type === 'door' ? item.doorStyle === 'frame' ? 'Marco de puerta' : 'Puerta' : 'Ventana'}, arrastra para mover a otra pared`} onClick={() => select(selection)} onPointerDown={event => startItem(event, selection)} onKeyDown={event => itemKeys(event, selection)}><line x1={start.x} y1={start.y} x2={end.x} y2={end.y} stroke="#fffdfa" strokeWidth="16" /><line x1={start.x} y1={start.y} x2={end.x} y2={end.y} stroke={active ? '#315e44' : item.type === 'door' ? '#a47750' : '#75a8bf'} strokeWidth={active ? 7 : 5} strokeDasharray={item.type === 'door' ? '5 3' : undefined} />{swing && <g stroke={active ? '#315e44' : '#a47750'} fill="none" strokeWidth="1.5" pointerEvents="none"><line x1={swing.hinge.x} y1={swing.hinge.y} x2={swing.leaf.x} y2={swing.leaf.y} /><path d={swing.arc} strokeOpacity=".65" /></g>}{active && <circle cx={center.x} cy={center.y} r="6" className="plan-move-handle" />}</g>;
           })}
-          {room.furniture.map(item => {
-            const point = project(item), width = item.width * view.scale, depth = item.depth * view.scale, selection: Selection = { kind: 'furniture', id: item.id }, active = isSelected(selection);
-            return <g key={item.id} transform={`translate(${point.x},${point.y}) rotate(${-item.rotation})`} className={`plan-furniture${readOnly ? ' readonly' : ''}`} role="button" tabIndex={0} aria-pressed={active} aria-label={`${FURNITURE_LABELS[item.type]}, flechas para mover`} onClick={() => select(selection)} onPointerDown={event => startItem(event, selection)} onKeyDown={event => itemKeys(event, selection)}>
-              <rect className="plan-furniture-outline" x={-width / 2} y={-depth / 2} width={width} height={depth} rx="3" fill={active ? '#dce8ce' : '#ece3d4'} stroke={active ? '#476540' : '#9da38e'} strokeWidth={active ? 2.5 : 1.5} />
+          {visibleFurniture.map(item => {
+            const point = project(item), width = item.width * view.scale, depth = item.depth * view.scale, selection: Selection = { kind: 'furniture', id: item.id }, active = isSelected(selection), invalid = invalidFurniture.has(item.id);
+            return <g key={item.id} transform={`translate(${point.x},${point.y}) rotate(${-item.rotation})`} className={`plan-furniture${invalid ? ' invalid' : ''}${readOnly ? ' readonly' : ''}`} role="button" tabIndex={0} aria-pressed={active} aria-label={`${FURNITURE_LABELS[item.type]}${invalid ? ', ubicación no válida' : ''}, flechas para mover`} onClick={() => select(selection)} onPointerDown={event => startItem(event, selection)} onKeyDown={event => itemKeys(event, selection)}>
+              <rect className="plan-furniture-outline" x={-width / 2} y={-depth / 2} width={width} height={depth} rx="3" fill={active ? '#dce8ce' : '#ece3d4'} stroke={invalid ? '#d63f3f' : active ? '#476540' : '#9da38e'} strokeWidth={active || invalid ? 2.5 : 1.5} />
               {item.type === 'bed' && <><rect x={-width * .44} y={-depth * .43} width={width * .88} height={depth * .2} rx="3" fill="#fffdfa" /><rect x={-width * .44} y={-depth * .08} width={width * .88} height={depth * .51} rx="2" fill={active ? '#adc19d' : '#bdc5ae'} /></>}
+              {invalid && <rect x={-width / 2} y={-depth / 2} width={width} height={depth} rx="3" fill="#ed4040" fillOpacity=".28" pointerEvents="none" />}
               <text className="plan-furniture-label" y={depth * .12} textAnchor="middle" fontSize={Math.min(12, width / 6)} pointerEvents="none">{FURNITURE_LABELS[item.type]}</text>
-              {active && !readOnly && <><circle r="6" className="plan-move-handle" /><line y1={-depth / 2} y2={-depth / 2 - 24} stroke="#315e44" strokeWidth="2" /><circle cy={-depth / 2 - 24} r="8" className="plan-rotate-handle" role="button" tabIndex={0} aria-label="Girar mueble; flechas izquierda y derecha" onPointerDown={event => { event.preventDefault(); event.stopPropagation(); const pointer = eventPoint(event); if (!pointer) return; drag.current = { kind: 'rotate', id: item.id, angle: Math.atan2(-(pointer.z - item.z), pointer.x - item.x), rotation: item.rotation }; capture(event); }} onKeyDown={event => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); event.stopPropagation(); moveItem(selection, { ...item, rotation: item.rotation + (event.key === 'ArrowLeft' ? -15 : 15) }); } }} /></>}
             </g>;
           })}
           {room.lights.map(item => {
@@ -186,6 +201,11 @@ export default function PlanEditor({ room, onChange, selection: selected, onSele
           {room.vertices.map((p, i) => { const point = project(p); return <circle key={i} cx={point.x} cy={point.y} r="7" className="plan-vertex" fill="#fffdfa" stroke="#315e44" strokeWidth="2.5" role="button" tabIndex={readOnly ? -1 : 0} aria-disabled={readOnly} aria-label={`Esquina ${i + 1}; flechas para mover`} onPointerDown={event => { if (readOnly) return; event.preventDefault(); event.stopPropagation(); select({ kind: 'wall', index: i }); drag.current = { kind: 'vertex', index: i }; capture(event); }} onKeyDown={event => {
             if (readOnly) return; const step = room.editing.snap ? room.editing.step : 0.05, moves: Record<string, Point> = { ArrowLeft: { x: -step, z: 0 }, ArrowRight: { x: step, z: 0 }, ArrowUp: { x: 0, z: -step }, ArrowDown: { x: 0, z: step } }; if (moves[event.key]) { event.preventDefault(); moveVertex(i, { x: p.x + moves[event.key].x, z: p.z + moves[event.key].z }); }
           }} />; })}
+          {activeFurniture && activeFurniturePoint && !readOnly && <g transform={`translate(${activeFurniturePoint.x},${activeFurniturePoint.y}) rotate(${-activeFurniture.rotation})`}>
+            <circle r="6" className="plan-move-handle" role="button" tabIndex={0} aria-label="Mover mueble; flechas para mover" onPointerDown={event => startItem(event, { kind: 'furniture', id: activeFurniture.id })} onKeyDown={event => itemKeys(event, { kind: 'furniture', id: activeFurniture.id })} />
+            <line y1={furnitureHandleY} y2={furnitureHandleY - 24} stroke="#315e44" strokeWidth="2" pointerEvents="none" />
+            <circle cy={furnitureHandleY - 24} r="8" className="plan-rotate-handle" role="button" tabIndex={0} aria-label="Girar mueble; flechas izquierda y derecha" onPointerDown={event => { event.preventDefault(); event.stopPropagation(); const pointer = eventPoint(event); if (!pointer) return; drag.current = { kind: 'rotate', id: activeFurniture.id, angle: Math.atan2(-(pointer.z - activeFurniture.z), pointer.x - activeFurniture.x), rotation: activeFurniture.rotation }; capture(event); }} onKeyDown={event => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); event.stopPropagation(); moveItem({ kind: 'furniture', id: activeFurniture.id }, { ...activeFurniture, rotation: activeFurniture.rotation + (event.key === 'ArrowLeft' ? -15 : 15) }); } }} />
+          </g>}
           {!room.furniture.length && <text x="340" y="235" textAnchor="middle" className="plan-area" pointerEvents="none">{polygonArea(room.vertices).toFixed(1)} m²</text>}
         </>}
         <text x="644" y="39" textAnchor="middle" className="plan-north">N</text><path d="M 644 49 L 639 60 L 644 57 L 649 60 Z" fill="#69796b" /><text x="24" y="438" className="plan-scale">Cuadrícula: {room.editing.step} m</text>

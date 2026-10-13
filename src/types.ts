@@ -2,9 +2,11 @@ export type Point = { x: number; z: number };
 export type Selection = { kind: 'wall'; index: number } | { kind: 'floor' | 'ceiling' } | { kind: 'furniture' | 'opening' | 'light'; id: string };
 export type EditingSettings = { snap: boolean; step: number; bounds: boolean };
 export type FloorFinish = 'wood' | 'tile-grid' | 'tile-brick' | 'tile-checker' | 'marble' | 'concrete';
+export type DoorStyle = 'right' | 'left' | 'frame';
 export type Opening = {
   id: string;
   type: 'door' | 'window';
+  doorStyle?: DoorStyle;
   wall: number;
   offset: number;
   width: number;

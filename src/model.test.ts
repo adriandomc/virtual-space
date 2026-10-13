@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { addFurniture, addLight, addOpening, BED_SIZES, bounds, createDefaultRoom, fitFurniture, fitRoom, furnitureContains, furnitureCorners, furnitureInside, furnitureWalkable, interiorPoint, interiorWalkPoint, itemWorldPosition, moveSceneItem, pointInPolygon, polygonArea, resizeRoom, snapPlanPoint, validateRoom, walkablePoint } from './model';
+import { addFurniture, addLight, addOpening, BED_SIZES, bounds, createDefaultRoom, fitFurniture, fitRoom, furnitureContains, furnitureCorners, furnitureInside, furniturePlacementIssues, furnitureWalkable, interiorPoint, interiorWalkPoint, invalidFurnitureIds, itemWorldPosition, moveSceneItem, pointInPolygon, polygonArea, resizeRoom, snapPlanPoint, validateRoom, walkablePoint } from './model';
 import type { BedSize, FurnitureItem } from './types';
 
 test('el cuarto inicial es válido, tiene 20 m² y aberturas reales', () => {
@@ -119,6 +119,46 @@ test('añade puertas y ventanas en el espacio libre y focos en el interior', () 
   assert.throws(() => addOpening(full, 'door', 0), /espacio/);
 });
 
+test('las aberturas de alta manual conservan las dimensiones exactas introducidas', () => {
+  const room = { ...createDefaultRoom(), openings: [] };
+  const doorRoom = addOpening(room, 'door', 0, { width: 0.82, height: 2.23, doorStyle: 'left' });
+  assert.deepEqual([doorRoom.openings[0].width, doorRoom.openings[0].height, doorRoom.openings[0].sill, doorRoom.openings[0].doorStyle], [0.82, 2.23, 0, 'left']);
+  const windowRoom = addOpening(room, 'window', 1, { width: 1.23, height: 1.47, sill: 0.67 });
+  assert.deepEqual([windowRoom.openings[0].width, windowRoom.openings[0].height, windowRoom.openings[0].sill], [1.23, 1.47, 0.67]);
+  assert.equal('doorStyle' in windowRoom.openings[0], false);
+  for (const options of [
+    { width: 0.9, height: 0 }, { width: 0.9, height: NaN }, { width: 0.9, height: 3 },
+    { width: 6, height: 2 }, { width: 0.9, height: 2, sill: 1 },
+  ]) assert.throws(() => addOpening(room, 'window', 0, options));
+  assert.throws(() => addOpening(room, 'door', 0, { width: 0.9, height: 2, sill: 0.1 }));
+  assert.throws(() => addOpening(room, 'window', 0, { width: 0.9, height: 2, doorStyle: 'frame' }));
+  const occupied = addOpening(room, 'door', 0, { width: 4.5, height: 2 });
+  assert.throws(() => addOpening(occupied, 'door', 0, { width: 0.9, height: 2 }), /espacio/);
+  assert.deepEqual(occupied.openings.map(item => item.width), [4.5]);
+});
+
+test('conserva el sentido de puerta al mover, ajustar y guardar y rechaza estilos inválidos', () => {
+  const base = createDefaultRoom();
+  for (const doorStyle of ['right', 'left', 'frame'] as const) {
+    const room = addOpening({ ...base, openings: [] }, 'door', 0, { width: 0.9, height: 2.1, doorStyle });
+    const id = room.openings[0].id;
+    for (const result of [fitRoom(room), resizeRoom(room, 6, 5), moveSceneItem(room, { kind: 'opening', id }, { x: -2.5, z: 0 }), validateRoom(JSON.parse(JSON.stringify(room)))]) assert.equal(result.openings[0].doorStyle, doorStyle);
+    for (const invalid of ['both', '', null, 1, {}]) assert.throws(() => validateRoom({ ...room, openings: [{ ...room.openings[0], doorStyle: invalid }] }), /apertura de puerta/);
+  }
+  assert.equal('doorStyle' in validateRoom(base).openings[0], false);
+});
+
+test('el alta manual permite una ventana sobre una puerta sin superponerlas verticalmente', () => {
+  const room = addOpening({ ...createDefaultRoom(), openings: [] }, 'door', 0, { width: 5, height: 2.1, doorStyle: 'frame' });
+  const withTransom = addOpening(room, 'window', 0, { width: 1.25, height: 0.4, sill: 2.2 });
+  assert.deepEqual(withTransom.openings[0], room.openings[0]);
+  assert.deepEqual([withTransom.openings[1].width, withTransom.openings[1].height, withTransom.openings[1].sill], [1.25, 0.4, 2.2]);
+  const contact = addOpening(room, 'window', 0, { width: 1.25, height: 0.4, sill: 2.1 });
+  assert.equal(contact.openings.length, 2);
+  assert.doesNotThrow(() => validateRoom(contact));
+  assert.throws(() => addOpening(room, 'window', 0, { width: 1.25, height: 0.4, sill: 2.09 }), /espacio/);
+});
+
 test('importa cuartos antiguos sin muebles y conserva la nueva colección', () => {
   const room = createDefaultRoom();
   const { furniture: _furniture, ...legacy } = room;
@@ -223,28 +263,31 @@ test('rechaza una huella que cruza un entrante aunque sus cuatro esquinas estén
   assert.equal(furnitureInside({ ...item, x: 1, z: 3, width: 1, depth: 2 }, vertices), true);
 });
 
-test('recoloca sin encoger muebles al cambiar la planta y rechaza si no caben', () => {
+test('conserva posición y dimensiones elegidas de muebles al cambiar la planta', () => {
   const source = addFurniture(createDefaultRoom(), 'bed', 'king'), bed = source.furniture[0];
   const moved = fitFurniture(source, { ...bed, x: 10 });
-  assert.equal(furnitureInside(moved, source.vertices), true);
+  assert.equal(moved.x, 10);
+  assert.deepEqual(furniturePlacementIssues(source, moved), { outside: true, overlap: false });
   assert.equal(moved.width, 2);
   const resized = resizeRoom(source, 2, 1.9);
-  assert.deepEqual(resized.furniture.map(p => [p.id, p.width, p.depth, p.height, p.rotation]), source.furniture.map(p => [p.id, p.width, p.depth, p.height, p.rotation]));
-  assert.equal(furnitureInside(resized.furniture[0], resized.vertices), true);
-  assert.throws(() => resizeRoom(source, 1.5, 2), /no cabe/);
+  assert.deepEqual(resized.furniture, source.furniture);
+  assert.equal(furniturePlacementIssues(resized, resized.furniture[0]).outside, true);
+  assert.deepEqual(resizeRoom(source, 1.5, 2).furniture, source.furniture);
   assert.deepEqual(source.furniture[0], bed);
   const positioned = { ...bed, x: 1, z: 0.8 };
-  const scaled = resizeRoom({ ...source, furniture: [positioned] }, 6, 5);
-  assert.equal(scaled.furniture[0].x, 1.2);
-  assert.equal(scaled.furniture[0].z, 1);
+  const resizedLarge = resizeRoom({ ...source, furniture: [positioned] }, 6, 5);
+  assert.deepEqual(resizedLarge.furniture[0], positioned);
   assert.deepEqual(fitRoom(source).furniture, source.furniture);
 });
 
-test('la edición manual admite superposición pero añadir requiere espacio libre', () => {
+test('añadir en un cuarto ocupado conserva los muebles y advierte de superposición', () => {
   const room = addFurniture(createDefaultRoom(), 'bed'), bed = room.furniture[0];
   assert.doesNotThrow(() => validateRoom({ ...room, furniture: [bed, { ...bed, id: 'other-bed' }] }));
   const full: FurnitureItem = { id: 'full', type: 'wardrobe', x: 0, z: 0, width: 5, depth: 4, height: 2, rotation: 0 };
-  assert.throws(() => addFurniture({ ...room, furniture: [full] }, 'nightstand'), /No queda espacio/);
+  const added = addFurniture({ ...room, furniture: [full] }, 'nightstand');
+  assert.deepEqual(added.furniture[0], full);
+  assert.deepEqual([added.furniture[1].x, added.furniture[1].z], [0, 0]);
+  assert.deepEqual(invalidFurnitureIds(added), new Set(added.furniture.map(item => item.id)));
 });
 
 test('el recorrido encuentra un punto libre y colisiona con muebles aunque se oculten referencias', () => {
@@ -274,7 +317,9 @@ test('la ubicación automática respeta la cara interior incluso con paredes gru
     }
   }
   const tiny = resizeRoom({ ...createDefaultRoom(), openings: [] }, 2, 1.9);
-  assert.throws(() => addFurniture(tiny, 'bed', 'king'), /no cabe/);
+  const added = addFurniture(tiny, 'bed', 'king');
+  assert.equal(added.furniture.length, 1);
+  assert.equal(furniturePlacementIssues(added, added.furniture[0]).outside, true);
   const room = addFurniture(createDefaultRoom(), 'nightstand'), item = { ...room.furniture[0], x: -2.25, z: 0 };
   assert.equal(furnitureInside(item, room.vertices), true);
   assert.equal(furnitureInside(item, room.vertices, room.thickness / 2 + 0.02), false);
@@ -306,25 +351,29 @@ test('el trazado ajusta cuadrícula y longitud/dirección de segmentos', () => {
   assert.throws(() => snapPlanPoint(null, raw, { grid: true, step: 0, angles: false }));
 });
 
-test('el movimiento de muebles ajusta cuadrícula y se detiene en paredes y objetos', () => {
+test('el movimiento ajusta cuadrícula sin detenerse por paredes u otros muebles', () => {
   let room = addFurniture(createDefaultRoom(), 'nightstand');
   const id = room.furniture[0].id;
   room = moveSceneItem(room, { kind: 'furniture', id }, { x: 0.24, z: 0.34 });
   assert.equal(room.furniture[0].x, 0.2);
   assert.equal(room.furniture[0].z, 0.3);
   const clamped = moveSceneItem(room, { kind: 'furniture', id }, { x: 20, z: 0.3 });
-  assert.equal(furnitureInside(clamped.furniture[0], room.vertices, room.thickness / 2 + 0.02), true);
-  assert.ok(clamped.furniture[0].x < 2.5);
+  assert.equal(clamped.furniture[0].x, 20);
+  assert.deepEqual(furniturePlacementIssues(clamped, clamped.furniture[0]), { outside: true, overlap: false });
   const obstacle = { ...room.furniture[0], id: 'obstacle', x: 1, z: 0.3 };
   const collisionRoom = validateRoom({ ...room, furniture: [room.furniture[0], obstacle] });
-  const stopped = moveSceneItem(collisionRoom, { kind: 'furniture', id }, { x: 1, z: 0.3 });
-  assert.ok(stopped.furniture[0].x <= 0.5 + 1e-7);
+  const overlapping = moveSceneItem(collisionRoom, { kind: 'furniture', id }, { x: 1, z: 0.3 });
+  assert.equal(overlapping.furniture[0].x, 1);
+  assert.deepEqual(invalidFurnitureIds(overlapping), new Set([id, obstacle.id]));
   const unlocked = moveSceneItem({ ...room, editing: { ...room.editing, snap: false, bounds: false } }, { kind: 'furniture', id }, { x: 8.234, z: 7.567, rotation: 45 });
   assert.equal(unlocked.furniture[0].x, 8.234);
   assert.equal(unlocked.furniture[0].z, 7.567);
   assert.equal(unlocked.furniture[0].rotation, 45);
   assert.doesNotThrow(() => validateRoom(unlocked));
-  assert.throws(() => validateRoom({ ...unlocked, editing: { ...unlocked.editing, bounds: true } }), /dentro/);
+  assert.doesNotThrow(() => validateRoom({ ...unlocked, editing: { ...unlocked.editing, bounds: true } }));
+  const limited = moveSceneItem(room, { kind: 'furniture', id }, { x: 70, z: -80 });
+  assert.deepEqual([limited.furniture[0].x, limited.furniture[0].z], [50, -50]);
+  assert.throws(() => moveSceneItem(room, { kind: 'furniture', id }, { x: NaN, z: 0 }));
 });
 
 test('las luces usan límites opcionales y siempre mantienen altura válida', () => {
@@ -360,41 +409,42 @@ test('una ventana se transfiere entre paredes con altura, ancho e identificador 
   assert.throws(() => moveSceneItem(noSpace, { kind: 'opening', id: window.id }, { x: 0, z: -2, y: 1.25 }), /No queda espacio/);
 });
 
-test('el límite de una planta cóncava sigue activo al arrastrar y posiciones de selección son coherentes', () => {
+test('una planta cóncava advierte de muebles fuera sin impedir su movimiento', () => {
   const base = createDefaultRoom(), vertices = [{ x: 0, z: 0 }, { x: 5, z: 0 }, { x: 5, z: 1 }, { x: 1, z: 1 }, { x: 1, z: 5 }, { x: 0, z: 5 }];
   const room = validateRoom({ ...base, vertices, wallColors: vertices.map(() => '#ffffff'), openings: [], lights: [], furniture: [{ id: 'small', type: 'nightstand', x: 0.5, z: 3, width: 0.4, depth: 0.4, height: 0.5, rotation: 0 }] });
   const moved = moveSceneItem(room, { kind: 'furniture', id: 'small' }, { x: 3, z: 3 });
-  assert.equal(furnitureInside(moved.furniture[0], vertices), true);
+  assert.deepEqual([moved.furniture[0].x, moved.furniture[0].z], [3, 3]);
+  assert.equal(furniturePlacementIssues(moved, moved.furniture[0]).outside, true);
   assert.equal(itemWorldPosition(room, { kind: 'furniture', id: 'small' })?.y, 0.25);
   assert.equal(itemWorldPosition(room, { kind: 'ceiling' })?.y, room.height);
   assert.equal(itemWorldPosition(room, { kind: 'floor' })?.y, 0);
   assert.equal(itemWorldPosition(room, { kind: 'furniture', id: 'missing' }), null);
 });
 
-test('un salto del puntero se detiene antes del primer mueble incluso con cuadrícula gruesa', () => {
+test('un salto del puntero alcanza el destino aunque atraviese otro mueble', () => {
   const base = createDefaultRoom();
   const moving: FurnitureItem = { id: 'moving', type: 'nightstand', x: -1, z: 0, width: 0.1, depth: 0.1, height: 0.55, rotation: 0 };
   const obstacle = { ...moving, id: 'obstacle', x: 0.5, depth: 0.5 };
   const room = validateRoom({ ...base, furniture: [moving, obstacle], editing: { ...base.editing, step: 1 } });
   assert.equal(furnitureInside({ ...moving, x: 1 }, room.vertices), true);
-  const stopped = moveSceneItem(room, { kind: 'furniture', id: moving.id }, { x: 1, z: 0 });
-  assert.equal(stopped.furniture[0].x, 0);
-  assert.equal(stopped.furniture[0].z, 0);
-  assert.equal(stopped.furniture[1].x, obstacle.x);
+  const moved = moveSceneItem(room, { kind: 'furniture', id: moving.id }, { x: 1, z: 0 });
+  assert.equal(moved.furniture[0].x, 1);
+  assert.equal(moved.furniture[0].z, 0);
+  assert.deepEqual(moved.furniture[1], obstacle);
+  assert.equal(invalidFurnitureIds(moved).size, 0);
   const precise = moveSceneItem({ ...room, editing: { ...room.editing, snap: false } }, { kind: 'furniture', id: moving.id }, { x: 1, z: 0 });
-  assert.ok(precise.furniture[0].x <= 0.4 + 1e-6);
-  assert.ok(precise.furniture[0].x > 0.39);
+  assert.equal(precise.furniture[0].x, 1);
 });
 
-test('un destino válido en otra rama de una planta en L no atraviesa el exterior', () => {
+test('un mueble puede cruzar entre ramas de una planta en L y la luz mantiene sus límites', () => {
   const base = createDefaultRoom(), vertices = [{ x: 0, z: 0 }, { x: 5, z: 0 }, { x: 5, z: 1 }, { x: 1, z: 1 }, { x: 1, z: 5 }, { x: 0, z: 5 }];
   const moving: FurnitureItem = { id: 'moving', type: 'nightstand', x: 0.5, z: 3, width: 0.2, depth: 0.2, height: 0.55, rotation: 0 };
   const room = validateRoom({ ...base, vertices, wallColors: vertices.map(() => '#ffffff'), openings: [], furniture: [moving], lights: [{ ...base.lights[0], x: 0.5, z: 3 }] });
   const target = { x: 3, z: 0.5 };
   assert.equal(furnitureInside({ ...moving, ...target }, vertices, room.thickness / 2 + 0.02), true);
   const furniture = moveSceneItem(room, { kind: 'furniture', id: moving.id }, target).furniture[0];
-  assert.ok(furniture.x <= 0.8 + 1e-7);
-  assert.ok(furniture.z > 2.5);
+  assert.equal(furniture.x, target.x);
+  assert.equal(furniture.z, target.z);
   assert.equal(furnitureInside(furniture, vertices, room.thickness / 2 + 0.02), true);
   const light = moveSceneItem(room, { kind: 'light', id: room.lights[0].id }, target).lights[0];
   assert.ok(light.x <= 1 + 1e-7);
@@ -402,7 +452,7 @@ test('un destino válido en otra rama de una planta en L no atraviesa el exterio
   assert.equal(pointInPolygon(light, vertices), true);
 });
 
-test('reactivar límites conserva el buró y recoloca una cama externa sin superponerla', () => {
+test('reactivar límites conserva la posición elegida incluso si la cama está fuera', () => {
   const base = createDefaultRoom();
   const bed: FurnitureItem = { id: 'bed', type: 'bed', bedSize: 'queen', x: 7, z: 0.2, width: 1.5, depth: 1.9, height: 1.1, rotation: 0 };
   const nightstand: FurnitureItem = { id: 'nightstand', type: 'nightstand', x: 1.7, z: 0.2, width: 0.5, depth: 0.45, height: 0.55, rotation: 0 };
@@ -410,25 +460,48 @@ test('reactivar límites conserva el buró y recoloca una cama externa sin super
   const fitted = fitRoom({ ...outside, editing: { ...outside.editing, bounds: true } });
   assert.deepEqual(fitted.furniture[1], nightstand);
   assert.deepEqual(fitted.furniture.map(item => item.id), ['bed', 'nightstand']);
-  const placed = fitted.furniture[0];
-  assert.equal(furnitureInside(placed, fitted.vertices), true);
-  assert.ok(Math.abs(placed.x - nightstand.x) >= (placed.width + nightstand.width) / 2 - 1e-7 || Math.abs(placed.z - nightstand.z) >= (placed.depth + nightstand.depth) / 2 - 1e-7);
+  assert.deepEqual(fitted.furniture[0], bed);
+  assert.deepEqual(invalidFurnitureIds(fitted), new Set([bed.id]));
   const moved = moveSceneItem(fitted, { kind: 'furniture', id: bed.id }, { x: -0.3, z: 0 });
   assert.equal(moved.furniture[0].x, -0.3);
 });
 
-test('permite retirar una superposición antigua pero se detiene ante obstáculos nuevos', () => {
+test('permite entrar y salir de superposiciones sin recolocar otros objetos', () => {
   const base = createDefaultRoom();
   const item: FurnitureItem = { id: 'moving', type: 'nightstand', x: 0, z: 0, width: 0.5, depth: 0.5, height: 0.55, rotation: 0 };
   const overlap = { ...item, id: 'legacy', x: 0.2 }, obstacle = { ...item, id: 'obstacle', x: 1.5 };
   const room = validateRoom({ ...base, furniture: [item, overlap, obstacle] });
   const moved = moveSceneItem(room, { kind: 'furniture', id: item.id }, { x: 2, z: 0 });
-  assert.equal(moved.furniture[0].x, 1);
+  assert.equal(moved.furniture[0].x, 2);
+  assert.equal(invalidFurnitureIds(moved).size, 0);
   const returned = moveSceneItem(moved, { kind: 'furniture', id: item.id }, { x: 0.2, z: 0 });
-  assert.ok(returned.furniture[0].x >= 0.7 - 1e-7);
+  assert.equal(returned.furniture[0].x, 0.2);
+  assert.deepEqual(invalidFurnitureIds(returned), new Set([item.id, overlap.id]));
   const fitted = fitRoom(room);
-  assert.deepEqual(fitted.furniture[0], item);
-  assert.deepEqual(fitted.furniture[2], obstacle);
-  const separated = fitted.furniture[1];
-  assert.ok(Math.abs(separated.x - item.x) >= item.width - 1e-7 || Math.abs(separated.z - item.z) >= item.depth - 1e-7);
+  assert.deepEqual(fitted.furniture, room.furniture);
+});
+
+test('las advertencias usan huellas rotadas y no marcan contacto exacto como superposición', () => {
+  const base = createDefaultRoom();
+  const item: FurnitureItem = { id: 'a', type: 'nightstand', x: 0, z: 0, width: 2, depth: 0.2, height: 0.55, rotation: 45 };
+  const separate = { ...item, id: 'b', z: 0.3 };
+  const separatedRoom = validateRoom({ ...base, furniture: [item, separate] });
+  assert.equal(invalidFurnitureIds(separatedRoom).size, 0);
+  const overlappingRoom = validateRoom({ ...base, furniture: [item, { ...separate, z: 0.1 }] });
+  assert.deepEqual(invalidFurnitureIds(overlappingRoom), new Set(['a', 'b']));
+  const square = { ...item, width: 0.5, depth: 0.5, rotation: 0 };
+  const contact = validateRoom({ ...base, furniture: [square, { ...square, id: 'b', x: 0.5 }] });
+  assert.equal(invalidFurnitureIds(contact).size, 0);
+  const wallContact = { ...square, x: 2.5 - base.thickness / 2 - square.width / 2 };
+  assert.deepEqual(furniturePlacementIssues(base, wallContact), { outside: false, overlap: false });
+  assert.equal(furniturePlacementIssues(base, { ...wallContact, x: wallContact.x + 0.001 }).outside, true);
+});
+
+test('las advertencias detectan huellas que cruzan entrantes con esquinas interiores', () => {
+  const vertices = [{ x: 0, z: 0 }, { x: 5, z: 0 }, { x: 5, z: 5 }, { x: 3, z: 5 }, { x: 3, z: 2 }, { x: 2, z: 2 }, { x: 2, z: 5 }, { x: 0, z: 5 }];
+  const item: FurnitureItem = { id: 'notch', type: 'bed', bedSize: 'king', x: 2.5, z: 1.6, width: 4, depth: 2.5, height: 1.1, rotation: 0 };
+  const room = validateRoom({ ...createDefaultRoom(), vertices, wallColors: vertices.map(() => '#ffffff'), openings: [], lights: [], furniture: [item] });
+  assert.equal(furnitureCorners(item).every(p => pointInPolygon(p, vertices)), true);
+  assert.deepEqual(furniturePlacementIssues(room, item), { outside: true, overlap: false });
+  assert.deepEqual(invalidFurnitureIds(room), new Set([item.id]));
 });

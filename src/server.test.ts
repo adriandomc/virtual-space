@@ -109,14 +109,15 @@ test('el servidor persiste proyectos y croquis con permisos, revisiones y rutas 
       const stillOutside = await (await send(freePath)).json();
       assert.equal(stillOutside.revision, 1); assert.equal(stillOutside.room.editing.bounds, false);
       const furnitureOnly = { ...freeRoom, lights: room.lights, editing: { ...freeRoom.editing, bounds: true } };
-      assert.equal((await send(freePath, 'PUT', { room: furnitureOnly, revision: 1 })).status, 400);
+      assert.equal((await send(freePath, 'PUT', { room: furnitureOnly, revision: 1 })).status, 200);
+      assert.deepEqual((await (await send(freePath)).json()).room.furniture, freeRoom.furniture);
     });
     await t.test('valida medidas y tipos de muebles antes de guardar una distribución', async () => {
       const current = (await (await send(path)).json()).room;
       for (const item of [
         { ...furniture[0], type: 'sofa' }, { ...furniture[0], bedSize: 'california-king' },
         { ...furniture[0], width: -1 }, { ...furniture[0], height: current.height + 1 },
-        { ...furniture[0], x: 20 }, { ...furniture[0], rotation: -1 },
+        { ...furniture[0], x: 51 }, { ...furniture[0], rotation: -1 },
         { ...furniture[0], material: 'glass' }, { ...furniture[0], material: null },
         { ...furniture[0], color: '#abc' }, { ...furniture[0], color: null },
       ]) assert.equal((await send(path, 'PUT', { room: { ...current, furniture: [item] }, revision: 2 })).status, 400);
@@ -129,7 +130,8 @@ test('el servidor persiste proyectos y croquis con permisos, revisiones y rutas 
       assert.equal((await send('/api/rooms', 'POST', { id: concaveId, room: concaveRoom })).status, 201);
       assert.deepEqual((await (await send('/api/rooms/' + concaveId)).json()).room.furniture, [concaveItem]);
       const outside = { ...concaveItem, x: 1, z: 1, width: 1, depth: 1 };
-      assert.equal((await send('/api/rooms/' + concaveId, 'PUT', { room: { ...concaveRoom, furniture: [outside] }, revision: 1 })).status, 400);
+      assert.equal((await send('/api/rooms/' + concaveId, 'PUT', { room: { ...concaveRoom, furniture: [outside] }, revision: 1 })).status, 200);
+      assert.deepEqual((await (await send('/api/rooms/' + concaveId)).json()).room.furniture, [outside]);
     });
     await t.test('valida identificadores, contenido y límite de cargas', async () => {
       assert.equal((await send('/api/rooms/not-a-uuid')).status, 400);
@@ -165,8 +167,9 @@ test('el servidor persiste proyectos y croquis con permisos, revisiones y rutas 
       assert.deepEqual(restored.room.editing, { snap: true, step: 0.25, bounds: true });
       const restoredOutside = await (await send('/api/rooms/' + freeProjectId)).json();
       assert.deepEqual(restoredOutside.room.furniture, freeRoom.furniture);
-      assert.deepEqual(restoredOutside.room.lights, freeRoom.lights);
-      assert.deepEqual(restoredOutside.room.editing, freeRoom.editing);
+      assert.deepEqual(restoredOutside.room.lights, room.lights);
+      assert.deepEqual(restoredOutside.room.editing, { ...freeRoom.editing, bounds: true });
+      assert.equal(restoredOutside.revision, 2);
       assert.deepEqual(Buffer.from(await (await send(path + '/sketch')).arrayBuffer()), png);
       assert.equal((await send(path + '/sketch', 'DELETE', undefined, false)).status, 401);
       const deleted = await send(path + '/sketch', 'DELETE');

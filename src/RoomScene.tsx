@@ -7,7 +7,7 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 import { RectAreaLightTexturesLib } from 'three/addons/lights/RectAreaLightTexturesLib.js';
 import { LoaderCircle } from 'lucide-react';
-import { bounds, FURNITURE_COLORS, furnitureCorners, furnitureWalkable, interiorPoint, interiorWalkPoint, itemWorldPosition, moveSceneItem, pointInPolygon, polygonArea } from './model';
+import { bounds, FURNITURE_COLORS, furnitureCorners, furnitureWalkable, interiorPoint, interiorWalkPoint, invalidFurnitureIds, itemWorldPosition, moveSceneItem, pointInPolygon, polygonArea } from './model';
 import { createCeilingMaterial, createFabricMaterial, createFloorMaterial, createFurnitureMaterial, createWallMaterial, createWoodMaterial, disposeArchitecturalTextures } from './materials';
 import { createDuvetGeometry, createPillowGeometry } from './beddingGeometry';
 import { createArchitecturalPostProcessing } from './postProcessing';
@@ -41,6 +41,7 @@ type Runtime = {
   pitch: number;
   fittedDistance: number;
   objects: Map<string, THREE.Object3D>;
+  invalidFurniture: Set<string>;
   selectionBox: THREE.BoxHelper | null;
   transform: TransformControls;
   proxy: THREE.Object3D;
@@ -123,6 +124,7 @@ function updateSelection(runtime: Runtime, props: Props) {
     item.updateWorldMatrix(true, true);
     if (runtime.selectionBox) runtime.selectionBox.setFromObject(item);
     else runtime.selectionBox = new THREE.BoxHelper(item, '#b78436');
+    (runtime.selectionBox.material as THREE.LineBasicMaterial).color.set(selection?.kind === 'furniture' && runtime.invalidFurniture.has(selection.id) ? '#d63f3f' : '#b78436');
     (runtime.selectionBox.material as THREE.Material).transparent = true;
     (runtime.selectionBox.material as THREE.Material).opacity = 0.8;
     (runtime.selectionBox.material as THREE.Material).depthTest = false;
@@ -189,7 +191,20 @@ function updateRoom(runtime: Runtime, room: Room, reference: boolean) {
     }
   }
   if (moved) runtime.content.traverse(object => { if (object instanceof THREE.DirectionalLight || object instanceof THREE.PointLight) object.shadow.needsUpdate = true; });
+  updateFurniturePlacement(runtime, room);
   runtime.builtRoom = room;
+}
+
+function updateFurniturePlacement(runtime: Runtime, room: Room) {
+  runtime.invalidFurniture = invalidFurnitureIds(room);
+  for (const item of room.furniture) {
+    const overlay = runtime.objects.get(`furniture:${item.id}`)?.userData.placementOverlay as THREE.Mesh | undefined;
+    if (overlay) overlay.visible = runtime.viewMode === 'orbit' && runtime.invalidFurniture.has(item.id);
+  }
+}
+
+function sceneBounds(room: Room) {
+  return bounds([...room.vertices, ...room.furniture.flatMap(furnitureCorners), ...room.lights]);
 }
 
 function disposeContent(group: THREE.Group) {
@@ -488,14 +503,17 @@ function buildRoom(runtime: Runtime, room: Room, furniture: boolean) {
         const hitPlane = new THREE.Mesh(new THREE.PlaneGeometry(opening.width, opening.height), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }));
         hitPlane.position.set(x, opening.height / 2, 0);
         openingGroup.add(hitPlane);
-        const hinge = new THREE.Group();
-        hinge.userData.architectural = architectural;
-        hinge.position.set(opening.offset + frame, 0, innerSide * room.thickness / 2);
-        hinge.rotation.y = innerSide * -Math.PI * 0.4;
-        openingGroup.add(hinge);
-        const leaf = box(hinge, [opening.width - frame * 2, opening.height - frame, 0.04], [(opening.width - frame * 2) / 2, (opening.height - frame) / 2, 0], architectural ? createWoodMaterial('#c7b297', room.renderQuality) : new THREE.MeshStandardMaterial({ color: '#c7b297', roughness: 0.8 }));
-        leaf.castShadow = true;
-        box(hinge, [0.07, 0.025, 0.075], [opening.width - 0.15, 0.98, innerSide * 0.045], new THREE.MeshStandardMaterial({ color: '#7c7b6c', metalness: 0.75, roughness: 0.3 }));
+        if (opening.doorStyle !== 'frame') {
+          const direction = opening.doorStyle === 'left' ? -1 : 1;
+          const hinge = new THREE.Group();
+          hinge.userData.architectural = architectural;
+          hinge.position.set(opening.offset + (direction === 1 ? frame : opening.width - frame), 0, innerSide * room.thickness / 2);
+          hinge.rotation.y = direction * innerSide * -Math.PI * 0.4;
+          openingGroup.add(hinge);
+          const leaf = box(hinge, [opening.width - frame * 2, opening.height - frame, 0.04], [direction * (opening.width - frame * 2) / 2, (opening.height - frame) / 2, 0], architectural ? createWoodMaterial('#c7b297', room.renderQuality) : new THREE.MeshStandardMaterial({ color: '#c7b297', roughness: 0.8 }));
+          leaf.castShadow = true;
+          box(hinge, [0.07, 0.025, 0.075], [direction * (opening.width - 0.15), Math.min(0.98, (opening.height - frame) / 2), innerSide * 0.045], new THREE.MeshStandardMaterial({ color: '#7c7b6c', metalness: 0.75, roughness: 0.3 }));
+        }
       }
       const openingShadows = openingGroup.clone(true);
       openingShadows.traverse(object => object.layers.set(1));
@@ -587,8 +605,21 @@ function buildRoom(runtime: Runtime, room: Room, furniture: boolean) {
     point.shadow.needsUpdate = true;
     lightGroup.add(point);
   }
-  if (room.furniture.length) for (const item of room.furniture) runtime.objects.set(`furniture:${item.id}`, addStoredFurniture(group, item, room.renderQuality));
-  else if (furniture) addFurniture(group, room);
+  if (room.furniture.length) {
+    const placementGeometry = new THREE.BoxGeometry(1, 1, 1);
+    const placementMaterial = new THREE.MeshBasicNodeMaterial({ color: '#ed4040', transparent: true, opacity: 0.28, depthWrite: false, toneMapped: false });
+    for (const item of room.furniture) {
+      const object = addStoredFurniture(group, item, room.renderQuality);
+      const overlay = new THREE.Mesh(placementGeometry, placementMaterial);
+      overlay.scale.set(item.width + 0.02, item.height + 0.02, item.depth + 0.02);
+      overlay.position.y = item.height / 2;
+      overlay.renderOrder = 20;
+      overlay.raycast = () => {};
+      object.add(overlay);
+      object.userData.placementOverlay = overlay;
+      runtime.objects.set(`furniture:${item.id}`, object);
+    }
+  } else if (furniture) addFurniture(group, room);
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(Math.max(30, span * 4), Math.max(30, span * 4)), new THREE.MeshStandardMaterial({ color: '#e9ece4', roughness: 1 }));
   ground.rotation.x = -Math.PI / 2;
   ground.position.set(cx, -0.19, cz);
@@ -603,6 +634,7 @@ function buildRoom(runtime: Runtime, room: Room, furniture: boolean) {
   group.add(grid);
   runtime.builtRoom = room;
   runtime.structure = structureOf(room, furniture);
+  updateFurniturePlacement(runtime, room);
   runtime.renderer.setPixelRatio(renderPixelRatio(window.devicePixelRatio, room.renderQuality, highResolution));
   if ((detailed || room.furniture.some(item => item.material === 'metal')) && !runtime.environment) {
     const environmentScene = new RoomEnvironment();
@@ -615,8 +647,9 @@ function buildRoom(runtime: Runtime, room: Room, furniture: boolean) {
 }
 
 function fitOrbitCamera(runtime: Runtime, room: Room, preserveZoom = false) {
-  const b = bounds(room.vertices);
-  const radius = Math.hypot(b.width / 2, b.depth / 2, room.height * 0.72);
+  const b = sceneBounds(room);
+  const target = runtime.controls.target;
+  const radius = Math.hypot(Math.max(Math.abs(b.minX - target.x), Math.abs(b.maxX - target.x)), Math.max(Math.abs(b.minZ - target.z), Math.abs(b.maxZ - target.z)), Math.max(Math.abs(target.y), Math.abs(room.height - target.y)));
   const halfFov = Math.atan(Math.tan(THREE.MathUtils.degToRad(runtime.camera.fov / 2)) * Math.min(1, runtime.camera.aspect));
   const distance = radius / Math.sin(halfFov) * 1.04;
   const offset = runtime.camera.position.clone().sub(runtime.controls.target);
@@ -624,17 +657,19 @@ function fitOrbitCamera(runtime: Runtime, room: Room, preserveZoom = false) {
   runtime.camera.position.copy(runtime.controls.target).add(offset.normalize().multiplyScalar(distance * zoom));
   runtime.fittedDistance = distance;
   runtime.controls.maxDistance = Math.max(Math.max(b.width, b.depth, room.height) * 4, distance * 3);
+  runtime.camera.far = Math.max(250, runtime.controls.maxDistance + radius * 2);
   runtime.controls.update();
 }
 
 function resetCamera(runtime: Runtime, room: Room, mode: ViewMode) {
   runtime.viewMode = mode;
   updateEnvironment(runtime, room, mode);
-  const b = bounds(room.vertices);
+  const b = mode === 'orbit' ? sceneBounds(room) : bounds(room.vertices);
   const cx = (b.minX + b.maxX) / 2;
   const cz = (b.minZ + b.maxZ) / 2;
   const span = Math.max(b.width, b.depth, room.height);
   runtime.controls.enabled = mode === 'orbit';
+  updateFurniturePlacement(runtime, room);
   runtime.walkBlocked = false;
   if (mode === 'walk') {
     const free = interiorWalkPoint(room);
@@ -716,7 +751,7 @@ export default function RoomScene(props: Props) {
         controls.enablePan = true;
         const content = new THREE.Group();
         scene.add(content);
-        const active: Runtime = { renderer, scene, camera, controls, content, walls: [], ceiling: null, yaw: 0, pitch: 0, fittedDistance: 0, objects: new Map(), selectionBox: null, walkBlocked: false, transform, proxy, manipulating: null, directDragging: false, pendingEdit: false, lastOpeningBuild: 0, environment: null, architecturalEnvironment: null, sky: null, loadingSky: false, disposed: false, areaTextures: null, postProcessing: null, postFailed: false, viewMode: current.current.mode, builtRoom: null, structure: '', outlinedKey: null };
+        const active: Runtime = { renderer, scene, camera, controls, content, walls: [], ceiling: null, yaw: 0, pitch: 0, fittedDistance: 0, objects: new Map(), invalidFurniture: new Set(), selectionBox: null, walkBlocked: false, transform, proxy, manipulating: null, directDragging: false, pendingEdit: false, lastOpeningBuild: 0, environment: null, architecturalEnvironment: null, sky: null, loadingSky: false, disposed: false, areaTextures: null, postProcessing: null, postFailed: false, viewMode: current.current.mode, builtRoom: null, structure: '', outlinedKey: null };
         runtime.current = active;
         buildRoom(active, current.current.room, current.current.showFurniture);
         resetCamera(active, current.current.room, current.current.mode);
