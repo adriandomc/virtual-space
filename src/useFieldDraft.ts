@@ -13,6 +13,7 @@ export default function useFieldDraft<T>(options: Options<T>) {
   latest.current = options;
   const focused = useRef(false);
   const cancelled = useRef(false);
+  const edited = useRef(false);
   const [draft, setDraft] = useState(() => (options.format ?? String)(options.value));
   const raw = useRef(draft);
 
@@ -21,6 +22,7 @@ export default function useFieldDraft<T>(options: Options<T>) {
     setDraft(text);
   }
   function reset() {
+    edited.current = false;
     const { value, format = String } = latest.current;
     write(format(value));
   }
@@ -32,15 +34,18 @@ export default function useFieldDraft<T>(options: Options<T>) {
   function finish() {
     // Read the accepted value after React has applied any model constraints.
     queueMicrotask(() => { if (!focused.current) reset(); });
+    if (!edited.current) { reset(); return; }
     const { value, parse, format = String, onCommit, onInvalid } = latest.current;
     const next = parse(raw.current, true);
     if (next === null) { reset(); onInvalid?.(); return; }
     if (!Object.is(next, value) && onCommit(next) === false) { reset(); return; }
     write(format(next));
+    edited.current = false;
   }
 
   function edit(text: string) {
     focused.current = true;
+    edited.current = true;
     cancelled.current = false;
     write(text);
     const { value, parse, onCommit } = latest.current;
@@ -53,7 +58,7 @@ export default function useFieldDraft<T>(options: Options<T>) {
     edit,
     inputProps: {
       value: draft,
-      onFocus: () => { focused.current = true; cancelled.current = false; },
+      onFocus: () => { focused.current = true; cancelled.current = false; edited.current = false; },
       onChange: (event: ChangeEvent<HTMLInputElement>) => edit(event.target.value),
       onBlur: () => { focused.current = false; if (cancelled.current) reset(); else finish(); },
       onKeyDown: (event: KeyboardEvent<HTMLInputElement>) => {

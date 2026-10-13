@@ -1,0 +1,27 @@
+.collaboration-access { margin-top:24px; border-top:1px solid var(--line); padding-top:18px; }
+.collaboration-access h3 { font-size:17px; margin:0 0 14px; }
+.collaboration-invite { display:grid; grid-template-columns:minmax(0,1fr) 110px; gap:12px; }
+.collaboration-invite label { display:grid; gap:7px; font-size:14px; }
+.collaboration-invite input,.collaboration-invite select,.collaboration-members select { min-width:0; padding:10px; min-height:44px; font:inherit; font-size:16px; border:1px solid var(--line); border-radius:8px; background:var(--panel); color:inherit; }
+.collaboration-invite button { grid-column:1/-1; }
+.collaboration-members { list-style:none; margin:14px 0 0; padding:0; display:grid; gap:12px; }
+.collaboration-members li { display:flex; align-items:center; gap:8px; }
+.collaboration-members li>div { flex:1; min-width:0; display:grid; gap:3px; overflow-wrap:anywhere; }
+.collaboration-members small { color:var(--muted); }
+.collaboration-notice { display:flex; gap:7px; font-size:14px; }
+.notifications { position:relative; }
+.notification-button { position:relative; }
+.notification-count { position:absolute; top:1px; right:0; min-width:16px; height:16px; padding:0 3px; border-radius:10px; font-size:11px; line-height:16px; background:var(--green); color:white; }
+.notifications-panel { position:absolute; top:48px; right:0; width:min(340px,calc(100vw - 32px)); background:var(--panel); border:1px solid var(--line); border-radius:14px; box-shadow:0 14px 48px #27302426; padding:16px; z-index:110; max-height:70dvh; overflow-y:auto; }
+.notifications-panel header { display:flex; justify-content:space-between; align-items:center; }
+.notifications-panel h2 { margin:0; font-size:18px; }
+.notifications-panel ul { list-style:none; display:grid; gap:16px; margin:16px 0 0; padding:0; }
+.notifications-panel li { display:grid; gap:8px; border-top:1px solid var(--line); padding-top:14px; }
+.notifications-panel li strong { overflow-wrap:anywhere; }
+.notifications-panel li span { font-size:14px; line-height:1.5; }
+.notifications-panel li>div { display:flex; align-items:center; gap:8px; }
+@media(max-width:600px) { .notifications-panel { position:fixed; top:72px; right:16px; } }
+
+.notifications-panel{color:var(--dark)}
+.catalog-dialog{width:min(760px,calc(100vw - 32px));max-height:calc(100dvh - 32px);overflow:auto}
+.share-dialog{max-height:calc(100dvh - 32px);overflow:auto}

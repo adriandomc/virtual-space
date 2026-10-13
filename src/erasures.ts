@@ -4,13 +4,13 @@ import { dirname, join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { BACKUP_RETENTION_DAYS } from './legalPolicy.js';
 
-type Erasure = { kind: 'user' | 'room' | 'sketch' | 'share'; id: string; at: number; version?: number };
+type Erasure = { kind: 'user' | 'room' | 'sketch' | 'share' | 'member' | 'asset'; id: string; at: number; version?: number };
 type Ledger = { version: 1; entries: Erasure[] };
 const idPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const windowMs = BACKUP_RETENTION_DAYS * 24 * 60 * 60_000;
 
 function validateEntry(entry: Erasure) {
-  if (!entry || !['user', 'room', 'sketch', 'share'].includes(entry.kind) || typeof entry.id !== 'string' || !idPattern.test(entry.id) || !Number.isSafeInteger(entry.at) || entry.at < 0 || (entry.kind === 'sketch' && (!Number.isSafeInteger(entry.version) || entry.version! < 1))) throw new Error('Invalid erasure ledger entry.');
+  if (!entry || !['user', 'room', 'sketch', 'share', 'member', 'asset'].includes(entry.kind) || typeof entry.id !== 'string' || !idPattern.test(entry.id) || !Number.isSafeInteger(entry.at) || entry.at < 0 || (entry.kind === 'sketch' && (!Number.isSafeInteger(entry.version) || entry.version! < 1))) throw new Error('Invalid erasure ledger entry.');
 }
 
 function readLedger(path: string): Ledger {
@@ -79,6 +79,8 @@ export function applyErasures(database: DatabaseSync, ledgerPath: string, { now 
   database.exec('BEGIN IMMEDIATE');
   try {
     const ledger = readLedger(ledgerPath);
+    const tables = new Set(database.prepare("SELECT name FROM sqlite_schema WHERE type='table'").all().map(row => row.name));
+    const roomColumns = new Set(database.prepare('PRAGMA table_info(rooms)').all().map(row => row.name));
     for (const entry of ledger.entries) {
       if (!includeExpired && entry.at < now - windowMs) continue;
       if (entry.kind === 'user') {
@@ -86,6 +88,16 @@ export function applyErasures(database: DatabaseSync, ledgerPath: string, { now 
         database.prepare('DELETE FROM request_limits WHERE key = ?').run('create-user:' + createHash('sha256').update(entry.id).digest('hex'));
       }
       else if (entry.kind === 'room') changed += Number(database.prepare('DELETE FROM rooms WHERE id = ?').run(entry.id).changes);
+      else if (entry.kind === 'member') { if (tables.has('room_members')) changed += Number(database.prepare('DELETE FROM room_members WHERE id = ?').run(entry.id).changes); }
+      else if (entry.kind === 'asset') {
+        if (tables.has('model_assets')) changed += Number(database.prepare('DELETE FROM model_assets WHERE id = ?').run(entry.id).changes);
+        for (const row of database.prepare('SELECT id, room FROM rooms').all()) {
+          const room = JSON.parse(String(row.room));
+          if (!Array.isArray(room.furniture) || !room.furniture.some((item: { assetId?: string }) => item.assetId === entry.id)) continue;
+          room.furniture = room.furniture.filter((item: { assetId?: string }) => item.assetId !== entry.id);
+          database.prepare('UPDATE rooms SET room = ?' + (roomColumns.has('y_state') ? ', y_state = NULL' : '') + ' WHERE id = ?').run(JSON.stringify(room), row.id);
+        }
+      }
       else if (entry.kind === 'share') changed += Number(database.prepare('UPDATE rooms SET shared = 0 WHERE id = ? AND updated_at <= ?').run(entry.id, entry.at).changes);
       else changed += Number(database.prepare('UPDATE rooms SET sketch = NULL, sketch_mime = NULL, sketch_version = MAX(sketch_version, ?) WHERE id = ? AND sketch_version <= ?').run(entry.version!, entry.id, entry.version!).changes);
     }

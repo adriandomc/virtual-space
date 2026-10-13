@@ -10,6 +10,35 @@ import { BACKUP_RETENTION_DAYS } from './legalPolicy';
 
 const time = Date.parse('2026-10-13T17:00:00Z');
 const retention = BACKUP_RETENTION_DAYS * 24 * 60 * 60_000;
+
+test('a second SQLite connection cannot leave the main process with a stale erasure ledger', () => {
+  const directory = mkdtempSync(join(tmpdir(), '3d-space-erasures-live-')), path = join(directory, 'accounts.sqlite');
+  const main = new DatabaseSync(path);
+  main.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; CREATE TABLE users(id TEXT PRIMARY KEY, username TEXT UNIQUE); CREATE TABLE rooms(id TEXT PRIMARY KEY, owner_id TEXT REFERENCES users(id) ON DELETE CASCADE, shared INTEGER); CREATE TABLE sessions(user_id TEXT REFERENCES users(id) ON DELETE CASCADE);');
+  const qa = randomUUID(), control = randomUUID(), room = randomUUID();
+  main.prepare('INSERT INTO users VALUES (?, ?)').run(qa, 'qa_live_fixture');
+  main.prepare('INSERT INTO users VALUES (?, ?)').run(control, 'unrelated_control');
+  main.prepare('INSERT INTO rooms VALUES (?, ?, 1)').run(room, control);
+  main.prepare('INSERT INTO sessions VALUES (?)').run(qa);
+  const ledger = initializeErasures(directory, main), cachedStatement = main.prepare('SELECT username FROM users WHERE id = ?');
+  assert.equal(cachedStatement.get(qa)?.username, 'qa_live_fixture');
+  const helper = new DatabaseSync(path);
+  helper.exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');
+  try {
+    recordErasure(helper, ledger, { kind: 'user', id: qa, at: time }, () => { helper.prepare('DELETE FROM users WHERE id = ? AND username = ?').run(qa, 'qa_live_fixture'); });
+    assert.equal(cachedStatement.get(qa), undefined);
+    recordErasure(main, ledger, { kind: 'share', id: room, at: time + 1 }, () => { main.prepare('UPDATE rooms SET shared = 0 WHERE id = ?').run(room); });
+    pruneErasures(ledger, time + 2, main);
+    assert.deepEqual(JSON.parse(readFileSync(ledger, 'utf8')).entries, [{ kind: 'user', id: qa, at: time }, { kind: 'share', id: room, at: time + 1 }]);
+    assert.equal(cachedStatement.get(control)?.username, 'unrelated_control');
+    assert.equal(main.prepare('SELECT COUNT(*) AS count FROM sessions').get()!.count, 0);
+    assert.equal(main.prepare('PRAGMA foreign_key_check').all().length, 0);
+  } finally {
+    helper.close(); main.close();
+    assert.equal(dirname(resolve(directory)), resolve(tmpdir())); assert.ok(basename(directory).startsWith('3d-space-erasures-live-'));
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 function fixture() {
   const directory = mkdtempSync(join(tmpdir(), '3d-space-erasures-test-'));
   const database = new DatabaseSync(':memory:');

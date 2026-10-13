@@ -1,4 +1,5 @@
-import type { BedSize, FloorFinish, FurnitureItem, Opening, Point, Room, Selection } from './types.js';
+import type { BedSize, FloorFinish, FurnitureItem, ModelPart, Opening, Point, Room, Selection } from './types.js';
+import { getFurniturePreset, isFurnitureVariant } from './furnitureCatalog.js';
 
 const EPS = 1e-7;
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
@@ -10,8 +11,8 @@ export const BED_SIZES: Record<BedSize, { label: string; width: number; depth: n
   queen: { label: 'Queen', width: 1.5, depth: 1.9 },
   king: { label: 'King', width: 2, depth: 1.9 },
 };
-export const FURNITURE_LABELS: Record<FurnitureItem['type'], string> = { bed: 'Cama', wardrobe: 'Ropero', vanity: 'Tocador', nightstand: 'Buró' };
-export const FURNITURE_COLORS: Record<FurnitureItem['type'], string> = { bed: '#b8a084', wardrobe: '#b8a084', vanity: '#b8a084', nightstand: '#b8a084' };
+export const FURNITURE_LABELS: Record<FurnitureItem['type'], string> = { bed: 'Cama', wardrobe: 'Ropero', vanity: 'Tocador', nightstand: 'Buró', custom: 'Modelo' };
+export const FURNITURE_COLORS: Record<FurnitureItem['type'], string> = { bed: '#b8a084', wardrobe: '#b8a084', vanity: '#b8a084', nightstand: '#b8a084', custom: '#b8a084' };
 
 export function createDefaultRoom(): Room {
   return {
@@ -232,7 +233,33 @@ function readFurniture(value: unknown, height: number, index = 0): FurnitureItem
   if (material !== undefined && material !== 'wood' && material !== 'plastic' && material !== 'metal') throw new Error('El material de mueble debe ser madera, plástico o metal.');
   const id = text(p.id, 'Identificador de mueble');
   if (id.length > 64) throw new Error('El identificador de mueble admite hasta 64 caracteres.');
-  return { id, type, ...(bedSize ? { bedSize } : {}), ...(material === undefined ? {} : { material }), ...(p.color === undefined ? {} : { color: color(p.color, `Color de mueble ${index + 1}`) }), x: number(p.x, -50, 50, `Mueble ${index + 1}, X`), z: number(p.z, -50, 50, `Mueble ${index + 1}, Z`), width: number(p.width, 0.1, 10, `Ancho de mueble ${index + 1}`), depth: number(p.depth, 0.1, 10, `Fondo de mueble ${index + 1}`), height: number(p.height, 0.1, height, `Altura de mueble ${index + 1}`), rotation: number(p.rotation, 0, 360, `Giro de mueble ${index + 1}`) };
+  if (p.variant !== undefined && !isFurnitureVariant(type, p.variant)) throw new Error('Selecciona un modelo válido de esta categoría.');
+  let asset: Pick<FurnitureItem, 'assetId' | 'name' | 'parts'> = {};
+  if (type === 'custom') {
+    if (typeof p.assetId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(p.assetId)) throw new Error('El modelo necesita un archivo válido.');
+    const name = text(p.name, 'Nombre del modelo');
+    if (name.length > 80) throw new Error('El nombre del modelo admite hasta 80 caracteres.');
+    const parts: Record<string, ModelPart> = {};
+    if (p.parts !== undefined) {
+      const values = record(p.parts, 'Las piezas');
+      if (Object.keys(values).length > 512) throw new Error('El modelo admite hasta 512 piezas.');
+      for (const [key, value] of Object.entries(values)) {
+        if (!/^(0|[1-9]\d{0,2})$/.test(key) || Number(key) >= 512) throw new Error('Selecciona una pieza válida.');
+        const part = record(value, 'La pieza'), result: ModelPart = {};
+        if (part.color !== undefined) result.color = color(part.color, 'Color de pieza');
+        if (part.material !== undefined) { if (typeof part.material !== 'string' || !['wood', 'plastic', 'metal'].includes(part.material)) throw new Error('Selecciona un material válido.'); result.material = part.material as ModelPart['material']; }
+        if (part.visible !== undefined) result.visible = boolean(part.visible, 'Visibilidad de pieza');
+        for (const field of ['position', 'rotation', 'scale'] as const) {
+          if (part[field] === undefined) continue;
+          const vector = record(part[field], 'Transformación de pieza'), min = field === 'scale' ? 0.1 : field === 'rotation' ? -360 : -20, max = field === 'scale' ? 10 : field === 'rotation' ? 360 : 20;
+          result[field] = { x: number(vector.x, min, max, field), y: number(vector.y, min, max, field), z: number(vector.z, min, max, field) };
+        }
+        parts[key] = result;
+      }
+    }
+    asset = { assetId: p.assetId, name, ...(p.parts === undefined ? {} : { parts }) };
+  } else if (p.assetId !== undefined || p.parts !== undefined || p.name !== undefined) throw new Error('El archivo y sus piezas sólo corresponden a modelos propios.');
+  return { id, type, ...asset, ...(p.variant === undefined ? {} : { variant: String(p.variant) }), ...(bedSize ? { bedSize } : {}), ...(material === undefined ? {} : { material }), ...(p.color === undefined ? {} : { color: color(p.color, `Color de mueble ${index + 1}`) }), x: number(p.x, -50, 50, `Mueble ${index + 1}, X`), z: number(p.z, -50, 50, `Mueble ${index + 1}, Z`), width: number(p.width, 0.1, 10, `Ancho de mueble ${index + 1}`), depth: number(p.depth, 0.1, 10, `Fondo de mueble ${index + 1}`), height: number(p.height, 0.1, height, `Altura de mueble ${index + 1}`), rotation: number(p.rotation, 0, 360, `Giro de mueble ${index + 1}`) };
 }
 
 function placeFurniture(room: Room, rawItem: FurnitureItem, avoid: FurnitureItem[]): FurnitureItem {
@@ -401,17 +428,25 @@ export function addLight(room: Room): Room {
   return validateRoom({ ...room, lights: [...room.lights, { ...point, id: itemId(), name: `Luz ${room.lights.length + 1}`, y: room.height - 0.3, lumens: 800, temperature: 2700, enabled: true }] });
 }
 
-export function addFurniture(room: Room, type: FurnitureItem['type'], bedSize: BedSize = 'double'): Room {
+export function addFurniture(room: Room, type: FurnitureItem['type'], bedSize: BedSize = 'double', variant?: string): Room {
   if (!Object.hasOwn(FURNITURE_LABELS, type)) throw new Error('Selecciona un tipo de mueble válido.');
+  if (type === 'custom') throw new Error('Selecciona o sube un modelo.');
+  if (variant !== undefined && !isFurnitureVariant(type, variant)) throw new Error('Selecciona un modelo válido de esta categoría.');
   if (!Object.hasOwn(BED_SIZES, bedSize)) throw new Error('Selecciona un tamaño de cama válido.');
-  const dimensions = type === 'bed' ? { ...BED_SIZES[bedSize], height: 1.1 } : {
+  const dimensions = variant ? getFurniturePreset(type, variant)! : type === 'bed' ? { ...BED_SIZES[bedSize], height: 1.1 } : {
     wardrobe: { width: 1.4, depth: 0.6, height: 2 },
     vanity: { width: 1, depth: 0.45, height: 1.5 },
     nightstand: { width: 0.5, depth: 0.45, height: 0.55 },
   }[type];
   const point = interiorPoint(room.vertices);
-  const item = placeFurniture(room, { id: itemId(), type, ...(type === 'bed' ? { bedSize } : {}), ...point, width: dimensions.width, depth: dimensions.depth, height: dimensions.height, rotation: 0 }, room.furniture ?? []);
+  const item = placeFurniture(room, { id: itemId(), type, ...(variant ? { variant } : {}), ...(type === 'bed' ? { bedSize } : {}), ...point, width: dimensions.width, depth: dimensions.depth, height: Math.min(dimensions.height, room.height), rotation: 0 }, room.furniture ?? []);
   return validateRoom({ ...room, furniture: [...(room.furniture ?? []), item] });
+}
+
+export function addCustomFurniture(room: Room, asset: { id: string; name: string; width: number; depth: number; height: number }): Room {
+  const factor = Math.min(1, 10 / asset.width, 10 / asset.depth, room.height / asset.height);
+  const item = placeFurniture(room, { id: itemId(), type: 'custom', assetId: asset.id, name: asset.name, ...interiorPoint(room.vertices), width: Math.max(0.1, asset.width * factor), depth: Math.max(0.1, asset.depth * factor), height: Math.max(0.1, asset.height * factor), rotation: 0 }, room.furniture);
+  return validateRoom({ ...room, furniture: [...room.furniture, item] });
 }
 
 export function snapPlanPoint(previous: Point | null, point: Point, options: { grid: boolean; step: number; angles: boolean; angleStep?: number }): Point {

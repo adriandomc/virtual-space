@@ -2,7 +2,7 @@ import { parseNumber } from './fieldDraft';
 import useFieldDraft from './useFieldDraft';
 
 export default function NumberInput({ label, value, min, max, step = 0.1, onChange, onInvalid, onEdit }: { label: string; value: number; min: number; max: number; step?: number; onChange: (value: number) => boolean | void; onInvalid: () => void; onEdit: () => void }) {
-  const { inputProps, edit } = useFieldDraft({ value, parse: raw => parseNumber(raw, min, max), onCommit: onChange, onInvalid });
+  const { inputProps, edit } = useFieldDraft({ value, format: next => String(Number(next.toFixed(4))), parse: raw => parseNumber(raw, min, max), onCommit: onChange, onInvalid });
   return <input {...inputProps} type="text" role="spinbutton" inputMode="decimal" aria-label={label} aria-valuenow={parseNumber(inputProps.value, min, max) ?? undefined} aria-valuemin={min} aria-valuemax={max} required onChange={event => { onEdit(); inputProps.onChange(event); }} onKeyDown={event => {
     if (!event.nativeEvent.isComposing && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
       event.preventDefault();

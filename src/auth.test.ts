@@ -56,7 +56,7 @@ test('cuentas sin correo, sesiones del servidor y aislamiento de diseños', asyn
     assert.equal((await send(path)).status, 404); assert.equal((await send(path, 'GET', undefined, otherCookie)).status, 404);
     assert.equal((await send(path + '/sketch')).status, 404);
     const library = await (await send('/api/rooms', 'GET', undefined, originalCookie)).json();
-    assert.deepEqual(library.rooms, [{ id, name: 'Mi diseño', shared: false, updatedAt: new Date(clock).toISOString() }]);
+    assert.deepEqual(library.rooms, [{ id, name: 'Mi diseño', role: 'owner', canManage: true, canEdit: true, shared: false, updatedAt: new Date(clock).toISOString() }]);
     assert.deepEqual((await (await send('/api/rooms', 'GET', undefined, otherCookie)).json()).rooms, []);
     assert.equal((await send(path + '/share', 'POST', { enabled: true }, otherCookie)).status, 404);
     assert.equal((await send(path + '/share', 'POST', { enabled: 'true' }, originalCookie)).status, 400);

@@ -1,0 +1,20 @@
+.custom-model-editor { border-top: 1px solid var(--line, #d9ddcf); padding-top: 12px; margin-top: 12px; }
+.custom-model-editor > summary, .model-part-transforms > summary { cursor: pointer; font-weight: 600; font-size: 16px; padding: 12px 0; min-height: 44px; }
+.model-part-fields { display: grid; gap: 16px; border: 0; padding: 8px 0 0; min-width: 0; }
+.model-part-fields > label, .model-part-color-section { display: grid; gap: 7px; min-width: 0; color: var(--muted, #64735c); font-size: 15px; }
+.model-part-fields select, .model-part-fields input[type=text] { width: 100%; min-width: 0; min-height: 44px; font-size: 16px; padding: 10px; border: 1px solid var(--line, #d9ddcf); border-radius: 7px; background: #f5f7f0; color: #354330; }
+.model-part-fields select { padding-right: 28px; }
+.model-part-fields .model-part-visible { display: flex; align-items: center; gap: 10px; min-height: 44px; color: #354330; cursor: pointer; font-size: 16px; }
+.model-part-visible input { width: 20px; height: 20px; margin: 0; accent-color: var(--green, #536b45); flex-shrink: 0; }
+.model-part-color { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.model-part-color input[type=color] { width: 48px; flex-shrink: 0; height: 44px; padding: 4px; border: 1px solid var(--line, #d9ddcf); border-radius: 7px; background: #f5f7f0; cursor: pointer; }
+.model-part-color input:last-child { flex: 1; font-family: monospace; }
+.model-part-transforms { border-top: 1px solid var(--line, #d9ddcf); border-bottom: 1px solid var(--line, #d9ddcf); padding: 4px 0; }
+.model-part-vector { border: 0; padding: 8px 0 12px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; min-width: 0; }
+.model-part-vector legend { padding: 0; color: var(--muted, #64735c); font-size: 15px; }
+.model-part-vector label { display: grid; gap: 6px; min-width: 0; color: var(--muted, #64735c); font-size: 14px; }
+.model-part-vector input { min-width: 0; width: 100%; font-size: 16px; }
+.model-part-reset { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; font-size: 16px; padding: 10px; border: 1px solid var(--line, #d9ddcf); border-radius: 7px; color: var(--green, #536b45); background: var(--accent, #e9f0e2); }
+.model-part-reset:hover { background: #dde8d5; }
+.model-part-error { color: #a5342b; margin: 6px 0; font-size: 14px; line-height: 1.45; }
+.model-part-fields:disabled .model-part-visible { cursor: default; }

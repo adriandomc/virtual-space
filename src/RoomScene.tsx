@@ -10,6 +10,9 @@ import { DoorClosed, DoorOpen, Lightbulb, LoaderCircle } from 'lucide-react';
 import { bounds, FURNITURE_COLORS, furnitureCorners, furnitureWalkable, interiorPoint, interiorWalkPoint, invalidFurnitureIds, itemWorldPosition, moveSceneItem, pointInPolygon, polygonArea, toggleSceneInteraction } from './model';
 import { createCeilingMaterial, createFabricMaterial, createFloorMaterial, createFurnitureMaterial, createWallMaterial, createWoodMaterial, disposeArchitecturalTextures } from './materials';
 import { createDuvetGeometry, createPillowGeometry } from './beddingGeometry';
+import { buildCatalogGeometry } from './catalogGeometry';
+import { isFurnitureVariant } from './furnitureCatalog';
+import { attachCustomModel } from './customModel';
 import { createArchitecturalPostProcessing } from './postProcessing';
 import { daylightFactor, daylightOpeningArea, joystickVector, renderPixelRatio } from './navigation';
 import { createCameraTransition, sampleCameraTransition } from './cameraTransition';
@@ -19,6 +22,8 @@ import './scene.css';
 
 type Props = {
   room: Room;
+  roomId?: string;
+  onModelError?: (message: string) => void;
   mode: ViewMode;
   selection: Selection | null;
   onSelect: (selection: Selection | null) => void;
@@ -33,6 +38,8 @@ type Props = {
 type WallView = { group: THREE.Group; midpoint: THREE.Vector3; inward: THREE.Vector3; material: THREE.MeshStandardNodeMaterial; index: number };
 const KEY_DIRECTIONS: Record<string, string> = { KeyW: 'forward', ArrowUp: 'forward', KeyS: 'back', ArrowDown: 'back', KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right', KeyQ: 'lookLeft', KeyE: 'lookRight', KeyR: 'lookUp', KeyF: 'lookDown' };
 type Runtime = {
+  roomId?: string;
+  onModelError?: (message: string) => void;
   renderer: THREE.WebGPURenderer;
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
@@ -216,6 +223,9 @@ function sceneBounds(room: Room) {
 }
 
 function disposeContent(group: THREE.Group) {
+  const cleanups: (() => void)[] = [];
+  group.traverse(object => { if (typeof object.userData.disposeCustomModel === 'function') cleanups.push(object.userData.disposeCustomModel); });
+  cleanups.forEach(cleanup => cleanup());
   const geometries = new Set<THREE.BufferGeometry>();
   const materials = new Set<THREE.Material>();
   group.traverse(object => {
@@ -308,19 +318,31 @@ function addFurniture(group: THREE.Group, room: Room) {
   }
 }
 
-function addStoredFurniture(parent: THREE.Group, item: FurnitureItem, quality: Room['renderQuality']) {
+function addStoredFurniture(parent: THREE.Group, item: FurnitureItem, quality: Room['renderQuality'], runtime?: Runtime) {
   const group = new THREE.Group();
   group.userData.architectural = quality === 'hyperrealistic';
   group.position.set(item.x, 0, item.z);
   group.rotation.y = THREE.MathUtils.degToRad(item.rotation);
   group.userData.selection = { kind: 'furniture', id: item.id } satisfies Selection;
   parent.add(group);
+  if (item.type === 'custom') {
+    attachCustomModel(group, item, quality, { roomId: runtime?.roomId, onError: runtime?.onModelError, onLoaded: () => {
+      if (!runtime || runtime.disposed) return;
+      runtime.content.traverse(object => { if (object instanceof THREE.DirectionalLight || object instanceof THREE.PointLight) object.shadow.needsUpdate = true; });
+      if (runtime.selectionBox) runtime.selectionBox.update();
+    } });
+    return group;
+  }
   const w = item.width, d = item.depth, h = item.height;
   const body = createFurnitureMaterial(item.color ?? FURNITURE_COLORS[item.type], item.material ?? 'wood', quality);
   const face = item.color || item.type === 'bed' ? body : createFurnitureMaterial('#d0bea3', item.material ?? 'wood', quality);
   const handles = new THREE.MeshStandardMaterial({ color: '#626559', metalness: 0.65, roughness: 0.35 });
-  const ivory = quality === 'hyperrealistic' ? createFabricMaterial('#eee8df', quality) : new THREE.MeshStandardMaterial({ color: '#f1ebdf', roughness: 1 });
-  if (item.type === 'bed' && quality === 'hyperrealistic') {
+  body.name = face.name = `3D Space:${item.material ?? 'wood'}`;
+  handles.name = '3D Space:metal';
+  if (isFurnitureVariant(item.type, item.variant)) {
+    buildCatalogGeometry(group, item, { body, face, handles }, quality);
+  } else if (item.type === 'bed' && quality === 'hyperrealistic') {
+    const ivory = createFabricMaterial('#eee8df', quality);
     ivory.side = THREE.DoubleSide;
     const linen = createFabricMaterial('#ccc1b1', quality);
     box(group, [w, h, d * 0.05], [0, h / 2, -d * 0.475], body, true);
@@ -345,6 +367,7 @@ function addStoredFurniture(parent: THREE.Group, item: FurnitureItem, quality: R
     }
     for (const x of [-w * 0.4, w * 0.4]) for (const z of [-d * 0.4, d * 0.4]) box(group, [w * 0.055, h * 0.17, d * 0.045], [x, h * 0.085, z], body);
   } else if (item.type === 'bed') {
+    const ivory = new THREE.MeshStandardMaterial({ color: '#f1ebdf', roughness: 1 });
     box(group, [w, h, d * 0.05], [0, h / 2, -d * 0.475], body, true);
     box(group, [w * 0.96, h * 0.18, d * 0.94], [0, h * 0.24, d * 0.02], body, true);
     box(group, [w * 0.91, h * 0.20, d * 0.9], [0, h * 0.43, d * 0.025], ivory, true);
@@ -383,6 +406,11 @@ function addStoredFurniture(parent: THREE.Group, item: FurnitureItem, quality: R
     }
     for (const x of [-w * 0.37, w * 0.37]) for (const z of [-d * 0.36, d * 0.36]) box(group, [w * 0.07, h * 0.14, d * 0.07], [x, h * 0.07, z], body);
   }
+  const usedMaterials = new Set<THREE.Material>();
+  group.traverse(object => {
+    if (object instanceof THREE.Mesh) (Array.isArray(object.material) ? object.material : [object.material]).forEach(material => usedMaterials.add(material));
+  });
+  for (const material of new Set([body, face, handles])) if (!usedMaterials.has(material)) material.dispose();
   if (import.meta.env.DEV) {
     group.updateWorldMatrix(true, true);
     const actual = new THREE.Box3().setFromObject(group);
@@ -390,6 +418,10 @@ function addStoredFurniture(parent: THREE.Group, item: FurnitureItem, quality: R
     console.assert(actual.min.x >= footprint.minX - 0.001 && actual.max.x <= footprint.maxX + 0.001 && actual.min.z >= footprint.minZ - 0.001 && actual.max.z <= footprint.maxZ + 0.001 && actual.min.y >= -0.001 && actual.max.y <= h + 0.001, 'Furniture geometry exceeds its declared dimensions', item.id);
   }
   return group;
+}
+
+export function createFurnitureModel(item: FurnitureItem, quality: Room['renderQuality'] = 'standard'): THREE.Group {
+  return addStoredFurniture(new THREE.Group(), { ...item, x: 0, z: 0, rotation: 0 }, quality);
 }
 
 function buildRoom(runtime: Runtime, room: Room, furniture: boolean) {
@@ -631,7 +663,7 @@ function buildRoom(runtime: Runtime, room: Room, furniture: boolean) {
     const placementGeometry = new THREE.BoxGeometry(1, 1, 1);
     const placementMaterial = new THREE.MeshBasicNodeMaterial({ color: '#ed4040', transparent: true, opacity: 0.28, depthWrite: false, toneMapped: false });
     for (const item of room.furniture) {
-      const object = addStoredFurniture(group, item, room.renderQuality);
+      const object = addStoredFurniture(group, item, room.renderQuality, runtime);
       const overlay = new THREE.Mesh(placementGeometry, placementMaterial);
       overlay.scale.set(item.width + 0.02, item.height + 0.02, item.depth + 0.02);
       overlay.position.y = item.height / 2;
@@ -865,6 +897,8 @@ export default function RoomScene(props: Props) {
         scene.add(content);
         const active: Runtime = { renderer, scene, camera, controls, content, walls: [], ceiling: null, yaw: 0, pitch: 0, fittedDistance: 0, objects: new Map(), invalidFurniture: new Set(), selectionBox: null, walkBlocked: false, viewTransition: null, orbitPose: null, animateView: !!current.current.animateView, ceilingOpacity: current.current.mode === 'walk' ? 1 : 0, transform, proxy, manipulating: null, directDragging: false, pendingEdit: false, lastOpeningBuild: 0, environment: null, architecturalEnvironment: null, sky: null, loadingSky: false, disposed: false, areaTextures: null, postProcessing: null, postFailed: false, viewMode: current.current.mode, builtRoom: null, structure: '', outlinedKey: null };
         runtime.current = active;
+        active.roomId = current.current.roomId;
+        active.onModelError = message => current.current.onModelError?.(message);
         buildRoom(active, current.current.room, current.current.showFurniture);
         resetCamera(active, current.current.room, current.current.mode);
         updateSelection(active, current.current);

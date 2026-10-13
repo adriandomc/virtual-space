@@ -11,15 +11,16 @@ function editorAddress() {
 }
 
 export default function SetupApp() {
-  const { room, setRoom, ready, status, error, readOnly, sketchUrl, uploadSketch, retry } = useProject();
+  const { room, setRoom, ready, status, error, role, connected, canManage, sketchUrl, uploadSketch, retry } = useProject();
+  const readOnly = role !== 'owner' && role !== 'editor';
   const [destination, setDestination] = useState<'editor' | 'library' | null>(null);
   const latestRoom = useRef(room);
   latestRoom.current = room;
 
-  function change(next: Room) { latestRoom.current = next; setRoom(next); }
+  function change(next: Room) { if (!setRoom(next)) return false; latestRoom.current = next; return true; }
   function finish() {
     const { setupStep: _step, ...complete } = latestRoom.current;
-    change(complete);
+    if (!change(complete)) return;
     setDestination('editor');
   }
 
@@ -30,5 +31,5 @@ export default function SetupApp() {
 
   if (!ready || readOnly || (room.setupStep === undefined && !destination)) return <main className="account-page account-loading">{status === 'error' ? <><CircleHelp size={24} /><p className="account-error" role="alert">{error}</p><button className="account-primary" onClick={retry}>Reintentar</button><a href={DESIGNS_PATH}>Mis diseños</a></> : <><LoaderCircle size={25} className="saving-spinner" /><span>Cargando diseño…</span></>}</main>;
 
-  return <Onboarding room={destination === 'editor' ? { ...room, setupStep: 2 } : room} onChange={change} sketchUrl={sketchUrl} onSketchChange={uploadSketch} status={destination && status !== 'error' ? 'loading' : status} error={error} onRetry={retry} onFinish={finish} onCancel={() => setDestination('library')} />;
+  return <Onboarding disabled={!connected} canManage={canManage} room={destination === 'editor' ? { ...room, setupStep: 2 } : room} onChange={change} sketchUrl={sketchUrl} onSketchChange={uploadSketch} status={destination && status !== 'error' ? 'loading' : status} error={error} onRetry={retry} onFinish={finish} onCancel={() => setDestination('library')} />;
 }

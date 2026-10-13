@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from 'react';
 import { Box, Eye, EyeOff, LoaderCircle, LogOut, Plus, Trash2 } from 'lucide-react';
 import Brand from './Brand';
+import Notifications from './Notifications';
 import { createBlankRoom } from './onboardingModel';
 import { accountRequest } from './accountApi';
 import { TERMS_VERSION } from './legalPolicy';
@@ -11,7 +12,7 @@ const RoomEditor = lazy(() => import('./App'));
 const SetupApp = lazy(() => import('./SetupApp'));
 
 type User = { id: string; username: string };
-type Design = { id: string; name: string; updatedAt: string; setupStep?: 0 | 1 | 2 };
+type Design = { id: string; name: string; updatedAt: string; setupStep?: 0 | 1 | 2; role: 'owner' | 'editor' | 'reader'; canManage: boolean };
 
 function PasswordField({ label, name, value, onChange, register, disabled }: { label: string; name: string; value: string; onChange: (value: string) => void; register: boolean; disabled: boolean }) {
   const [visible, setVisible] = useState(false);
@@ -70,6 +71,9 @@ export default function AccountApp({ page }: { page: Exclude<SitePage, 'landing'
   const [libraryAttempt, setLibraryAttempt] = useState(0);
   const [error, setError] = useState('');
   const [pending, setPending] = useState<string | null>(null);
+  const pendingAccount = useRef<string | null>(null);
+  const libraryGeneration = useRef(0);
+  pendingAccount.current = pending;
   const creationId = useRef<string | null>(null);
   const roomId = new URL(window.location.href).searchParams.get('room');
 
@@ -86,14 +90,26 @@ export default function AccountApp({ page }: { page: Exclude<SitePage, 'landing'
 
   useEffect(() => {
     if (!user || page !== 'designs') return;
-    let active = true;
-    setLoadingDesigns(true); setError('');
-    void accountRequest<{ rooms: Design[] }>('/api/rooms').then(result => { if (active) setDesigns(result.rooms); }).catch(cause => { if (active) setError(cause instanceof Error ? cause.message : 'No se pudieron cargar los diseños.'); }).finally(() => { if (active) setLoadingDesigns(false); });
-    return () => { active = false; };
+    let active = true, loading = false;
+    const load = (silent = false) => {
+      if (loading || pendingAccount.current) return;
+      loading = true;
+      const generation = libraryGeneration.current;
+      if (!silent) { setLoadingDesigns(true); setError(''); }
+      void accountRequest<{ rooms: Design[] }>('/api/rooms').then(result => {
+        if (active && generation === libraryGeneration.current && !pendingAccount.current) setDesigns(result.rooms);
+      }).catch(cause => { if (active && generation === libraryGeneration.current) setError(cause instanceof Error ? cause.message : 'No se pudieron cargar los diseños.'); }).finally(() => { loading = false; if (active) setLoadingDesigns(false); });
+    };
+    const refresh = () => { if (document.visibilityState === 'visible') load(true); };
+    load();
+    const timer = setInterval(refresh, 30000);
+    window.addEventListener('focus', refresh); document.addEventListener('visibilitychange', refresh);
+    return () => { active = false; clearInterval(timer); window.removeEventListener('focus', refresh); document.removeEventListener('visibilitychange', refresh); };
   }, [user, page, libraryAttempt]);
 
   async function createDesign() {
     if (pending) return;
+    libraryGeneration.current++;
     setPending('create'); setError('');
     creationId.current ??= crypto.randomUUID();
     try {
@@ -102,7 +118,8 @@ export default function AccountApp({ page }: { page: Exclude<SitePage, 'landing'
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudo crear el diseño.'); setPending(null); }
   }
   async function deleteDesign(design: Design) {
-    if (pending || !window.confirm('¿Eliminar «' + design.name + '»?')) return;
+    if (design.role !== 'owner' || pending || !window.confirm('¿Eliminar «' + design.name + '»?')) return;
+    libraryGeneration.current++;
     setPending(design.id); setError('');
     try { await accountRequest('/api/rooms/' + encodeURIComponent(design.id), { method: 'DELETE', headers: { 'Content-Type': 'application/json' } }); setDesigns(current => current.filter(item => item.id !== design.id)); }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudo eliminar el diseño.'); }
@@ -110,6 +127,7 @@ export default function AccountApp({ page }: { page: Exclude<SitePage, 'landing'
   }
   async function logout() {
     if (pending) return;
+    libraryGeneration.current++;
     setPending('logout'); setError('');
     try { await accountRequest('/api/auth/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); window.location.assign(LOGIN_PATH); }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudo cerrar sesión.'); }
@@ -120,10 +138,10 @@ export default function AccountApp({ page }: { page: Exclude<SitePage, 'landing'
   if (loadingSession || redirect) return <main className="account-page account-loading" aria-label="Cargando cuenta"><LoaderCircle className="saving-spinner" size={25} /></main>;
   if (sessionError) return <main className="account-page account-loading"><p className="account-error" role="alert">{sessionError}</p><button className="account-secondary" onClick={() => setSessionAttempt(current => current + 1)}>Reintentar</button></main>;
   if (!user) return <AuthScreen onAuthenticated={setUser} />;
-  return <main className="account-page library-page"><header className="account-header"><Brand /><div><span className="account-username">{user.username}</span><button type="button" className="account-secondary" aria-label="Cerrar sesión" disabled={!!pending} onClick={() => void logout()}><LogOut size={17} /><span>Cerrar sesión</span></button></div></header>
+  return <main className="account-page library-page"><header className="account-header"><Brand /><div><span className="account-username">{user.username}</span><Notifications onAccepted={() => setLibraryAttempt(current => current + 1)} /><button type="button" className="account-secondary" aria-label="Cerrar sesión" disabled={!!pending} onClick={() => void logout()}><LogOut size={17} /><span>Cerrar sesión</span></button></div></header>
     <section className="design-library" aria-labelledby="designs-title"><div className="library-heading"><h1 id="designs-title">Mis diseños</h1><button type="button" className="account-primary" disabled={!!pending} onClick={() => void createDesign()}>{pending === 'create' ? <LoaderCircle size={17} className="saving-spinner" /> : <Plus size={19} />}Nuevo diseño</button></div>
       {error && <div className="library-error"><p className="account-error" role="alert">{error}</p><button type="button" className="account-secondary" disabled={!!pending} onClick={() => setLibraryAttempt(current => current + 1)}>Reintentar</button></div>}
-      {loadingDesigns ? <div className="library-empty" aria-label="Cargando diseños"><LoaderCircle size={23} className="saving-spinner" /></div> : designs.length ? <ul className="design-list">{designs.map(design => <li key={design.id}><a href={editorPath(design.id, design.setupStep !== undefined)} className="design-open"><span className="design-icon"><Box size={27} strokeWidth={1.3} /></span><span><strong>{design.name}</strong><>{design.setupStep === undefined ? <time dateTime={new Date(design.updatedAt).toISOString()}>{new Date(design.updatedAt).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' })}</time> : <span className="design-progress">Continuar preparación</span>}</></span></a><button type="button" className="design-delete" aria-label={'Eliminar ' + design.name} disabled={!!pending} onClick={() => void deleteDesign(design)}>{pending === design.id ? <LoaderCircle size={19} className="saving-spinner" /> : <Trash2 size={19} />}</button></li>)}</ul> : !error && <p className="library-empty">Sin diseños</p>}
+      {loadingDesigns ? <div className="library-empty" aria-label="Cargando diseños"><LoaderCircle size={23} className="saving-spinner" /></div> : designs.length ? <ul className="design-list">{designs.map(design => <li key={design.id}><a href={editorPath(design.id, design.role === 'owner' && design.setupStep !== undefined)} className="design-open"><span className="design-icon"><Box size={27} strokeWidth={1.3} /></span><span><strong>{design.name}</strong>{design.role !== 'owner' && <span className="design-progress">Compartido · {design.role === 'editor' ? 'Editor' : 'Lector'}</span>}{design.role === 'owner' && design.setupStep !== undefined ? <span className="design-progress">Continuar preparación</span> : <time dateTime={new Date(design.updatedAt).toISOString()}>{new Date(design.updatedAt).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' })}</time>}</span></a>{design.role === 'owner' && <button type="button" className="design-delete" aria-label={'Eliminar ' + design.name} disabled={!!pending} onClick={() => void deleteDesign(design)}>{pending === design.id ? <LoaderCircle size={19} className="saving-spinner" /> : <Trash2 size={19} />}</button>}</li>)}</ul> : !error && <p className="library-empty">Sin diseños</p>}
     </section>
     <footer className="account-footer"><a className="privacy-link" href="/privacy">Aviso de privacidad</a><a className="privacy-link" href="/terms">Condiciones de uso</a></footer>
   </main>;

@@ -12,7 +12,8 @@ ENV PORT=8080
 ENV DATA_DIR=/data
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/server-dist ./server-dist
-COPY package.json ./
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
 RUN mkdir -p /data && chown node:node /data
 USER node
 VOLUME ["/data"]

@@ -26,9 +26,14 @@ export type RoomLight = {
 };
 export type BedSize = 'single' | 'double' | 'queen' | 'king';
 export type FurnitureMaterial = 'wood' | 'plastic' | 'metal';
+export type ModelPart = { color?: string; material?: FurnitureMaterial; visible?: boolean; position?: { x: number; y: number; z: number }; rotation?: { x: number; y: number; z: number }; scale?: { x: number; y: number; z: number } };
 export type FurnitureItem = {
   id: string;
-  type: 'bed' | 'wardrobe' | 'vanity' | 'nightstand';
+  type: 'bed' | 'wardrobe' | 'vanity' | 'nightstand' | 'custom';
+  variant?: string;
+  assetId?: string;
+  name?: string;
+  parts?: Record<string, ModelPart>;
   bedSize?: BedSize;
   material?: FurnitureMaterial;
   color?: string;

@@ -11,6 +11,8 @@ import { checkOrigin, createAuth, HttpError, ipRateIdentity, proxyTrust, type Us
 import { deleteInactiveAccounts } from './retention.js';
 import { applyErasures, initializeErasures, recordErasure, wasErased } from './erasures.js';
 import { createMaintenance } from './maintenanceService.js';
+import { createLiveCollaboration, initializeCollaboration, roomRole } from './collaborationServer.js';
+import { createModelAssets, MODEL_MAX_BYTES } from './modelAssets.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MIME: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.ico': 'image/x-icon', '.woff2': 'font/woff2' };
@@ -75,21 +77,37 @@ export function createServer({ dataDir = process.env.DATA_DIR ?? './data', stati
   const auth = createAuth(database, { now, secureCookie });
   const identify = proxyTrust(trustedProxies);
   database.exec('CREATE TABLE IF NOT EXISTS rooms (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, room TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1, shared INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL, sketch BLOB, sketch_mime TEXT, sketch_version INTEGER NOT NULL DEFAULT 0); CREATE INDEX IF NOT EXISTS rooms_owner_updated ON rooms(owner_id, updated_at DESC)');
+  initializeCollaboration(database);
+  const modelAssets = createModelAssets(database, {
+    now,
+    canViewRoom: (id, userId) => { const row = find.get(id) as Row | undefined; return Boolean(row && roomRole(database, row, userId ? { id: userId, username: '' } : null)); },
+    canEditRoom: (id, userId) => { const row = find.get(id) as Row | undefined; const role = row && roomRole(database, row, { id: userId, username: '' }); return role === 'owner' || role === 'editor'; },
+    recordAssetErasure: (id, erase) => recordErasure(database, ledgerPath, { kind: 'asset', id, at: now() }, erase),
+  });
   const ledgerPath = initializeErasures(dataDir, database);
   applyErasures(database, ledgerPath, { now: now(), includeExpired: true });
   deleteInactiveAccounts(database, now());
   const maintenanceTasks = createMaintenance(database, dataDir, ledgerPath, { now });
   const find = database.prepare('SELECT id, owner_id, room, revision, shared, updated_at, sketch_version, (sketch IS NOT NULL) AS has_sketch FROM rooms WHERE id = ?');
   const root = resolve(staticDir);
-  const snapshot = (row: Row, user: User | null) => ({ id: row.id, room: JSON.parse(row.room) as Room, revision: row.revision, hasSketch: row.has_sketch === 1, sketchVersion: row.sketch_version, canEdit: user?.id === row.owner_id, shared: row.shared === 1, updatedAt: new Date(row.updated_at).toISOString() });
+  const snapshot = (row: Row, user: User | null) => {
+    const role = roomRole(database, row, user);
+    return { id: row.id, room: JSON.parse(row.room) as Room, revision: row.revision, hasSketch: row.has_sketch === 1, sketchVersion: row.sketch_version, role, canEdit: role === 'owner' || role === 'editor', canManage: role === 'owner', shared: row.shared === 1, updatedAt: new Date(row.updated_at).toISOString() };
+  };
   const rowFor = (id: string, user: User | null) => {
     const row = find.get(id) as Row | undefined;
-    if (!row || (!row.shared && row.owner_id !== user?.id)) throw new HttpError(404, 'Este proyecto no existe.');
+    if (!row || !roomRole(database, row, user)) throw new HttpError(404, 'Este proyecto no existe.');
     return row;
   };
   const requireEditor = (request: IncomingMessage, row: Row) => {
-    if (auth.requireUser(request).id !== row.owner_id) throw new HttpError(403, 'Este proyecto solo permite ver.');
+    const role = roomRole(database, rowFor(row.id, auth.requireUser(request)), auth.requireUser(request));
+    if (role !== 'owner' && role !== 'editor') throw new HttpError(403, 'Este proyecto solo permite ver.');
   };
+  const requireOwner = (request: IncomingMessage, row: Row) => { const user = auth.requireUser(request); if (user.id !== rowFor(row.id, user).owner_id) throw new HttpError(403, 'Solo el propietario puede cambiar este proyecto.'); };
+  const live = createLiveCollaboration({ database, auth, identify, appOrigin, now, find: id => find.get(id) as Row | undefined, snapshot, readJson, sendJson,
+    eraseMember: (id, erase) => recordErasure(database, ledgerPath, { kind: 'member', id, at: now() }, erase),
+    validateReferences: (room, userId, roomId) => modelAssets.validateRoomReferences(room, userId, roomId),
+  });
   const server = httpServer(async (request, response) => {
     try {
       response.setHeader('Referrer-Policy', 'no-referrer');
@@ -110,11 +128,45 @@ export function createServer({ dataDir = process.env.DATA_DIR ?? './data', stati
       if (pathname === '/api/auth/session' && method === 'GET') { sendJson(response, 200, { user: auth.session(request) }); return; }
       if (pathname === '/api/auth/register' && method === 'POST') { sendJson(response, 201, { user: await auth.register(request, response, await readJson(request, 8192), ip) }); return; }
       if (pathname === '/api/auth/login' && method === 'POST') { sendJson(response, 200, { user: await auth.login(request, response, await readJson(request, 8192), ip) }); return; }
-      if (pathname === '/api/auth/logout' && method === 'POST') { auth.logout(request, response); sendJson(response, 200, { user: null }); return; }
+      if (pathname === '/api/auth/logout' && method === 'POST') { auth.logout(request, response); live.refresh(); sendJson(response, 200, { user: null }); return; }
+      if (await live.handle(request, response, pathname, method, ip)) return;
+      if (pathname === '/api/models') {
+        let user = auth.requireUser(request);
+        const roomId = new URL(request.url!, 'http://localhost').searchParams.get('room') ?? undefined;
+        if (method === 'GET') { sendJson(response, 200, { models: modelAssets.list(user.id, roomId, new URL(request.url!, 'http://localhost').searchParams.get('scope') === 'mine') }); return; }
+        if (method === 'POST') {
+          auth.limit('model-upload-user', user.id, 20, 60_000); auth.limit('model-upload-ip', ip, 40, 60_000);
+          if (!roomId || !UUID.test(roomId)) throw new HttpError(400, 'Selecciona un diseño para subir el modelo.');
+          requireEditor(request, rowFor(roomId, user));
+          if (request.headers['content-type']?.split(';')[0].trim().toLowerCase() !== 'model/gltf-binary') throw new HttpError(415, 'Usa un modelo GLB.');
+          const data = await readBody(request, MODEL_MAX_BYTES);
+          user = auth.requireUser(request);
+          const targetRoom = rowFor(roomId, user);
+          requireEditor(request, targetRoom);
+          let name: string;
+          try { name = decodeURIComponent(String(request.headers['x-model-name'] ?? 'Modelo')); }
+          catch { throw new HttpError(400, 'El nombre del modelo no es válido.'); }
+          sendJson(response, 201, { model: modelAssets.upload(targetRoom.owner_id, data, name, roomId) }); return;
+        }
+        throw new HttpError(405, 'Este método no está permitido.');
+      }
+      const modelApi = pathname.match(/^\/api\/models\/([^/]+)$/);
+      if (modelApi) {
+        const query = new URL(request.url!, 'http://localhost').searchParams, roomId = query.get('room') ?? undefined;
+        if (method === 'GET' || method === 'HEAD') {
+          const user = auth.session(request);
+          if (query.get('metadata') === '1') { sendJson(response, 200, { model: modelAssets.metadata(modelApi[1], user?.id ?? null, roomId) }); return; }
+          const data = modelAssets.read(modelApi[1], user?.id ?? null, roomId);
+          response.writeHead(200, { 'Content-Type': 'model/gltf-binary', 'Content-Length': data.length, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+          response.end(method === 'HEAD' ? undefined : data); return;
+        }
+        if (method === 'DELETE') { const user = auth.requireUser(request); modelAssets.remove(modelApi[1], user.id); sendJson(response, 200, { deleted: true }); return; }
+        throw new HttpError(405, 'Este método no está permitido.');
+      }
       if (pathname === '/api/rooms' && method === 'GET') {
         const user = auth.requireUser(request);
-        const rooms = database.prepare('SELECT id, json_extract(room, \'$.name\') AS name, json_extract(room, \'$.setupStep\') AS setup_step, shared, updated_at FROM rooms WHERE owner_id = ? ORDER BY updated_at DESC, id').all(user.id) as { id: string; name: string; setup_step: Room['setupStep'] | null; shared: number; updated_at: number }[];
-        sendJson(response, 200, { rooms: rooms.map(row => ({ id: row.id, name: row.name, setupStep: row.setup_step ?? undefined, shared: row.shared === 1, updatedAt: new Date(row.updated_at).toISOString() })) }); return;
+        const rooms = database.prepare('SELECT rooms.id, rooms.owner_id, json_extract(room, \'$.name\') AS name, json_extract(room, \'$.setupStep\') AS setup_step, shared, updated_at, room_members.role AS member_role FROM rooms LEFT JOIN room_members ON room_members.room_id = rooms.id AND room_members.user_id = ? AND room_members.accepted_at IS NOT NULL WHERE owner_id = ? OR room_members.id IS NOT NULL ORDER BY updated_at DESC, rooms.id').all(user.id, user.id) as { id: string; owner_id: string; name: string; setup_step: Room['setupStep'] | null; shared: number; updated_at: number; member_role: 'editor' | 'reader' | null }[];
+        sendJson(response, 200, { rooms: rooms.map(row => ({ id: row.id, name: row.name, setupStep: row.setup_step ?? undefined, role: row.owner_id === user.id ? 'owner' : row.member_role, canManage: row.owner_id === user.id, canEdit: row.owner_id === user.id || row.member_role === 'editor', shared: row.shared === 1, updatedAt: new Date(row.updated_at).toISOString() })) }); return;
       }
       if (pathname === '/api/rooms' && method === 'POST') {
         let user = auth.requireUser(request);
@@ -122,6 +174,7 @@ export function createServer({ dataDir = process.env.DATA_DIR ?? './data', stati
         user = auth.requireUser(request);
         if (typeof body.id !== 'string' || !UUID.test(body.id)) throw new HttpError(400, 'La identidad del proyecto no es válida.');
         const room = roomValue(body.room);
+        modelAssets.validateRoomReferences(room, user.id, body.id);
         const existing = find.get(body.id) as Row | undefined;
         if (existing) {
           if (user.id !== existing.owner_id) throw new HttpError(409, 'El proyecto ya existe.');
@@ -142,13 +195,14 @@ export function createServer({ dataDir = process.env.DATA_DIR ?? './data', stati
         const row = rowFor(id, user);
         if (api[2] === '/share') {
           if (method !== 'POST') throw new HttpError(405, 'Este método no está permitido.');
-          requireEditor(request, row);
+          requireOwner(request, row);
           const body = await readJson(request);
-          requireEditor(request, row);
+          requireOwner(request, row);
           if (typeof body.enabled !== 'boolean') throw new HttpError(400, 'El permiso no es válido.');
           const updateShare = () => { database.prepare('UPDATE rooms SET shared = ?, updated_at = ? WHERE id = ?').run(body.enabled ? 1 : 0, now(), id); };
           if (body.enabled) updateShare();
           else recordErasure(database, ledgerPath, { kind: 'share', id, at: now() }, updateShare);
+          live.refresh(id);
           sendJson(response, 200, { shared: body.enabled });
         } else if (api[2] === '/sketch') {
           if (method === 'GET' || method === 'HEAD') {
@@ -167,6 +221,7 @@ export function createServer({ dataDir = process.env.DATA_DIR ?? './data', stati
             requireEditor(request, row);
             if (!imageMatches(data, mime)) throw new HttpError(400, 'El contenido no coincide con el tipo de imagen.');
             const changed = database.prepare('UPDATE rooms SET sketch = ?, sketch_mime = ?, sketch_version = sketch_version + 1, updated_at = ? WHERE id = ? RETURNING sketch_version').get(data, mime, now(), id) as { sketch_version: number };
+            live.refresh(id);
             sendJson(response, 200, { hasSketch: true, sketchVersion: changed.sketch_version });
           } else if (method === 'DELETE') {
             requireEditor(request, row);
@@ -174,12 +229,14 @@ export function createServer({ dataDir = process.env.DATA_DIR ?? './data', stati
             recordErasure(database, ledgerPath, { kind: 'sketch', id, at: now(), version: row.sketch_version + 1 }, () => {
               changed = database.prepare('UPDATE rooms SET sketch = NULL, sketch_mime = NULL, sketch_version = sketch_version + 1, updated_at = ? WHERE id = ? RETURNING sketch_version').get(now(), id) as { sketch_version: number };
             });
+            live.refresh(id);
             sendJson(response, 200, { hasSketch: false, sketchVersion: changed.sketch_version });
           } else throw new HttpError(405, 'Este método no está permitido.');
         } else if (method === 'GET') sendJson(response, 200, snapshot(row, user));
         else if (method === 'DELETE') {
-          requireEditor(request, row);
+          requireOwner(request, row);
           recordErasure(database, ledgerPath, { kind: 'room', id, at: now() }, () => { database.prepare('DELETE FROM rooms WHERE id = ?').run(id); });
+          live.refresh(id);
           sendJson(response, 200, { deleted: true });
         }
         else if (method === 'PUT') {
@@ -188,12 +245,7 @@ export function createServer({ dataDir = process.env.DATA_DIR ?? './data', stati
           requireEditor(request, row);
           if (!Number.isSafeInteger(body.revision) || (body.revision as number) < 1) throw new HttpError(400, 'La versión del proyecto no es válida.');
           const room = roomValue(body.room);
-          const changed = database.prepare('UPDATE rooms SET room = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ? RETURNING revision').get(JSON.stringify(room), now(), id, body.revision as number) as { revision: number } | undefined;
-          if (!changed) {
-            const latest = rowFor(id, user);
-            if (latest.room === JSON.stringify(room)) { sendJson(response, 200, { id, room, revision: latest.revision }); return; }
-            throw new HttpError(409, 'Otra sesión guardó cambios. Descarga tus cambios y abre el proyecto de nuevo para revisar esa versión.');
-          }
+          const changed = live.putRoom(id, room, body.revision as number, auth.requireUser(request).id);
           sendJson(response, 200, { id, room, revision: changed.revision });
         } else throw new HttpError(405, 'Este método no está permitido.');
         return;
@@ -233,10 +285,12 @@ export function createServer({ dataDir = process.env.DATA_DIR ?? './data', stati
       sendJson(response, error instanceof HttpError ? error.status : 500, { error: error instanceof HttpError ? error.message : 'No se pudo guardar el proyecto. Inténtalo de nuevo.' });
     }
   });
+  live.attach(server);
   if (maintenance) server.once('listening', () => maintenanceTasks.start());
   const close = server.close.bind(server);
   let databaseClosed = false;
   server.close = callback => {
+    live.close();
     const pending = maintenanceTasks.stop();
     close(error => {
       void pending.catch(() => console.error('Maintenance stopped with an error.')).then(() => { if (!databaseClosed) { database.close(); databaseClosed = true; } callback?.(error); });

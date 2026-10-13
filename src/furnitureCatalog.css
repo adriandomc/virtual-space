@@ -1,0 +1,15 @@
+.furniture-catalog { min-width: 0; width: 100%; }
+.add-dialog:has(.furniture-catalog) { width: 760px; }
+.catalog-back { display: inline-flex; align-items: center; gap: .3rem; min-height: 42px; margin: 0 0 .45rem; padding: .25rem .2rem; border: 0; background: transparent; color: var(--muted, #64705d); font: inherit; cursor: pointer; }
+.catalog-categories { display: flex; gap: .35rem; padding: .3rem; margin-bottom: .8rem; border-radius: 12px; background: var(--accent, #eef0e9); }
+.catalog-categories button { flex: 1; min-height: 44px; border: 0; border-radius: 9px; background: transparent; color: var(--muted, #626c5b); font: inherit; font-size: 16px; cursor: pointer; }
+.catalog-categories button[aria-pressed="true"] { background: var(--panel, #fff); color: var(--text, #32402b); box-shadow: 0 1px 5px #25331c12; }
+.catalog-models { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .65rem; }
+.catalog-model { display: flex; flex-direction: column; align-items: stretch; min-width: 0; padding: .45rem .55rem .75rem; border: 1px solid var(--line, #dce1d5); border-radius: 12px; background: var(--panel, #fff); color: var(--text, #32402b); text-align: left; font: inherit; cursor: pointer; }
+.catalog-model:hover { border-color: var(--green, #536b43); background: #f8faf5; }
+.catalog-model:focus-visible, .catalog-categories button:focus-visible, .catalog-back:focus-visible { outline: 3px solid var(--green, #536b43); outline-offset: 3px; }
+.furniture-thumbnail { display: block; width: 100%; height: 112px; }
+.catalog-model-name { font-size: 16px; font-weight: 600; line-height: 1.3; }
+.catalog-model-size { margin-top: .3rem; color: var(--muted, #697361); font-size: 13px; line-height: 1.3; }
+@media (max-width: 540px) { .catalog-models { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .55rem; } .catalog-model { padding: .4rem .5rem .65rem; } .catalog-categories button { padding: .3rem .15rem; font-size: 15px; } .furniture-thumbnail { height: 110px; } }
+@media (prefers-reduced-motion: no-preference) { .catalog-model { transition: background .15s, border-color .15s; } }
