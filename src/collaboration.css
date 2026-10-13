@@ -12,7 +12,7 @@
 .notifications { position:relative; }
 .notification-button { position:relative; }
 .notification-count { position:absolute; top:1px; right:0; min-width:16px; height:16px; padding:0 3px; border-radius:10px; font-size:11px; line-height:16px; background:var(--green); color:white; }
-.notifications-panel { position:absolute; top:48px; right:0; width:min(340px,calc(100vw - 32px)); background:var(--panel); border:1px solid var(--line); border-radius:14px; box-shadow:0 14px 48px #27302426; padding:16px; z-index:110; max-height:70dvh; overflow-y:auto; }
+.notifications-panel { position:absolute; top:48px; right:0; width:min(340px,calc(100vw - 32px)); background:var(--panel); border:1px solid var(--line); border-radius:14px; box-shadow:0 14px 48px #27302426; padding:16px; z-index:110; max-height:min(70dvh,calc(var(--app-height,100dvh) - 88px)); overflow-y:auto; }
 .notifications-panel header { display:flex; justify-content:space-between; align-items:center; }
 .notifications-panel h2 { margin:0; font-size:18px; }
 .notifications-panel ul { list-style:none; display:grid; gap:16px; margin:16px 0 0; padding:0; }
@@ -23,5 +23,5 @@
 @media(max-width:600px) { .notifications-panel { position:fixed; top:72px; right:16px; } }
 
 .notifications-panel{color:var(--dark)}
-.catalog-dialog{width:min(760px,calc(100vw - 32px));max-height:calc(100dvh - 32px);overflow:auto}
-.share-dialog{max-height:calc(100dvh - 32px);overflow:auto}
+.catalog-dialog{width:min(760px,calc(100vw - 32px));max-height:calc(var(--app-height,100dvh) - 32px);overflow:auto}
+.share-dialog{max-height:calc(var(--app-height,100dvh) - 32px);overflow:auto}

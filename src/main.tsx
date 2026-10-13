@@ -9,6 +9,12 @@ const AccountApp = React.lazy(() => import('./AccountApp'));
 const Privacy = React.lazy(() => import('./Privacy'));
 const Terms = React.lazy(() => import('./Terms'));
 const route = siteRoute(new URL(window.location.href));
+const viewport = window.visualViewport;
+const syncViewportHeight = () => document.documentElement.style.setProperty('--app-height', Math.round(viewport && viewport.scale === 1 ? viewport.height : window.innerHeight) + 'px');
+viewport?.addEventListener('resize', syncViewportHeight);
+window.addEventListener('resize', syncViewportHeight);
+syncViewportHeight();
+import.meta.hot?.dispose(() => { viewport?.removeEventListener('resize', syncViewportHeight); window.removeEventListener('resize', syncViewportHeight); });
 
 if (route.redirect) window.location.replace(route.redirect);
 else ReactDOM.createRoot(document.getElementById('root')!).render(

@@ -8,7 +8,7 @@
 .model-library-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .model-library-actions button { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; font-size: 16px; padding: 8px; border: 1px solid var(--line, #d9ddcf); border-radius: 8px; background: var(--accent, #e9f0e2); }
 .model-library-filetype { font-size: 14px; color: var(--muted, #697260); }
-.model-library-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; max-height: min(48dvh, 460px); overflow-y: auto; min-width: 0; }
+.model-library-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; min-width: 0; }
 .model-library-card { display: flex; align-items: center; gap: 4px; border: 1px solid var(--line, #d9ddcf); border-radius: 10px; min-width: 0; }
 .model-library .model-library-select { display: flex; align-items: center; gap: 10px; text-align: left; background: transparent; border: 0; flex: 1; min-width: 0; padding: 8px; font-size: 16px; min-height: 64px; }
 .model-library-select > span:nth-child(2) { flex: 1; overflow-wrap: anywhere; min-width: 0; }

@@ -10,7 +10,7 @@ import './customModel.css';
 type Props = { item: FurnitureItem; roomId?: string; onChange: (item: FurnitureItem) => void; readOnly?: boolean; notify?: (message: string) => void };
 function PartColor({ value, onChange, invalid }: { value: string; onChange: (value: string) => void; invalid: () => void }) {
   const { inputProps } = useFieldDraft({ value, parse: normalizeHex, onCommit: onChange, onInvalid: invalid });
-  return <div className="model-part-color"><input type="color" aria-label="Color de la parte" value={value} onChange={event => onChange(event.target.value)} /><input {...inputProps} aria-label="Código hexadecimal de la parte" placeholder="#ffffff" maxLength={7} spellCheck={false} /></div>;
+  return <div className="model-part-color"><input type="color" aria-label="Color de la parte" value={value} onChange={event => onChange(event.target.value)} /><input {...inputProps} type="text" aria-label="Código hexadecimal de la parte" placeholder="#ffffff" maxLength={7} spellCheck={false} /></div>;
 }
 export default function CustomModelEditor({ item, roomId, onChange, readOnly = false, notify }: Props) {
   const [metadata, setMetadata] = useState<ModelAsset | null>(null);
