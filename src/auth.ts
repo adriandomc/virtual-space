@@ -2,12 +2,14 @@ import { createHash, randomBytes, randomUUID, scrypt, timingSafeEqual } from 'no
 import { BlockList, isIP } from 'node:net';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { DatabaseSync } from 'node:sqlite';
+import { TERMS_VERSION } from './legalPolicy.js';
+import { inactivityDeadline, initializeAccountPolicy, touchAccount } from './retention.js';
 
 export class HttpError extends Error {
   constructor(public status: number, message: string, public retryAfter?: number) { super(message); }
 }
 export type User = { id: string; username: string };
-type UserRow = User & { salt: string; password_hash: string };
+type UserRow = User & { salt: string; password_hash: string; inactive_after: number };
 type LimitRow = { count: number; window_start: number; blocked_until: number; strikes: number };
 const MINUTE = 60_000, SESSION_TIME = 30 * 24 * 60 * MINUTE;
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -98,6 +100,8 @@ export function createAuth(database: DatabaseSync, { now = Date.now, secureCooki
     CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires_at);
     CREATE TABLE IF NOT EXISTS request_limits (key TEXT PRIMARY KEY, count INTEGER NOT NULL, window_start INTEGER NOT NULL, blocked_until INTEGER NOT NULL DEFAULT 0, strikes INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL);
   `);
+  initializeAccountPolicy(database, now());
+  const authenticated = new WeakMap<IncomingMessage, User>();
   let activeHashes = 0;
   const hash = (password: string, salt: string): Promise<Buffer> => {
     // Bound scrypt memory and its queue before consuming the shared worker pool.
@@ -137,16 +141,21 @@ export function createAuth(database: DatabaseSync, { now = Date.now, secureCooki
     setLimit.run(key, count, fresh ? time : previous.window_start, block, strikes, time);
     if (block) rejectLimit(block);
   };
-  const findUser = database.prepare('SELECT id, username, salt, password_hash FROM users WHERE username = ?');
+  const findUser = database.prepare('SELECT id, username, salt, password_hash, inactive_after FROM users WHERE username = ?');
   const session = (request: IncomingMessage): User | null => {
     const token = sessionToken(request);
     if (!/^[0-9a-f]{64}$/.test(token)) return null;
-    return database.prepare('SELECT users.id, users.username FROM sessions JOIN users ON users.id = sessions.user_id WHERE token_hash = ? AND expires_at > ?').get(digest(token), now()) as User | undefined ?? null;
+    const time = now();
+    const user = database.prepare('SELECT users.id, users.username FROM sessions JOIN users ON users.id = sessions.user_id WHERE token_hash = ? AND expires_at > ? AND inactive_after > ?').get(digest(token), time, time) as User | undefined;
+    if (user) authenticated.set(request, user);
+    return user ?? null;
   };
   const revoke = (request: IncomingMessage) => { const token = sessionToken(request); if (/^[0-9a-f]{64}$/.test(token)) database.prepare('DELETE FROM sessions WHERE token_hash = ?').run(digest(token)); };
   const cookie = (response: ServerResponse, value: string, age?: number) => response.setHeader('Set-Cookie', cookieName + '=' + value + '; Path=/; HttpOnly; SameSite=Lax' + (age === undefined ? '' : '; Max-Age=' + age) + (secureCookie ? '; Secure' : ''));
   const startSession = (request: IncomingMessage, response: ServerResponse, user: User, rememberSession: boolean) => {
     const token = randomBytes(32).toString('hex'), time = now();
+    if (!database.prepare('SELECT id FROM users WHERE id = ? AND inactive_after > ?').get(user.id, time)) throw new HttpError(401, 'Usuario o contraseña incorrectos.');
+    touchAccount(database, user.id, time);
     revoke(request);
     database.prepare('DELETE FROM sessions WHERE user_id = ? AND token_hash NOT IN (SELECT token_hash FROM sessions WHERE user_id = ? ORDER BY created_at DESC LIMIT 9)').run(user.id, user.id);
     database.prepare('INSERT INTO sessions (token_hash, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)').run(digest(token), user.id, time + SESSION_TIME, time);
@@ -155,16 +164,19 @@ export function createAuth(database: DatabaseSync, { now = Date.now, secureCooki
   };
   return {
     limit, checkBlocked, session,
+    touchSuccessfulRequest(request: IncomingMessage) { const user = authenticated.get(request); if (user) touchAccount(database, user.id, now()); },
     requireUser(request: IncomingMessage) { const user = session(request); if (!user) throw new HttpError(401, 'Inicia sesión para continuar.'); return user; },
     async register(request: IncomingMessage, response: ServerResponse, body: Record<string, unknown>, ip: string) {
       limit('register-attempt', ip, 20, 15 * MINUTE);
       const username = usernameValue(body.username), password = passwordValue(body.password), rememberSession = rememberSessionValue(body.rememberSession);
       if (body.confirmPassword !== password) throw new HttpError(400, 'Las contraseñas no coinciden.');
+      if (body.termsVersion !== TERMS_VERSION) throw new HttpError(400, 'Acepta las condiciones de uso para crear tu cuenta.');
       limit('register', ip, 5, 60 * MINUTE);
       const salt = randomBytes(16).toString('hex'), passwordHash = (await hash(password, salt)).toString('hex');
       if (findUser.get(username)) throw new HttpError(409, 'Ese usuario no está disponible.');
       const user = { id: randomUUID(), username };
-      database.prepare('INSERT INTO users (id, username, salt, password_hash, created_at) VALUES (?, ?, ?, ?, ?)').run(user.id, username, salt, passwordHash, now());
+      const time = now();
+      database.prepare('INSERT INTO users (id, username, salt, password_hash, created_at, last_active_at, inactive_after, terms_version, terms_accepted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(user.id, username, salt, passwordHash, time, time, inactivityDeadline(time), TERMS_VERSION, time);
       return startSession(request, response, user, rememberSession);
     },
     async login(request: IncomingMessage, response: ServerResponse, body: Record<string, unknown>, ip: string) {
@@ -172,10 +184,13 @@ export function createAuth(database: DatabaseSync, { now = Date.now, secureCooki
       const username = usernameValue(body.username), password = passwordValue(body.password), rememberSession = rememberSessionValue(body.rememberSession);
       // Pair-specific throttling avoids letting attackers lock an account for other IPs.
       limit('login-pair', ip + '\0' + username, 5, 15 * MINUTE);
-      const user = findUser.get(username) as UserRow | undefined;
+      const found = findUser.get(username) as UserRow | undefined;
+      const user = found && found.inactive_after > now() ? found : undefined;
       const candidate = await hash(password, user?.salt ?? '1'.repeat(32));
       const expected = user ? Buffer.from(user.password_hash, 'hex') : Buffer.alloc(64);
       if (!timingSafeEqual(candidate, expected) || !user) { failed(ip); throw new HttpError(401, 'Usuario o contraseña incorrectos.'); }
+      const current = findUser.get(username) as UserRow | undefined;
+      if (!current || current.id !== user.id || current.inactive_after <= now()) throw new HttpError(401, 'Usuario o contraseña incorrectos.');
       database.prepare('DELETE FROM request_limits WHERE key = ?').run(keyFor('login-pair', ip + '\0' + username));
       return startSession(request, response, user, rememberSession);
     },

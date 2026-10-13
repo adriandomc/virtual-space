@@ -1,13 +1,16 @@
 import { createServer as httpServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { extname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { gzipSync } from 'node:zlib';
 import { validateRoom } from './model.js';
 import type { Room } from './types.js';
 import { checkOrigin, createAuth, HttpError, ipRateIdentity, proxyTrust, type User } from './auth.js';
+import { deleteInactiveAccounts } from './retention.js';
+import { applyErasures, initializeErasures, recordErasure, wasErased } from './erasures.js';
+import { createMaintenance } from './maintenanceService.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MIME: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.ico': 'image/x-icon', '.woff2': 'font/woff2' };
@@ -63,13 +66,19 @@ function imageMatches(data: Buffer, mime: string) {
   return false;
 }
 
-export function createServer({ dataDir = process.env.DATA_DIR ?? './data', staticDir = './dist', now = Date.now, trustedProxies, appOrigin, secureCookie }: { dataDir?: string; staticDir?: string; now?: () => number; trustedProxies?: string; appOrigin?: string; secureCookie?: boolean } = {}) {
-  mkdirSync(dataDir, { recursive: true });
+export function createServer({ dataDir = process.env.DATA_DIR ?? './data', staticDir = './dist', now = Date.now, trustedProxies, appOrigin, secureCookie, maintenance = true }: { dataDir?: string; staticDir?: string; now?: () => number; trustedProxies?: string; appOrigin?: string; secureCookie?: boolean; maintenance?: boolean } = {}) {
+  mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  chmodSync(dataDir, 0o700);
   const database = new DatabaseSync(resolve(dataDir, 'accounts.sqlite'));
-  database.exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;');
+  chmodSync(resolve(dataDir, 'accounts.sqlite'), 0o600);
+  database.exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON; PRAGMA secure_delete=ON;');
   const auth = createAuth(database, { now, secureCookie });
   const identify = proxyTrust(trustedProxies);
   database.exec('CREATE TABLE IF NOT EXISTS rooms (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, room TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1, shared INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL, sketch BLOB, sketch_mime TEXT, sketch_version INTEGER NOT NULL DEFAULT 0); CREATE INDEX IF NOT EXISTS rooms_owner_updated ON rooms(owner_id, updated_at DESC)');
+  const ledgerPath = initializeErasures(dataDir, database);
+  applyErasures(database, ledgerPath, { now: now(), includeExpired: true });
+  deleteInactiveAccounts(database, now());
+  const maintenanceTasks = createMaintenance(database, dataDir, ledgerPath, { now });
   const find = database.prepare('SELECT id, owner_id, room, revision, shared, updated_at, sketch_version, (sketch IS NOT NULL) AS has_sketch FROM rooms WHERE id = ?');
   const root = resolve(staticDir);
   const snapshot = (row: Row, user: User | null) => ({ id: row.id, room: JSON.parse(row.room) as Room, revision: row.revision, hasSketch: row.has_sketch === 1, sketchVersion: row.sketch_version, canEdit: user?.id === row.owner_id, shared: row.shared === 1, updatedAt: new Date(row.updated_at).toISOString() });
@@ -92,6 +101,10 @@ export function createServer({ dataDir = process.env.DATA_DIR ?? './data', stati
       catch { throw new HttpError(400, 'La dirección no es válida.'); }
       if (pathname.includes('\0') || pathname.includes('\\')) throw new HttpError(400, 'La dirección no es válida.');
       const method = request.method ?? 'GET';
+      response.once('finish', () => {
+        try { if (response.statusCode < 400 && pathname.startsWith('/api/')) auth.touchSuccessfulRequest(request); }
+        catch { console.error('Could not record authenticated activity.'); }
+      });
       const { ip: clientIP, fromProxy } = identify(request), ip = ipRateIdentity(clientIP);
       if (pathname.startsWith('/api/')) { auth.checkBlocked(ip); auth.limit('api', ip, 600, 60_000); checkOrigin(request, fromProxy, appOrigin); }
       if (pathname === '/api/auth/session' && method === 'GET') { sendJson(response, 200, { user: auth.session(request) }); return; }
@@ -104,8 +117,9 @@ export function createServer({ dataDir = process.env.DATA_DIR ?? './data', stati
         sendJson(response, 200, { rooms: rooms.map(row => ({ id: row.id, name: row.name, setupStep: row.setup_step ?? undefined, shared: row.shared === 1, updatedAt: new Date(row.updated_at).toISOString() })) }); return;
       }
       if (pathname === '/api/rooms' && method === 'POST') {
-        const user = auth.requireUser(request);
+        let user = auth.requireUser(request);
         const body = await readJson(request);
+        user = auth.requireUser(request);
         if (typeof body.id !== 'string' || !UUID.test(body.id)) throw new HttpError(400, 'La identidad del proyecto no es válida.');
         const room = roomValue(body.room);
         const existing = find.get(body.id) as Row | undefined;
@@ -113,6 +127,7 @@ export function createServer({ dataDir = process.env.DATA_DIR ?? './data', stati
           if (user.id !== existing.owner_id) throw new HttpError(409, 'El proyecto ya existe.');
           sendJson(response, 200, snapshot(existing, user));
         } else {
+          if (wasErased(ledgerPath, 'room', body.id)) throw new HttpError(409, 'Crea un proyecto nuevo para continuar.');
           auth.limit('create-ip', ip, 60, 3_600_000); auth.limit('create-user', user.id, 60, 3_600_000);
           database.prepare('INSERT INTO rooms (id, owner_id, room, updated_at) VALUES (?, ?, ?, ?)').run(body.id, user.id, JSON.stringify(room), now());
           sendJson(response, 201, snapshot(rowFor(body.id, user), user));
@@ -129,8 +144,11 @@ export function createServer({ dataDir = process.env.DATA_DIR ?? './data', stati
           if (method !== 'POST') throw new HttpError(405, 'Este método no está permitido.');
           requireEditor(request, row);
           const body = await readJson(request);
+          requireEditor(request, row);
           if (typeof body.enabled !== 'boolean') throw new HttpError(400, 'El permiso no es válido.');
-          database.prepare('UPDATE rooms SET shared = ?, updated_at = ? WHERE id = ?').run(body.enabled ? 1 : 0, now(), id);
+          const updateShare = () => { database.prepare('UPDATE rooms SET shared = ?, updated_at = ? WHERE id = ?').run(body.enabled ? 1 : 0, now(), id); };
+          if (body.enabled) updateShare();
+          else recordErasure(database, ledgerPath, { kind: 'share', id, at: now() }, updateShare);
           sendJson(response, 200, { shared: body.enabled });
         } else if (api[2] === '/sketch') {
           if (method === 'GET' || method === 'HEAD') {
@@ -146,19 +164,28 @@ export function createServer({ dataDir = process.env.DATA_DIR ?? './data', stati
             const mime = request.headers['content-type']?.split(';')[0].trim().toLowerCase() ?? '';
             if (!['image/png', 'image/jpeg', 'image/webp'].includes(mime)) throw new HttpError(415, 'Usa una imagen PNG, JPG o WebP.');
             const data = await readBody(request, 10 * 1024 * 1024);
+            requireEditor(request, row);
             if (!imageMatches(data, mime)) throw new HttpError(400, 'El contenido no coincide con el tipo de imagen.');
             const changed = database.prepare('UPDATE rooms SET sketch = ?, sketch_mime = ?, sketch_version = sketch_version + 1, updated_at = ? WHERE id = ? RETURNING sketch_version').get(data, mime, now(), id) as { sketch_version: number };
             sendJson(response, 200, { hasSketch: true, sketchVersion: changed.sketch_version });
           } else if (method === 'DELETE') {
             requireEditor(request, row);
-            const changed = database.prepare('UPDATE rooms SET sketch = NULL, sketch_mime = NULL, sketch_version = sketch_version + 1, updated_at = ? WHERE id = ? RETURNING sketch_version').get(now(), id) as { sketch_version: number };
+            let changed!: { sketch_version: number };
+            recordErasure(database, ledgerPath, { kind: 'sketch', id, at: now(), version: row.sketch_version + 1 }, () => {
+              changed = database.prepare('UPDATE rooms SET sketch = NULL, sketch_mime = NULL, sketch_version = sketch_version + 1, updated_at = ? WHERE id = ? RETURNING sketch_version').get(now(), id) as { sketch_version: number };
+            });
             sendJson(response, 200, { hasSketch: false, sketchVersion: changed.sketch_version });
           } else throw new HttpError(405, 'Este método no está permitido.');
         } else if (method === 'GET') sendJson(response, 200, snapshot(row, user));
-        else if (method === 'DELETE') { requireEditor(request, row); database.prepare('DELETE FROM rooms WHERE id = ?').run(id); sendJson(response, 200, { deleted: true }); }
+        else if (method === 'DELETE') {
+          requireEditor(request, row);
+          recordErasure(database, ledgerPath, { kind: 'room', id, at: now() }, () => { database.prepare('DELETE FROM rooms WHERE id = ?').run(id); });
+          sendJson(response, 200, { deleted: true });
+        }
         else if (method === 'PUT') {
           requireEditor(request, row);
           const body = await readJson(request);
+          requireEditor(request, row);
           if (!Number.isSafeInteger(body.revision) || (body.revision as number) < 1) throw new HttpError(400, 'La versión del proyecto no es válida.');
           const room = roomValue(body.room);
           const changed = database.prepare('UPDATE rooms SET room = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ? RETURNING revision').get(JSON.stringify(room), now(), id, body.revision as number) as { revision: number } | undefined;
@@ -206,11 +233,21 @@ export function createServer({ dataDir = process.env.DATA_DIR ?? './data', stati
       sendJson(response, error instanceof HttpError ? error.status : 500, { error: error instanceof HttpError ? error.message : 'No se pudo guardar el proyecto. Inténtalo de nuevo.' });
     }
   });
-  server.once('close', () => database.close());
+  if (maintenance) server.once('listening', () => maintenanceTasks.start());
+  const close = server.close.bind(server);
+  let databaseClosed = false;
+  server.close = callback => {
+    const pending = maintenanceTasks.stop();
+    close(error => {
+      void pending.catch(() => console.error('Maintenance stopped with an error.')).then(() => { if (!databaseClosed) { database.close(); databaseClosed = true; } callback?.(error); });
+    });
+    return server;
+  };
   return server;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  process.umask(0o077);
   const port = Number(process.env.PORT ?? 8080);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT must be an integer between 1 and 65535.');
   const server = createServer();

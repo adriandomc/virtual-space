@@ -20,7 +20,7 @@ test('persisten superposiciones y muebles fuera sin aceptar coordenadas o medida
   const dataDir = mkdtempSync(join(tmpdir(), 'virtual-space-placement-'));
   assert.ok(resolve(dataDir).startsWith(resolve(tmpdir()) + sep));
   let server = createServer({ dataDir }), base = await listen(server);
-  const register = await fetch(base + '/api/auth/register', { method: 'POST', headers: { Origin: base, 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'placement_owner', password: 'test-password', confirmPassword: 'test-password' }) });
+  const register = await fetch(base + '/api/auth/register', { method: 'POST', headers: { Origin: base, 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'placement_owner', password: 'test-password', confirmPassword: 'test-password', termsVersion: '2026-10-13' }) });
   assert.equal(register.status, 201);
   const cookie = register.headers.get('set-cookie')!.split(';')[0];
   const send = (path: string, method = 'GET', body?: unknown) => fetch(base + path, { method, headers: { Origin: base, Cookie: cookie, 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -58,7 +58,7 @@ test('guarda puertas y focos al interactuar y conserva los estados después de r
   const dataDir = mkdtempSync(join(tmpdir(), 'virtual-space-interactions-'));
   assert.ok(resolve(dataDir).startsWith(resolve(tmpdir()) + sep));
   let server = createServer({ dataDir }), base = await listen(server);
-  const register = await fetch(base + '/api/auth/register', { method: 'POST', headers: { Origin: base, 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'interaction_owner', password: 'test-password', confirmPassword: 'test-password' }) });
+  const register = await fetch(base + '/api/auth/register', { method: 'POST', headers: { Origin: base, 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'interaction_owner', password: 'test-password', confirmPassword: 'test-password', termsVersion: '2026-10-13' }) });
   assert.equal(register.status, 201);
   const cookie = register.headers.get('set-cookie')!.split(';')[0];
   const send = (path: string, method = 'GET', body?: unknown) => fetch(base + path, { method, headers: { Origin: base, Cookie: cookie, 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });

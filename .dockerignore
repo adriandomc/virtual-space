@@ -12,3 +12,8 @@ data
 *.log
 *.tsbuildinfo
 .DS_Store
+*.sqlite*
+erasures.json
+.erasures-*.tmp
+maintenance-status.json
+.maintenance-status.tmp

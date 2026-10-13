@@ -9,6 +9,8 @@
     "build": "tsc -b && vite build && npm run build:server",
     "build:server": "tsc -p tsconfig.server.json",
     "start": "node server-dist/server.js",
+    "maintenance": "node server-dist/maintenance.js",
+    "operations": "node server-dist/operations.js",
     "preview": "vite preview --host 0.0.0.0",
     "test": "tsx --test src/*.test.ts"
   },

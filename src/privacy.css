@@ -13,6 +13,7 @@
 .privacy-document section{margin-top:32px;scroll-margin-top:20px}
 .privacy-document h2{font-size:21px;line-height:1.35;margin-bottom:14px;font-weight:600}
 .privacy-document p+p{margin-top:14px}
+.privacy-document p a,.privacy-document li a{color:var(--green);text-decoration:underline;text-underline-offset:3px}
 .privacy-document ul{margin:16px 0;padding-left:24px}
 .privacy-document li+li{margin-top:12px}
 .privacy-document code{font-size:15px}

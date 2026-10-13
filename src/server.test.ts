@@ -28,10 +28,10 @@ test('el servidor persiste proyectos y croquis con permisos, revisiones y rutas 
   let server = createServer({ dataDir, staticDir });
   let base = await listen(server);
   const id = randomUUID(), room = createDefaultRoom();
-  const register = await fetch(base + '/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ username: 'Owner', password: 'test-password', confirmPassword: 'test-password' }) });
+  const register = await fetch(base + '/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ username: 'Owner', password: 'test-password', confirmPassword: 'test-password', termsVersion: '2026-10-13' }) });
   assert.equal(register.status, 201);
   const cookie = register.headers.get('set-cookie')!.split(';')[0];
-  const otherRegister = await fetch(base + '/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ username: 'Other', password: 'test-password', confirmPassword: 'test-password' }) });
+  const otherRegister = await fetch(base + '/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ username: 'Other', password: 'test-password', confirmPassword: 'test-password', termsVersion: '2026-10-13' }) });
   const otherCookie = otherRegister.headers.get('set-cookie')!.split(';')[0];
   const furniture = [
     { id: 'bed-queen', type: 'bed', bedSize: 'queen', material: 'wood', color: '#6b4935', x: -1.3, z: -0.7, width: 1.5, depth: 1.9, height: 0.55, rotation: 0 },

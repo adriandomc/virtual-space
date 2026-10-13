@@ -17,7 +17,7 @@ test('rechaza borradores incompletos sin modificar el diseño guardado y admite 
     const base = 'http://127.0.0.1:' + address.port;
     const registered = await fetch(base + '/api/auth/register', {
       method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base },
-      body: JSON.stringify({ username: 'field_test', password: 'test-password', confirmPassword: 'test-password' }),
+      body: JSON.stringify({ username: 'field_test', password: 'test-password', confirmPassword: 'test-password', termsVersion: '2026-10-13' }),
     });
     assert.equal(registered.status, 201);
     const cookie = registered.headers.get('set-cookie')!.split(';')[0];

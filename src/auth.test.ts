@@ -15,7 +15,7 @@ const listen = async (server: Server) => {
   return 'http://127.0.0.1:' + address.port;
 };
 const close = (server: Server) => new Promise<void>((accept, reject) => server.close(error => error ? reject(error) : accept()));
-const credentials = { username: 'Owner', password: 'test-password', confirmPassword: 'test-password' };
+const credentials = { username: 'Owner', password: 'test-password', confirmPassword: 'test-password', termsVersion: '2026-10-13' };
 const cookieFor = (response: Response) => response.headers.get('set-cookie')!.split(';')[0];
 
 test('cuentas sin correo, sesiones del servidor y aislamiento de diseños', async () => {

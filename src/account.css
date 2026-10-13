@@ -25,9 +25,10 @@
 .account-remember{display:flex;align-items:center;gap:10px;min-height:44px;font-size:16px;line-height:1.5;color:#526948;cursor:pointer}
 .account-remember input{width:18px;height:18px;margin:0;flex-shrink:0;accent-color:#607a4e}
 .account-remember:has(input:disabled){opacity:.5;cursor:default}
+.account-terms a{color:inherit;text-decoration:underline;text-underline-offset:3px}
 .auth-links{display:flex;flex-wrap:wrap;justify-content:center;gap:0 16px;margin-top:16px}
 .auth-home{display:inline-flex;align-items:center;min-height:44px;font-size:14px;color:#637259;text-decoration:underline;text-underline-offset:3px}
-.account-footer{display:flex;justify-content:center;padding:0 18px max(18px,env(safe-area-inset-bottom))}
+.account-footer{display:flex;flex-wrap:wrap;justify-content:center;gap:0 20px;padding:0 18px max(18px,env(safe-area-inset-bottom))}
 .account-loading{display:flex;align-items:center;justify-content:center;gap:18px;flex-direction:column;padding:24px;text-align:center}
 .account-header{background:#fcfdf9;border-bottom:1px solid #dfe6d8;display:flex;align-items:center;justify-content:space-between;gap:20px;padding:20px 32px}
 .account-header>div:last-child{display:flex;align-items:center;gap:18px;min-width:0}

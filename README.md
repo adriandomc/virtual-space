@@ -6,7 +6,7 @@ Aplicación React + TypeScript + Three.js para construir la planta de un cuarto,
 
 La portada `/` muestra tres demos interactivos: vista del cuarto, edición de un ropero y recorrido interior. Los demos funcionan sin cuenta y sus cambios son temporales. `/login` permite entrar o crear una cuenta; `/designs` abre la biblioteca y `/editor?room=<identificador>` abre un diseño. Durante la preparación se añade `&setup=1` a esa dirección.
 
-El acceso sólo necesita usuario y contraseña. El usuario se normaliza en minúsculas, admite de 3 a 32 letras ASCII, números o guiones bajos. La contraseña admite de 8 a 128 caracteres y se confirma al registrarse. No hay correo ni recuperación automática de contraseñas. La aplicación no tiene pagos ni suscripciones.
+El acceso sólo necesita usuario y contraseña. El usuario se normaliza en minúsculas, admite de 3 a 32 letras ASCII, números o guiones bajos. La contraseña admite de 8 a 128 caracteres y se confirma al registrarse. No hay correo ni recuperación automática de contraseñas. El registro exige aceptar las condiciones de uso mediante una casilla inicialmente desmarcada: el servidor comprueba `termsVersion` y guarda la versión y fecha aceptadas. El servicio alojado será siempre gratuito mientras esté disponible, sin pagos ni suscripciones.
 
 **Mis diseños** permite crear, abrir y eliminar diseños propios. Las modificaciones y el croquis se guardan automáticamente en el servidor. Espera a que el estado indique que se guardó antes de cerrar la página. Sólo el propietario puede editar o eliminar su diseño.
 
@@ -18,17 +18,19 @@ Las cuentas, sesiones, diseños, croquis y contadores de seguridad se guardan en
 
 Los límites persisten tras reinicios: 5 intentos de acceso por usuario/IP en 15 minutos, 30 intentos totales por IP en ese intervalo y bloqueo progresivo tras 10 fallos, de 15 minutos hasta 24 horas. Se agrupan direcciones IPv6 por `/64`. El registro se limita a 5 cuentas por IP/hora; también hay límites de peticiones, creación de diseños y cargas. La derivación de contraseñas limita su concurrencia para mantener controlado el uso de memoria. Los límites de una IP no bloquean globalmente una cuenta.
 
-Los datos se conservan en el servidor, sin depender del almacenamiento local del navegador. La exportación JSON permite respaldar los parámetros del cuarto; el respaldo completo de los proyectos y croquis se hace desde el volumen de datos del servidor.
+Los datos se conservan en el servidor, sin depender del almacenamiento local del navegador. La exportación JSON permite conservar los parámetros del cuarto; no incluye el archivo original del croquis. El respaldo diario de SQLite incluye todas las cuentas, diseños, croquis, sesiones y contadores. Los procedimientos de comprobación y recuperación se describen abajo.
+
+Cada cuenta se conserva durante al menos **3 meses naturales** desde su última actividad autenticada correcta. Se calcula en UTC y, si el mes de destino no tiene ese día, se usa su último día; no se sustituyen tres meses por 90 días. Entrar o realizar una petición autenticada correcta a la API renueva el plazo. Los intentos fallidos y las visitas públicas a diseños compartidos no lo renuevan. Las cuentas anteriores a esta política reciben el plazo completo desde su primera activación. La limpieza horaria elimina las cuentas vencidas con sus diseños, croquis y sesiones; también se ejecuta al arrancar tras una interrupción. No hay avisos por correo ni recuperación de cuentas eliminadas.
 
 ## Privacidad
 
-`/privacy` muestra el aviso público sin exigir una cuenta ni cargar el editor. Es accesible desde la portada, el acceso, la biblioteca, los ajustes del editor y la preparación de diseños. Los enlaces del editor y la preparación abren otra pestaña para conservar el trabajo en curso.
+`/privacy` y `/terms` muestran el aviso de privacidad y las condiciones de uso sin exigir una cuenta ni cargar el editor. Son accesibles desde la portada, el acceso, la biblioteca, los ajustes del editor y la preparación de diseños. Los enlaces del acceso, el editor y la preparación abren otra pestaña para conservar formularios y trabajo en curso. Las condiciones describen gratuidad, servicio «tal cual», ausencia de soporte individual, conservación, respaldos y cierre; no excluyen las obligaciones legales ni la atención de solicitudes de privacidad.
 
 La aplicación no incluye analíticas, publicidad, rastreadores ni peticiones automáticas a proveedores externos. El aviso describe los datos mínimos de cuenta y seguridad, el guardado de diseños, las cookies, los enlaces compartidos, la conservación y las solicitudes de derechos. Los datos guardados son accesibles operativamente por la administración del servidor; no hay cifrado extremo a extremo. Los croquis conservan el archivo original y sus metadatos.
 
 No se añade un banner general de aceptación: el acceso normal usa una cookie necesaria de sesión y la persistencia se elige de forma informada en el formulario. La selección nueva se aplica al siguiente acceso; para retirar la elección se cierra sesión y se vuelve a entrar sin recordarla. Si se incorporan cookies de otras finalidades, habrá que revisar el aviso y solicitar la elección correspondiente antes de utilizarlas.
 
-Antes de publicar el aviso, completa `details` en `src/Privacy.tsx` con la identidad del responsable, domicilio para notificaciones, contacto, país del servidor y las políticas reales de registros y respaldos. Mientras esos campos estén vacíos, la página se identifica como un borrador. Los registros de acceso de Coolify y su proxy, y los respaldos, dependen del operador: no se desactivan ni se borran desde esta aplicación. El aviso no sustituye la revisión de la configuración del servidor o de las obligaciones aplicables en cada jurisdicción.
+Antes de publicar otra instancia, actualiza `src/Privacy.tsx` y `src/Terms.tsx` con la identidad del responsable, domicilio para notificaciones, contacto, país del servidor y las políticas reales de registros y respaldos. La versión aceptada está en `src/legalPolicy.ts`; cambia su valor al publicar una nueva versión de condiciones que deba aceptarse. La aplicación registra la aceptación durante el alta, no atribuye una aceptación retroactiva a cuentas existentes ni fuerza una nueva aceptación a todas las cuentas al cambiar esa constante: una actualización que la requiera necesita implementar también ese flujo antes de aplicarla. Los registros del proxy y los respaldos externos dependen del operador y no los controla esta aplicación. El aviso no sustituye la revisión de la configuración del servidor o de las obligaciones aplicables en cada jurisdicción.
 
 La configuración publicada corresponde a `3d.adriandomc.com`. Si despliegas otra instancia, reemplaza los datos del responsable y verifica las políticas de tu infraestructura. En esta instalación, revisada el 13 de octubre de 2026, el proxy activo es Caddy: no tiene registro de accesos HTTP habilitado. Los contenedores de la aplicación y del proxy usan `json-file` con rotación de tres archivos de 10 MB; no hay un plazo fijo de conservación en días. Los destinos de Log Drains están desactivados y Sentinel conserva siete días de métricas de estado del servidor. No se modificó esa configuración durante la revisión.
 
@@ -111,8 +113,85 @@ Consulta la [configuración oficial de Dockerfile en Coolify](https://coolify.io
 
 En producción las cookies de sesión son `__Host-`, `Secure`, `HttpOnly`, `SameSite=Lax` y no tienen `Domain`. Todas las mutaciones exigen un `Origin` que corresponda al sitio. Configura `APP_ORIGIN` con el origen completo del dominio, por ejemplo `https://tudominio.example`, sin ruta; si se omite, se usa el host recibido y el protocolo del proxy autorizado.
 
-`TRUSTED_PROXIES` admite una lista de IPs o CIDRs separados por comas. Ajusta ese valor a la red real de Traefik/Coolify para identificar al visitante mediante `X-Forwarded-For`: se recorre la cadena desde la derecha hasta el primer salto no confiable. De forma predeterminada sólo se confían loopback y redes privadas IPv4 habituales de Docker; cabeceras enviadas directamente desde una IP pública se ignoran. Evita publicar el puerto interno `8080` fuera del proxy o activar la confianza indiscriminada de cabeceras de Traefik. Con un CDN delante, la confianza de sus direcciones debe configurarse también en Traefik. [Referencia de cabeceras confiables](https://doc.traefik.io/traefik/reference/install-configuration/entrypoints/#forwarded-headers).
+`TRUSTED_PROXIES` admite una lista de IPs o CIDRs separados por comas. Ajusta ese valor a la red real del proxy de Coolify —Caddy en esta instalación— para identificar al visitante mediante `X-Forwarded-For`: se recorre la cadena desde la derecha hasta el primer salto no confiable. De forma predeterminada sólo se confían loopback y redes privadas IPv4 habituales de Docker; cabeceras enviadas directamente desde una IP pública se ignoran. Evita publicar el puerto interno `8080` fuera del proxy o confiar indiscriminadamente en las cabeceras recibidas. Con un CDN delante, verifica también la confianza y el tratamiento de sus direcciones en el proxy.
 
 Configura el DNS del dominio hacia el servidor y habilita TLS en Coolify. **HTTPS es necesario para las sesiones y para WebGPU en producción**; los navegadores y GPU compatibles determinan si se usa WebGPU o la alternativa WebGL.
 
-Respalda periódicamente el volumen `/data`. Para un respaldo consistente de SQLite, detén la aplicación antes de copiar la carpeta completa; así también conservas los archivos auxiliares que pudiera necesitar la base de datos.
+## Respaldos y comprobación de recuperación
+
+El servidor realiza una copia consistente mediante la API de respaldo de SQLite, sin detener las escrituras. Al arrancar y cada hora comprueba el mantenimiento: genera una copia si no hay una válida de las últimas 24 horas, elimina cuentas inactivas y depura los respaldos vencidos. No necesita cron ni un servicio externo. Si la aplicación está detenida no hay tareas; se reanudan al siguiente arranque.
+
+Cada copia se comprueba con `integrity_check`, relaciones de claves foráneas y una comparación del esquema y de **todas las filas y BLOB** contra una restauración temporal independiente. Sólo se publica en `DATA_DIR/backups` tras superar esa comprobación. Una copia reciente dañada no impide intentar otra. Los respaldos se conservan durante 7 días y hasta la siguiente limpieza horaria; una interrupción puede retrasar su eliminación hasta el arranque.
+
+En Linux, el directorio de datos y el de respaldos tienen permisos `0700`; la base, las copias y los archivos operativos tienen permisos `0600`. `DATA_DIR/maintenance-status.json` contiene el resultado y la fecha de la última comprobación; sólo lo consulta la administración desde el servidor, no una ruta pública. Revisa ese estado, los errores del contenedor y el espacio disponible en `/data`. Un error de mantenimiento no se considera un respaldo válido.
+
+Desde la terminal del contenedor de la aplicación puedes solicitar una copia adicional o comprobar una copia concreta. Usa su nombre real, obtenido de `/data/backups`:
+
+```sh
+npm run maintenance -- backup /data
+npm run maintenance -- verify /data/backups/ARCHIVO_REAL.sqlite
+```
+
+Las copias residen en el mismo servidor IONOS en Estados Unidos. Cubren fallos lógicos recuperables mientras ese almacenamiento siga disponible; **no protegen frente a la pérdida total del VPS o su disco**. No hay respaldo externo configurado. Si se incorpora otro destino, hay que asegurar acceso, conservación, eliminaciones y actualizar el aviso antes de utilizarlo.
+
+`DATA_DIR/erasures.json` es un registro separado de eliminaciones y revocaciones: conserva identificadores, fechas y, cuando corresponde, la versión de un croquis, sin su contenido ni contraseñas. Se conserva durante la ventana de recuperación de 7 días y se depura después de borrar las copias vencidas. Es necesario conservar su versión vigente: una restauración la aplica antes de iniciar el servicio para evitar reactivar cuentas, diseños, croquis o enlaces eliminados/revocados. No lo reemplaces con un archivo anterior ni con uno vacío.
+
+### Recuperar una copia sin sobrescribir la base activa
+
+1. Detén la aplicación desde Coolify y confirma que terminó. No basta con quitar el dominio. No debe haber otro proceso usando la base ni archivos SQLite de recuperación activos (`-wal`, `-shm` o `-journal`). No borres esos archivos manualmente para forzar una operación.
+2. Confirma la **imagen exacta** de la aplicación desplegada y el almacenamiento que Coolify monta en `/data`. Conserva el respaldo elegido y el registro **vigente** de eliminaciones. La copia debe tener el nombre generado por la aplicación y menos de 7 días; una copia vencida se rechaza aunque haya sido guardada fuera de `/data/backups`.
+3. Usa un contenedor auxiliar de una sola ejecución, con esa misma imagen, sin servidor HTTP ni red. Monta los datos existentes en `/data` y una carpeta de recuperación vacía y escribible por UID 1000 en `/recovery`. El destino final `/recovery/restored` **no debe existir**; su carpeta padre sí. No ejecutes una segunda instancia de la aplicación sobre el mismo almacenamiento.
+
+Ejemplo para un volumen Docker: sustituye las variables por valores confirmados en tu servidor. Si Coolify usa una carpeta del host, usa un montaje `type=bind` para ese origen en vez de un volumen. No se debe adivinar el nombre del volumen ni de la imagen.
+
+```sh
+APP_IMAGE='IMAGEN_EXACTA_DESPLEGADA'
+DATA_VOLUME='VOLUMEN_REAL_MONTADO_EN_DATA'
+RECOVERY_PARENT='/RUTA_ABSOLUTA_EXISTENTE_DE_RECUPERACION'
+BACKUP_FILE='ARCHIVO_REAL.sqlite'
+
+docker run --rm --network none \
+  --mount "type=volume,source=${DATA_VOLUME},target=/data,readonly" \
+  --mount "type=bind,source=${RECOVERY_PARENT},target=/recovery" \
+  "$APP_IMAGE" \
+  node server-dist/maintenance.js restore \
+  "/data/backups/${BACKUP_FILE}" /recovery/restored /data/erasures.json
+```
+
+La herramienta verifica la copia, la restaura en el destino nuevo, compara de nuevo todos los datos y aplica el registro vigente de eliminaciones y el vencimiento por inactividad. También revoca todas las sesiones recuperadas: los usuarios deben volver a iniciar sesión. El resultado JSON distingue la comprobación de la copia original y el estado resultante tras estas depuraciones; no se espera que reaparezcan datos que fueron eliminados después del respaldo.
+
+4. Revisa el resultado y realiza una prueba aislada con usuarios y diseños de prueba antes de sustituir almacenamiento de producción. Mantén la aplicación de Coolify detenida hasta que el destino seleccionado sea correcto.
+5. Configura en Coolify la carpeta recuperada como almacenamiento persistente de `/data`, con `DATA_DIR=/data`, y arranca **una sola instancia**. Comprueba acceso, diseños, croquis, privacidad y estado de mantenimiento. Conserva el registro de eliminaciones que la herramienta copió junto con la base restaurada.
+6. Los datos originales, carpetas de ensayo o copias adicionales creadas manualmente no se depuran automáticamente. Elimina esas copias de manera controlada cuando termine la comprobación, respetando el plazo publicado de conservación. No borres el almacenamiento que utiliza la instancia activa.
+
+`verify` realiza una restauración temporal automática en cada ejecución. Las pruebas del repositorio cubren recuperación completa y rechazo de copias dañadas, vencidas, rutas inseguras y destinos existentes. Una restauración comprobada no garantiza recuperar cambios posteriores al respaldo.
+
+### Cancelación de una cuenta
+
+Confirma primero la solicitud y la titularidad conforme al aviso de privacidad. Con la aplicación **detenida** y usando la imagen y volumen reales como arriba, ejecuta el contenedor auxiliar con permiso de escritura:
+
+```sh
+docker run --rm --network none \
+  --mount "type=volume,source=${DATA_VOLUME},target=/data" \
+  "$APP_IMAGE" \
+  node server-dist/operations.js cancel-account /data USUARIO --confirm=USUARIO
+```
+
+Sustituye ambos `USUARIO` por el mismo usuario normalizado en minúsculas. La herramienta elimina la cuenta con sus diseños, croquis y sesiones, registra la eliminación para futuras restauraciones y compacta SQLite. Las copias previas pueden conservar datos residuales hasta su vencimiento. Reinicia la aplicación y verifica la operación sin registrar contenido privado en capturas o logs.
+
+### Cierre definitivo del servicio
+
+Este procedimiento es destructivo y **sólo corresponde a un cierre definitivo**, no a mantenimiento, despliegues o una prueba de restauración. Cuando sea posible, publica antes un aviso para que los usuarios exporten sus diseños. Detén la aplicación en Coolify, desactiva los despliegues automáticos y confirma la imagen y el volumen objetivo. Un cierre seguido de un arranque volvería a crear una base vacía.
+
+Con el mismo contenedor auxiliar offline y montaje escribible, el comando de cierre es:
+
+```sh
+docker run --rm --network none \
+  --mount "type=volume,source=${DATA_VOLUME},target=/data" \
+  "$APP_IMAGE" \
+  node server-dist/operations.js close-service /data --confirm=erase-all
+```
+
+La herramienta comprueba que la base pertenece a 3D Space, elimina sus cuentas y datos asociados, y retira la base, respaldos reconocidos, registro de eliminaciones y estado de mantenimiento. Rechaza enlaces simbólicos, una raíz del sistema, archivos SQLite activos o archivos inesperados en la carpeta de respaldos; revisa la causa en vez de forzar un borrado general.
+
+Finalmente retira la aplicación y su almacenamiento de Coolify. Revisa por separado cualquier volumen antiguo, carpeta de recuperación, copia externa, archivo manual, registros de infraestructura y mensajes de contacto que hayas conservado: el comando sólo alcanza los archivos conocidos del directorio indicado. Elimina o restringe lo que corresponda según las obligaciones legales y confirma que no queda ninguna instancia capaz de volver a exponer los datos. La eliminación operativa no garantiza un borrado físico inmediato de cada sector del disco ni alcanza copias descargadas por terceros.

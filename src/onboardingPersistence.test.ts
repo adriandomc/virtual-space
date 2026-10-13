@@ -22,7 +22,7 @@ test('la preparación se reanuda después de reiniciar y al finalizar conserva e
   const options = { dataDir: join(directory, 'data'), staticDir: join(directory, 'dist') };
   let server = createServer(options), base = await listen(server);
   try {
-    const registered = await fetch(base + '/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ username: 'onboarding_owner', password: 'test-password', confirmPassword: 'test-password' }) });
+    const registered = await fetch(base + '/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ username: 'onboarding_owner', password: 'test-password', confirmPassword: 'test-password', termsVersion: '2026-10-13' }) });
     assert.equal(registered.status, 201);
     const cookie = registered.headers.get('set-cookie')!.split(';')[0];
     async function send(path: string, method = 'GET', body?: unknown, expectedStatus = 200) {

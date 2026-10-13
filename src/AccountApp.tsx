@@ -3,6 +3,7 @@ import { Box, Eye, EyeOff, LoaderCircle, LogOut, Plus, Trash2 } from 'lucide-rea
 import Brand from './Brand';
 import { createBlankRoom } from './onboardingModel';
 import { accountRequest } from './accountApi';
+import { TERMS_VERSION } from './legalPolicy';
 import { accountRedirect, DESIGNS_PATH, editorPath, LOGIN_PATH, type SitePage } from './routes';
 import './account.css';
 
@@ -26,6 +27,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [rememberSession, setRememberSession] = useState(false);
+  const [acceptTerms, setAcceptTerms] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -33,29 +35,32 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
     if (pending) return;
     if ([...password].length < 8 || [...password].length > 128) { setError('La contraseña debe tener de 8 a 128 caracteres.'); return; }
     if (register && password !== confirmPassword) { setError('Las contraseñas no coinciden.'); return; }
+    if (register && !acceptTerms) { setError('Acepta las condiciones de uso para crear tu cuenta.'); return; }
     setPending(true); setError('');
     try {
-      const result = await accountRequest<{ user: User }>('/api/auth/' + (register ? 'register' : 'login'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: username.trim().toLowerCase(), password, rememberSession, ...(register ? { confirmPassword } : {}) }) });
+      const result = await accountRequest<{ user: User }>('/api/auth/' + (register ? 'register' : 'login'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: username.trim().toLowerCase(), password, rememberSession, ...(register ? { confirmPassword, termsVersion: TERMS_VERSION } : {}) }) });
       setPassword(''); setConfirmPassword(''); onAuthenticated(result.user);
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudo ingresar. Inténtalo de nuevo.'); }
     finally { setPending(false); }
   }
   return <main className="account-page auth-page"><section className="auth-card" aria-label="Cuenta"><Brand />
-    <div className="auth-tabs" aria-label="Acceso"><button type="button" className={!register ? 'active' : ''} aria-pressed={!register} disabled={pending} onClick={() => { setRegister(false); setError(''); setPassword(''); setConfirmPassword(''); }}>Entrar</button><button type="button" className={register ? 'active' : ''} aria-pressed={register} disabled={pending} onClick={() => { setRegister(true); setError(''); setPassword(''); setConfirmPassword(''); }}>Crear cuenta</button></div>
+    <div className="auth-tabs" aria-label="Acceso"><button type="button" className={!register ? 'active' : ''} aria-pressed={!register} disabled={pending} onClick={() => { setRegister(false); setError(''); setPassword(''); setConfirmPassword(''); setAcceptTerms(false); }}>Entrar</button><button type="button" className={register ? 'active' : ''} aria-pressed={register} disabled={pending} onClick={() => { setRegister(true); setError(''); setPassword(''); setConfirmPassword(''); setAcceptTerms(false); }}>Crear cuenta</button></div>
     <form onSubmit={submit} aria-busy={pending}>
       <label className="account-field"><span>Usuario</span><input name="username" value={username} onChange={event => setUsername(event.target.value.toLowerCase())} onBlur={() => setUsername(current => current.trim())} autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} required minLength={3} maxLength={32} pattern="[a-zA-Z0-9_]{3,32}" title="De 3 a 32 letras, números o guiones bajos" disabled={pending} /></label>
       <PasswordField label="Contraseña" name="password" value={password} onChange={setPassword} register={register} disabled={pending} />
       {register && <PasswordField label="Confirmar contraseña" name="confirmPassword" value={confirmPassword} onChange={setConfirmPassword} register disabled={pending} />}
       {register && <p className="account-note">Nota: recuerda tu contraseña. No hay forma de recuperarla.</p>}
+      {register && <p className="account-note">Tras 3 meses sin usar tu cuenta, se eliminan la cuenta y sus diseños.</p>}
+      {register && <label className="account-remember account-terms"><input type="checkbox" name="acceptTerms" checked={acceptTerms} required disabled={pending} onChange={event => setAcceptTerms(event.target.checked)} /><span>Acepto las <a href="/terms" target="_blank" rel="noopener">condiciones de uso</a>.</span></label>}
       <label className="account-remember"><input type="checkbox" name="rememberSession" checked={rememberSession} disabled={pending} onChange={event => setRememberSession(event.target.checked)} /><span>Recordar sesión 30 días (usa cookies)</span></label>
       {error && <p className="account-error" role="alert">{error}</p>}
       <button type="submit" className="account-primary" disabled={pending}>{pending && <LoaderCircle size={17} className="saving-spinner" />}{register ? 'Crear cuenta' : 'Entrar'}</button>
     </form>
-    <nav className="auth-links" aria-label="Enlaces de cuenta"><a href="/" className="auth-home">Volver al inicio</a><a className="privacy-link" href="/privacy" target="_blank" rel="noopener">Aviso de privacidad</a></nav>
+    <nav className="auth-links" aria-label="Enlaces de cuenta"><a href="/" className="auth-home">Volver al inicio</a><a className="privacy-link" href="/privacy" target="_blank" rel="noopener">Aviso de privacidad</a><a className="privacy-link" href="/terms" target="_blank" rel="noopener">Condiciones de uso</a></nav>
   </section></main>;
 }
 
-export default function AccountApp({ page }: { page: Exclude<SitePage, 'landing' | 'privacy'> }) {
+export default function AccountApp({ page }: { page: Exclude<SitePage, 'landing' | 'privacy' | 'terms'> }) {
   const [user, setUser] = useState<User | null>(null);
   const [loadingSession, setLoadingSession] = useState(true);
   const [sessionError, setSessionError] = useState('');
@@ -120,6 +125,6 @@ export default function AccountApp({ page }: { page: Exclude<SitePage, 'landing'
       {error && <div className="library-error"><p className="account-error" role="alert">{error}</p><button type="button" className="account-secondary" disabled={!!pending} onClick={() => setLibraryAttempt(current => current + 1)}>Reintentar</button></div>}
       {loadingDesigns ? <div className="library-empty" aria-label="Cargando diseños"><LoaderCircle size={23} className="saving-spinner" /></div> : designs.length ? <ul className="design-list">{designs.map(design => <li key={design.id}><a href={editorPath(design.id, design.setupStep !== undefined)} className="design-open"><span className="design-icon"><Box size={27} strokeWidth={1.3} /></span><span><strong>{design.name}</strong><>{design.setupStep === undefined ? <time dateTime={new Date(design.updatedAt).toISOString()}>{new Date(design.updatedAt).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' })}</time> : <span className="design-progress">Continuar preparación</span>}</></span></a><button type="button" className="design-delete" aria-label={'Eliminar ' + design.name} disabled={!!pending} onClick={() => void deleteDesign(design)}>{pending === design.id ? <LoaderCircle size={19} className="saving-spinner" /> : <Trash2 size={19} />}</button></li>)}</ul> : !error && <p className="library-empty">Sin diseños</p>}
     </section>
-    <footer className="account-footer"><a className="privacy-link" href="/privacy">Aviso de privacidad</a></footer>
+    <footer className="account-footer"><a className="privacy-link" href="/privacy">Aviso de privacidad</a><a className="privacy-link" href="/terms">Condiciones de uso</a></footer>
   </main>;
 }

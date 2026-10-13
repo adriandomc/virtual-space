@@ -300,6 +300,7 @@ export default function App({ onHome = () => window.location.assign(DESIGNS_PATH
         <div className="mobile-file-actions mobile-only"><button className="view-options-help" disabled={readOnly} onClick={() => { importRef.current?.click(); if (optionsRef.current) optionsRef.current.open = false; }}><ArrowUpFromLine size={18} />Abrir proyecto</button><button className="view-options-help" onClick={() => { exportRoom(); if (optionsRef.current) optionsRef.current.open = false; }}><ArrowDownToLine size={18} />Descargar copia</button></div>
         <button className="view-options-help" onClick={() => { if (optionsRef.current) optionsRef.current.open = false; setHelpOpen(true); }}><CircleHelp size={18} />Controles</button>
         <a className="view-options-help" href="/privacy" target="_blank" rel="noopener"><Shield size={18} />Aviso de privacidad</a>
+        <a className="view-options-help" href="/terms" target="_blank" rel="noopener"><CircleHelp size={18} />Condiciones de uso</a>
       </div></details>
     </div>
     <aside className={'scene-panel ' + (mobilePanel === 'scene' ? 'mobile-open' : '')}>{scenePanel}</aside>

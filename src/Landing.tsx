@@ -92,6 +92,6 @@ export default function Landing() {
         <nav className="landing-dots" aria-label="Demos">{STEPS.map((item, index) => <button key={item.label} type="button" className={index === step ? 'active' : ''} aria-label={item.label} aria-current={index === step ? 'step' : undefined} onClick={() => changeStep(index)}><span /></button>)}</nav>
       </section>
     </main>
-    <footer className="landing-footer"><a className="privacy-link" href="/privacy">Aviso de privacidad</a></footer>
+    <footer className="landing-footer"><a className="privacy-link" href="/privacy">Aviso de privacidad</a><a className="privacy-link" href="/terms">Condiciones de uso</a></footer>
   </div>;
 }
