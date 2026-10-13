@@ -29,7 +29,7 @@ export default function Landing() {
   const [step, setStep] = useState(0);
   const [room, setRoom] = useState(createLandingRoom);
   const [selection, setSelection] = useState<Selection | null>(null);
-  const [dimensions, setDimensions] = useState(false);
+  const [property, setProperty] = useState<'position' | 'size' | 'finish'>('position');
   const [notice, setNotice] = useState('');
   const wardrobe = room.furniture.find(item => item.id === LANDING_WARDROBE_ID)!;
   const editing = step === 1;
@@ -69,9 +69,9 @@ export default function Landing() {
             </div>
             <aside className={'demo-properties' + (editing ? ' is-visible' : '')} aria-label="Ropero del demo" aria-hidden={!editing} inert={!editing}>
               <h2>Ropero</h2>
-              <div className="demo-property-tabs" aria-label="Medidas del ropero"><button type="button" aria-pressed={!dimensions} onClick={() => setDimensions(false)}>Posición</button><button type="button" aria-pressed={dimensions} onClick={() => setDimensions(true)}>Tamaño</button></div>
-              <div className="demo-fields">
-                {dimensions ? <>
+              <div className="demo-property-tabs" aria-label="Propiedades del ropero"><button type="button" aria-pressed={property === 'position'} onClick={() => { setNotice(''); setProperty('position'); }}>Posición</button><button type="button" aria-pressed={property === 'size'} onClick={() => { setNotice(''); setProperty('size'); }}>Tamaño</button><button type="button" aria-pressed={property === 'finish'} onClick={() => { setNotice(''); setProperty('finish'); }}>Acabado</button></div>
+              {property !== 'finish' ? <div className="demo-fields">
+                {property === 'size' ? <>
                   <DemoDimension label="Ancho" value={wardrobe.width} min={0.2} max={3} onChange={width => editWardrobe({ width })} onNotice={setNotice} />
                   <DemoDimension label="Fondo" value={wardrobe.depth} min={0.2} max={3} onChange={depth => editWardrobe({ depth })} onNotice={setNotice} />
                   <DemoDimension label="Altura" value={wardrobe.height} min={0.3} max={Math.round((room.height - 0.1) * 100) / 100} onChange={height => editWardrobe({ height })} onNotice={setNotice} />
@@ -79,9 +79,10 @@ export default function Landing() {
                   <DemoDimension label="Horizontal" value={wardrobe.x} min={-3} max={3} onChange={x => editWardrobe({ x })} onNotice={setNotice} />
                   <DemoDimension label="Profundidad" value={wardrobe.z} min={-3} max={3} onChange={z => editWardrobe({ z })} onNotice={setNotice} />
                 </>}
-              </div>
-              <label className="demo-field"><span>Material</span><select aria-label="Material del ropero" value={wardrobe.material ?? 'wood'} onChange={event => editWardrobe({ material: event.target.value as FurnitureMaterial })}><option value="wood">Madera</option><option value="plastic">Plástico</option><option value="metal">Metal</option></select></label>
-              <DemoColor value={wardrobe.color ?? '#ba9773'} onChange={color => editWardrobe({ color })} onNotice={setNotice} />
+              </div> : <div className="demo-fields demo-finishes">
+                <label className="demo-field"><span>Material</span><select aria-label="Material del ropero" value={wardrobe.material ?? 'wood'} onChange={event => editWardrobe({ material: event.target.value as FurnitureMaterial })}><option value="wood">Madera</option><option value="plastic">Plástico</option><option value="metal">Metal</option></select></label>
+                <DemoColor value={wardrobe.color ?? '#ba9773'} onChange={color => editWardrobe({ color })} onNotice={setNotice} />
+              </div>}
               {notice && <p className="demo-notice" role="status">{notice}</p>}
             </aside>
           </div>
