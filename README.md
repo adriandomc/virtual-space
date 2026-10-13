@@ -4,13 +4,15 @@ Aplicación React + TypeScript + Three.js para construir la planta de un cuarto,
 
 ## Cuentas y diseños
 
+La portada `/` muestra tres demos interactivos: vista del cuarto, edición de un ropero y recorrido interior. Los demos funcionan sin cuenta y sus cambios son temporales. `/login` permite entrar o crear una cuenta; `/designs` abre la biblioteca y `/editor?room=<identificador>` abre un diseño. Durante la preparación se añade `&setup=1` a esa dirección.
+
 El acceso sólo necesita usuario y contraseña. El usuario se normaliza en minúsculas, admite de 3 a 32 letras ASCII, números o guiones bajos. La contraseña admite de 8 a 128 caracteres y se confirma al registrarse. No hay correo ni recuperación automática de contraseñas. La aplicación no tiene pagos ni suscripciones.
 
 **Mis diseños** permite crear, abrir y eliminar diseños propios. Las modificaciones y el croquis se guardan automáticamente en el servidor. Espera a que el estado indique que se guardó antes de cerrar la página. Sólo el propietario puede editar o eliminar su diseño.
 
 **Nuevo diseño** abre una preparación aparte del editor: **Croquis → Colores → Decoración**. Cada paso permite continuar, volver u omitirlo. Los diseños nuevos empiezan sin muebles, puertas ni ventanas, con una sola luz principal encendida. Omitir Croquis conserva la estructura normal de 5 × 4 m; omitir Colores deja paredes, techo y piso en blancos; omitir Decoración conserva sólo la luz principal. Puedes trazar o cargar la planta, ajustar medidas, elegir acabados y añadir muebles, aberturas o focos antes de entrar al editor. Las decisiones y el paso actual se guardan en el servidor; **Continuar preparación** en la biblioteca permite retomarlo. Entrar al editor espera a que se guarden los cambios.
 
-Los diseños son privados inicialmente. **Compartir → Crear enlace** habilita una dirección de lectura `?room=<identificador>`: quien reciba ese enlace puede ver el diseño y su croquis, y recorrerlo sin iniciar sesión. **Desactivar enlace** revoca ese acceso. El enlace no concede permisos de edición.
+Los diseños son privados inicialmente. **Compartir → Crear enlace** habilita una dirección de lectura `/editor?room=<identificador>`: quien reciba ese enlace puede ver el diseño y su croquis, y recorrerlo sin iniciar sesión. **Desactivar enlace** revoca ese acceso. El enlace no concede permisos de edición.
 
 Las cuentas, sesiones, diseños, croquis y contadores de seguridad se guardan en `/data/accounts.sqlite`. La base anterior `rooms.sqlite` no se lee ni se migra; se inicia el sistema de cuentas desde cero. Las contraseñas se guardan con scrypt y sal aleatoria; los tokens de sesión sólo se guardan como hashes. La sesión dura 30 días y se revoca al cerrar sesión.
 

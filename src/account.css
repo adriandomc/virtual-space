@@ -21,6 +21,8 @@
 .account-secondary:hover{background:#eaf0e2}
 .auth-card .account-primary{width:100%;margin-top:3px}
 .account-error{color:#8f3d31;font-size:14px;line-height:1.5}
+.account-note{font-size:14px;line-height:1.5;color:#637259;margin-top:-6px}
+.auth-home{display:block;width:fit-content;margin:22px auto 0;font-size:14px;color:#637259;text-decoration:underline;text-underline-offset:3px}
 .account-loading{display:flex;align-items:center;justify-content:center;gap:18px;flex-direction:column;padding:24px;text-align:center}
 .account-header{background:#fcfdf9;border-bottom:1px solid #dfe6d8;display:flex;align-items:center;justify-content:space-between;gap:20px;padding:20px 32px}
 .account-header>div:last-child{display:flex;align-items:center;gap:18px;min-width:0}

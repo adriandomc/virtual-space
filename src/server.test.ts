@@ -180,6 +180,11 @@ test('el servidor persiste proyectos y croquis con permisos, revisiones y rutas 
       const html = await send('/');
       assert.equal(html.status, 200); assert.equal(html.headers.get('cache-control'), 'no-cache'); assert.match(await html.text(), /<title>3D Space<\/title>/);
       assert.equal((await send('/another-room')).status, 200);
+      for (const route of ['/login', '/designs', '/editor?room=' + id, '/editor?room=' + id + '&setup=1']) {
+        const page = await send(route);
+        assert.equal(page.status, 200);
+        assert.match(await page.text(), /<title>3D Space<\/title>/);
+      }
       assert.equal((await send('/api/unknown')).status, 404);
       assert.equal((await send('/missing.js')).status, 404);
       const asset = await fetch(base + '/assets/app.js', { headers: { 'Accept-Encoding': 'gzip' } });

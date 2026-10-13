@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createDefaultRoom, validateRoom } from './model';
 import type { Room } from './types';
+import { shareAddress } from './routes';
 
 type Snapshot = { id: string; room: Room; revision: number; canEdit: boolean; hasSketch: boolean; sketchVersion: number; shared: boolean; shareUrl: string };
 type Session = { id: string; revision: number; readOnly: boolean };
@@ -32,9 +33,7 @@ function initialize(): Promise<Snapshot> {
     const data = await responseJson(await request('/api/rooms/' + encodeURIComponent(id)));
     if (typeof data.id !== 'string' || !Number.isSafeInteger(data.revision)) throw new Error('El servidor devolvió un proyecto inválido.');
     const room = validateRoom(data.room);
-    url.searchParams.set('room', data.id);
-    const share = new URL(url); share.hash = '';
-    return { id: data.id, room, revision: data.revision as number, canEdit: data.canEdit === true, hasSketch: data.hasSketch === true, sketchVersion: Number(data.sketchVersion) || 0, shared: data.shared === true, shareUrl: share.href };
+    return { id: data.id, room, revision: data.revision as number, canEdit: data.canEdit === true, hasSketch: data.hasSketch === true, sketchVersion: Number(data.sketchVersion) || 0, shared: data.shared === true, shareUrl: shareAddress(url, data.id) };
   })().finally(() => { initialization = null; });
   return initialization;
 }

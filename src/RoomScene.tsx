@@ -941,7 +941,7 @@ export default function RoomScene(props: Props) {
         };
         const cancel = () => { pointers.clear(); if (transform.dragging) transform.pointerUp(null); if (active.directDragging) finishDrag(); pointer = null; controls.enabled = current.current.mode === 'orbit'; };
         const keyDown = (event: KeyboardEvent) => {
-          if (event.target instanceof HTMLElement && (event.target.matches('input, select, textarea, button') || event.target.isContentEditable)) return;
+          if (event.target !== canvas) return;
           if (event.code === 'Escape') { cancel(); current.current.onSelect(null); return; }
           if (current.current.mode === 'orbit' && !current.current.readOnly && canMove(current.current.selection)) {
             const selected = current.current.selection;
@@ -959,7 +959,7 @@ export default function RoomScene(props: Props) {
             return;
           }
           if (current.current.mode !== 'walk') return;
-          if (event.target === canvas && (event.code === 'Enter' || event.code === 'Space')) {
+          if (event.code === 'Enter' || event.code === 'Space') {
             event.preventDefault();
             if (!event.repeat) interact(findWalkTarget());
             return;

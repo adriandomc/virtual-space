@@ -1,8 +1,16 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import AccountApp from './AccountApp';
+import { LoaderCircle } from 'lucide-react';
+import { siteRoute } from './routes';
 import './styles.css';
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode><AccountApp /></React.StrictMode>,
+const Landing = React.lazy(() => import('./Landing'));
+const AccountApp = React.lazy(() => import('./AccountApp'));
+const route = siteRoute(new URL(window.location.href));
+
+if (route.redirect) window.location.replace(route.redirect);
+else ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode><React.Suspense fallback={<main className="project-loading" aria-label="Cargando"><LoaderCircle size={25} className="saving-spinner" /></main>}>
+    {route.page === 'landing' ? <Landing /> : <AccountApp page={route.page} />}
+  </React.Suspense></React.StrictMode>,
 );

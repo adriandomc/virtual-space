@@ -4,6 +4,7 @@ import RoomScene from './RoomScene';
 import Brand from './Brand';
 import PlanEditor from './PlanEditor';
 import useProject from './useProject';
+import { DESIGNS_PATH } from './routes';
 import { parseColor } from './fieldDraft';
 import useFieldDraft from './useFieldDraft';
 import NameInput from './NameInput';
@@ -48,7 +49,7 @@ function HexColorField({ value, onChange, readOnly, notify, label = 'Color perso
   </div></div>;
 }
 
-export default function App({ onHome = () => window.location.assign('/') }: { onHome?: () => void }) {
+export default function App({ onHome = () => window.location.assign(DESIGNS_PATH) }: { onHome?: () => void }) {
   const { room, setRoom, ready, status, error: saveError, readOnly, shareUrl, shared, setSharing, uploadSketch, sketchUrl, retry } = useProject();
   const [mode, setMode] = useState<ViewMode>('orbit');
   const [selection, setSelection] = useState<Selection | null>(null);
@@ -117,7 +118,7 @@ export default function App({ onHome = () => window.location.assign('/') }: { on
     if (selection.kind === 'wall' && selection.index >= room.vertices.length || selection.kind === 'furniture' && !furniture || selection.kind === 'opening' && !opening || selection.kind === 'light' && !light) setSelection(null);
   }, [selection, room, furniture, opening, light]);
 
-  if (!ready) return <main className="project-loading">{status === 'error' ? <><CircleHelp size={22} /><p>{saveError}</p><button className="primary-button" onClick={retry}>Reintentar</button><a href="/">Mis diseños</a></> : <><LoaderCircle size={23} /><span>Cargando proyecto…</span></>}</main>;
+  if (!ready) return <main className="project-loading">{status === 'error' ? <><CircleHelp size={22} /><p>{saveError}</p><button className="primary-button" onClick={retry}>Reintentar</button><a href={DESIGNS_PATH}>Mis diseños</a></> : <><LoaderCircle size={23} /><span>Cargando proyecto…</span></>}</main>;
 
   async function changeSharing(enabled: boolean) {
     if (sharing) return;
