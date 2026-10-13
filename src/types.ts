@@ -38,6 +38,7 @@ export type FurnitureItem = {
 };
 export type Room = {
   version: 1;
+  setupStep?: 0 | 1 | 2;
   name: string;
   vertices: Point[];
   wallColors: string[];

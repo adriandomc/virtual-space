@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { Archive, ArrowDownToLine, ArrowUpFromLine, BedDouble, Box, Check, ChevronDown, CircleHelp, Copy, DoorClosed, DoorOpen, Focus, Footprints, Grid2X2, Layers3, Lightbulb, LoaderCircle, Magnet, Menu, MousePointer2, Move, Paintbrush, PanelLeftClose, PanelRightClose, Plus, RotateCcw, Ruler, Settings2, Share2, Shield, Sun, Table2, Trash2, X } from 'lucide-react';
+import { Archive, ArrowDownToLine, ArrowUpFromLine, BedDouble, Box, Check, ChevronDown, CircleHelp, Copy, DoorClosed, DoorOpen, Focus, Footprints, Grid2X2, Layers3, Lightbulb, LoaderCircle, Magnet, MousePointer2, Move, Paintbrush, PanelLeftClose, PanelRightClose, Plus, RotateCcw, Ruler, Settings2, Share2, Shield, Sun, Table2, Trash2, X } from 'lucide-react';
 import RoomScene from './RoomScene';
 import PlanEditor from './PlanEditor';
 import useProject from './useProject';
@@ -65,9 +65,10 @@ export default function App({ onHome = () => window.location.assign('/') }: { on
   const [selection, setSelection] = useState<Selection | null>(null);
   const [transformMode, setTransformMode] = useState<'translate' | 'rotate'>('translate');
   const [tab, setTab] = useState<'item' | 'space' | 'color' | 'light'>('space');
-  const [leftOpen, setLeftOpen] = useState(true);
-  const [rightOpen, setRightOpen] = useState(true);
+  const [leftOpen, setLeftOpen] = useState(false);
+  const [rightOpen, setRightOpen] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<'scene' | 'properties' | null>(null);
+  const [compact, setCompact] = useState(() => window.matchMedia('(max-width: 1000px)').matches);
   const [resetKey, setResetKey] = useState(0);
   const [notice, setNotice] = useState('');
   const [helpOpen, setHelpOpen] = useState(false);
@@ -79,6 +80,8 @@ export default function App({ onHome = () => window.location.assign('/') }: { on
   const helpRef = useRef<HTMLDialogElement>(null);
   const shareRef = useRef<HTMLDialogElement>(null);
   const addRef = useRef<HTMLDialogElement>(null);
+  const optionsRef = useRef<HTMLDetailsElement>(null);
+  const fileRef = useRef<HTMLDetailsElement>(null);
   const size = bounds(room.vertices);
   const area = polygonArea(room.vertices);
   const furniture = selection?.kind === 'furniture' ? room.furniture.find(item => item.id === selection.id) : undefined;
@@ -91,6 +94,15 @@ export default function App({ onHome = () => window.location.assign('/') }: { on
   const selectedName = furniture ? furnitureName(furniture) : opening ? opening.type === 'door' ? 'Puerta' : 'Ventana' : light ? light.name : selection ? surfaceName : '';
   const paletteName = COLORS.find(([hex]) => hex === selectedColor.toLowerCase())?.[1] ?? selectedColor.toUpperCase();
   const usedColors = [...new Set([...room.wallColors, room.ceilingColor, room.floorColor].map(hex => hex.toLowerCase()))];
+  const propertiesVisible = compact ? mobilePanel === 'properties' : rightOpen;
+  const elementsVisible = compact ? mobilePanel === 'scene' : leftOpen;
+
+  useEffect(() => {
+    const query = window.matchMedia('(max-width: 1000px)');
+    function resize() { setCompact(query.matches); setMobilePanel(null); }
+    query.addEventListener('change', resize);
+    return () => query.removeEventListener('change', resize);
+  }, []);
 
   useEffect(() => {
     if (!notice) return;
@@ -100,6 +112,16 @@ export default function App({ onHome = () => window.location.assign('/') }: { on
   useEffect(() => { if (helpOpen) helpRef.current?.showModal(); else helpRef.current?.close(); }, [helpOpen]);
   useEffect(() => { if (shareOpen) shareRef.current?.showModal(); else shareRef.current?.close(); }, [shareOpen]);
   useEffect(() => { if (addOpen) addRef.current?.showModal(); else addRef.current?.close(); }, [addOpen]);
+  useEffect(() => {
+    function closeMenus(event: PointerEvent | KeyboardEvent) {
+      for (const menu of [optionsRef.current, fileRef.current]) {
+        if (menu?.open && (event instanceof KeyboardEvent ? event.key === 'Escape' : !menu.contains(event.target as Node))) menu.open = false;
+      }
+    }
+    document.addEventListener('pointerdown', closeMenus);
+    document.addEventListener('keydown', closeMenus);
+    return () => { document.removeEventListener('pointerdown', closeMenus); document.removeEventListener('keydown', closeMenus); };
+  }, []);
   useEffect(() => {
     if (!selection) return;
     if (selection.kind === 'wall' && selection.index >= room.vertices.length || selection.kind === 'furniture' && !furniture || selection.kind === 'opening' && !opening || selection.kind === 'light' && !light) setSelection(null);
@@ -123,13 +145,17 @@ export default function App({ onHome = () => window.location.assign('/') }: { on
     } catch (error) { setNotice(error instanceof Error ? error.message : 'No se pudo aplicar el cambio.'); }
   }
   function showProperties(nextTab: typeof tab = tab) {
-    setTab(nextTab); setRightOpen(true); setMobilePanel(window.matchMedia('(max-width: 640px)').matches ? 'properties' : null);
+    setTab(nextTab); setRightOpen(true); setMobilePanel(compact ? 'properties' : null);
+  }
+  function toggleElements() {
+    if (compact) setMobilePanel(panel => panel === 'scene' ? null : 'scene');
+    else setLeftOpen(open => !open);
   }
   function select(next: Selection | null, properties = false) {
     setSelection(next); setTransformMode('translate');
     const nextTab = next && ['wall', 'floor', 'ceiling'].includes(next.kind) ? 'color' : 'item';
     setTab(nextTab);
-    if (properties) showProperties(nextTab);
+    if (next && (properties || (!compact && mode !== 'plan'))) showProperties(nextTab);
   }
   function setBounds(enabled: boolean) {
     change(() => enabled ? fitRoom({ ...room, editing: { ...room.editing, bounds: true } }) : { ...room, editing: { ...room.editing, bounds: false } });
@@ -189,11 +215,9 @@ export default function App({ onHome = () => window.location.assign('/') }: { on
   ];
 
   const scenePanel = <>
-    <div className="panel-heading"><span>ELEMENTOS</span><button className="icon-button desktop-only" aria-label="Ocultar elementos" onClick={() => setLeftOpen(false)}><PanelLeftClose size={16} /></button><button className="icon-button mobile-only" aria-label="Cerrar elementos" onClick={() => setMobilePanel(null)}><X size={18} /></button></div>
+    <div className="panel-heading"><span>Elementos</span><button className="icon-button desktop-only" aria-label="Ocultar elementos" onClick={() => setLeftOpen(false)}><PanelLeftClose size={18} /></button><button className="icon-button mobile-only" aria-label="Cerrar elementos" onClick={() => setMobilePanel(null)}><X size={20} /></button></div>
     <div className="room-tree-title"><Box size={16} /><span>{room.name}</span><span className="item-count">{items.length}</span></div>
     <div className="unified-item-list">{items.map(item => <button key={JSON.stringify(item.selection)} className={'tree-item ' + (sameSelection(selection, item.selection) ? 'selected' : '')} onClick={() => select(item.selection, true)}><item.Icon size={15} /><span>{item.name}</span>{item.selection.kind === 'wall' && <span className="wall-color-dot" style={{ background: room.wallColors[item.selection.index] }} />}</button>)}</div>
-    <button className="outline-button add-scene-button" disabled={readOnly} onClick={() => setAddOpen(true)}><Plus size={15} />Agregar elemento</button>
-    <div className="scene-bottom"><div className="scene-metrics"><div><span>Superficie</span><strong>{area.toFixed(1)} <small>m²</small></strong></div><div><span>Altura</span><strong>{room.height.toFixed(1)} <small>m</small></strong></div></div><button className="help-link" onClick={() => setHelpOpen(true)}><CircleHelp size={15} />Controles</button></div>
   </>;
 
   const itemPanel = <>
@@ -206,18 +230,19 @@ export default function App({ onHome = () => window.location.assign('/') }: { on
     <fieldset disabled={readOnly} className="property-fields">
       {furniture && <Section title={furnitureName(furniture)}>
         {furniture.type === 'bed' && <label className="select-field">Tamaño<select aria-label="Tamaño de cama" value={furniture.bedSize} onChange={event => { const bedSize = event.target.value as BedSize; updateFurniture({ bedSize, width: BED_SIZES[bedSize].width, depth: BED_SIZES[bedSize].depth }); }}>{Object.entries(BED_SIZES).map(([key, preset]) => <option key={key} value={key}>{preset.label}</option>)}</select></label>}
-        <div className="dimensions-grid"><NumberField label="Ancho" value={furniture.width} min={0.1} max={10} onChange={width => updateFurniture({ width })} /><NumberField label="Largo" value={furniture.depth} min={0.1} max={10} onChange={depth => updateFurniture({ depth })} /><NumberField label="Altura" value={furniture.height} min={0.1} max={room.height} onChange={height => updateFurniture({ height })} /><NumberField label="Giro" value={furniture.rotation} min={0} max={360} step={15} unit="°" onChange={rotation => updateFurniture({ rotation })} /><NumberField label="Posición X" value={furniture.x} min={-50} max={50} onChange={x => updateFurniture({ x })} /><NumberField label="Posición Z" value={furniture.z} min={-50} max={50} onChange={z => updateFurniture({ z })} /></div>
+        <div className="dimensions-grid"><NumberField label="Ancho" value={furniture.width} min={0.1} max={10} onChange={width => updateFurniture({ width })} /><NumberField label="Largo" value={furniture.depth} min={0.1} max={10} onChange={depth => updateFurniture({ depth })} /><NumberField label="Altura" value={furniture.height} min={0.1} max={room.height} onChange={height => updateFurniture({ height })} /></div>
       </Section>}
+      {furniture && <Section title="Posición y giro" defaultOpen={false}><div className="dimensions-grid"><NumberField label="Giro" value={furniture.rotation} min={0} max={360} step={15} unit="°" onChange={rotation => updateFurniture({ rotation })} /><NumberField label="Posición X" value={furniture.x} min={-50} max={50} onChange={x => updateFurniture({ x })} /><NumberField label="Posición Z" value={furniture.z} min={-50} max={50} onChange={z => updateFurniture({ z })} /></div></Section>}
       {opening && <Section title={opening.type === 'door' ? 'Puerta' : 'Ventana'}>
         <label className="select-field">Pared<select aria-label="Pared del elemento" value={opening.wall} onChange={event => updateOpening({ wall: Number(event.target.value) })}>{room.vertices.map((_, index) => <option key={index} value={index}>{wallName(index)}</option>)}</select></label>
-        <div className="dimensions-grid"><NumberField label="Ancho" value={opening.width} min={0.3} max={wallLength(room, opening.wall)} onChange={width => updateOpening({ width })} /><NumberField label="Altura" value={opening.height} min={0.3} max={room.height} onChange={height => updateOpening({ height })} /><NumberField label="Desde el inicio" value={opening.offset} min={0} max={wallLength(room, opening.wall) - opening.width} onChange={offset => updateOpening({ offset })} />{opening.type === 'window' && <NumberField label="Altura desde piso" value={opening.sill} min={0} max={room.height - opening.height} onChange={sill => updateOpening({ sill })} />}</div>
-        <p className="small-note">Arrastra el elemento hacia otra pared para cambiarlo de lugar.</p>
+        <div className="dimensions-grid"><NumberField label="Ancho" value={opening.width} min={0.3} max={wallLength(room, opening.wall)} onChange={width => updateOpening({ width })} /><NumberField label="Altura" value={opening.height} min={0.3} max={room.height} onChange={height => updateOpening({ height })} />{opening.type === 'window' && <NumberField label="Altura desde piso" value={opening.sill} min={0} max={room.height - opening.height} onChange={sill => updateOpening({ sill })} />}</div>
       </Section>}
+      {opening && <Section title="Posición" defaultOpen={false}><NumberField label="Desde el inicio de la pared" value={opening.offset} min={0} max={wallLength(room, opening.wall) - opening.width} onChange={offset => updateOpening({ offset })} /></Section>}
       {light && <Section title={light.name}>
         <div className="setting-row"><span>Encendido</span><Switch label="Interruptor del foco" checked={light.enabled} onChange={enabled => updateLight({ enabled })} /></div>
         <Slider label="Intensidad" value={light.lumens} min={0} max={Math.max(3000, light.lumens)} step={50} unit="lm" onChange={lumens => updateLight({ lumens })} /><Slider label="Temperatura" value={light.temperature} min={1000} max={12000} step={100} unit="K" onChange={temperature => updateLight({ temperature })} />
-        <div className="dimensions-grid item-position"><NumberField label="Posición X" value={light.x} min={-50} max={50} onChange={x => updateLight({ x })} /><NumberField label="Posición Z" value={light.z} min={-50} max={50} onChange={z => updateLight({ z })} /><NumberField label="Altura" value={light.y} min={0.1} max={room.height} onChange={y => updateLight({ y })} /></div>
       </Section>}
+      {light && <Section title="Posición" defaultOpen={false}><div className="dimensions-grid"><NumberField label="Posición X" value={light.x} min={-50} max={50} onChange={x => updateLight({ x })} /><NumberField label="Posición Z" value={light.z} min={-50} max={50} onChange={z => updateLight({ z })} /><NumberField label="Altura" value={light.y} min={0.1} max={room.height} onChange={y => updateLight({ y })} /></div></Section>}
       {(furniture || opening || light) && <div className="item-actions"><button className="outline-button" onClick={() => { setMode('plan'); setMobilePanel(null); }}><Grid2X2 size={15} />Editar en planta</button><button className="delete-button" onClick={removeSelected}><Trash2 size={14} />Eliminar elemento</button></div>}
     </fieldset>
   </>;
@@ -234,54 +259,47 @@ export default function App({ onHome = () => window.location.assign('/') }: { on
   </>;
 
   const spacePanel = <fieldset disabled={readOnly} className="property-fields">
-    <Section title="Dimensiones"><div className="dimensions-grid"><NumberField label="Ancho del cuarto" value={size.width} min={0.5} max={50} onChange={width => change(() => resizeRoom(room, width, size.depth))} /><NumberField label="Largo del cuarto" value={size.depth} min={0.5} max={50} onChange={depth => change(() => resizeRoom(room, size.width, depth))} /><NumberField label="Altura del cuarto" value={room.height} min={1.8} max={8} onChange={height => change(() => fitRoom({ ...room, height }))} /><NumberField label="Espesor de muro" value={room.thickness} min={0.05} max={0.6} step={0.01} onChange={thickness => change({ ...room, thickness })} /></div><div className="area-tag"><Ruler size={13} />{area.toFixed(2)} m²</div><button className="outline-button full-width" onClick={() => { setMode('plan'); setMobilePanel(null); }}><Grid2X2 size={15} />Dibujar o editar planta</button></Section>
-    <Section title="Movimiento"><label className="check-field"><input type="checkbox" checked={room.editing.snap} onChange={event => change({ ...room, editing: { ...room.editing, snap: event.target.checked } })} />Ajustar a cuadrícula</label><NumberField label="Paso de ajuste" value={room.editing.step} min={0.01} max={1} step={0.01} onChange={step => change({ ...room, editing: { ...room.editing, step } })} /><label className="check-field"><input type="checkbox" checked={room.editing.bounds} onChange={event => setBounds(event.target.checked)} />Respetar límites y colisiones</label></Section>
-    <Section title="Referencia"><div className="setting-row"><span>Mobiliario de ejemplo</span><Switch checked={room.showFurniture} disabled={room.furniture.length > 0} label="Mostrar mobiliario de ejemplo" onChange={showFurniture => change({ ...room, showFurniture })} /></div></Section>
+    <Section title="Dimensiones"><div className="dimensions-grid"><NumberField label="Ancho del cuarto" value={size.width} min={0.5} max={50} onChange={width => change(() => resizeRoom(room, width, size.depth))} /><NumberField label="Largo del cuarto" value={size.depth} min={0.5} max={50} onChange={depth => change(() => resizeRoom(room, size.width, depth))} /><NumberField label="Altura del cuarto" value={room.height} min={1.8} max={8} onChange={height => change(() => fitRoom({ ...room, height }))} /></div><div className="area-tag"><Ruler size={16} />{area.toFixed(2)} m²</div><button className="outline-button full-width" onClick={() => { setMode('plan'); setMobilePanel(null); }}><Grid2X2 size={17} />Editar planta</button></Section>
+    <Section title="Más opciones" defaultOpen={false}><NumberField label="Espesor de muro" value={room.thickness} min={0.05} max={0.6} step={0.01} onChange={thickness => change({ ...room, thickness })} /><div className="setting-row example-furniture"><span>Mobiliario de ejemplo</span><Switch checked={room.showFurniture} disabled={room.furniture.length > 0} label="Mostrar mobiliario de ejemplo" onChange={showFurniture => change({ ...room, showFurniture })} /></div></Section>
   </fieldset>;
 
   const lightPanel = <>
     <fieldset disabled={readOnly} className="property-fields"><Section title="Sol"><div className="setting-row"><span>Luz del sol</span><Switch label="Activar luz del sol" checked={room.sun.enabled} onChange={enabled => change({ ...room, sun: { ...room.sun, enabled } })} /></div>
-      <div className="time-card"><Sun size={23} /><strong>{timeLabel(room.sun.hour)}</strong></div><Slider label="Hora del día" value={room.sun.hour} min={0} max={24} step={0.25} unit="h" onChange={hour => change({ ...room, sun: { ...room.sun, hour } })} /><Slider label="Orientación" value={room.sun.azimuth} min={0} max={360} unit="°" onChange={azimuth => change({ ...room, sun: { ...room.sun, azimuth } })} /><Slider label="Intensidad solar" value={room.sun.intensity} min={0} max={10} step={0.1} unit="×" onChange={intensity => change({ ...room, sun: { ...room.sun, intensity } })} />
-    </Section></fieldset>
+      <div className="time-card"><Sun size={23} /><strong>{timeLabel(room.sun.hour)}</strong></div><Slider label="Hora del día" value={room.sun.hour} min={0} max={24} step={0.25} unit="h" onChange={hour => change({ ...room, sun: { ...room.sun, hour } })} />
+    </Section><Section title="Ajustes del sol" defaultOpen={false}><Slider label="Orientación" value={room.sun.azimuth} min={0} max={360} unit="°" onChange={azimuth => change({ ...room, sun: { ...room.sun, azimuth } })} /><Slider label="Intensidad solar" value={room.sun.intensity} min={0} max={10} step={0.1} unit="×" onChange={intensity => change({ ...room, sun: { ...room.sun, intensity } })} /></Section></fieldset>
     <Section title="Focos">{room.lights.map(item => <div className="light-list-row" key={item.id}><button onClick={() => select({ kind: 'light', id: item.id }, true)}><Lightbulb size={16} />{item.name}</button><Switch label={'Encender ' + item.name} disabled={readOnly} checked={item.enabled} onChange={enabled => change({ ...room, lights: room.lights.map(value => value.id === item.id ? { ...value, enabled } : value) })} /></div>)}<button disabled={readOnly} className="outline-button full-width" onClick={() => insert('light')}><Plus size={14} />Agregar foco</button></Section>
   </>;
 
   const propertiesPanel = <>
-    <div className="panel-heading"><span>PROPIEDADES</span><button className="icon-button desktop-only" aria-label="Ocultar propiedades" onClick={() => setRightOpen(false)}><PanelRightClose size={16} /></button><button className="icon-button mobile-only" aria-label="Cerrar propiedades" onClick={() => setMobilePanel(null)}><X size={18} /></button></div>
+    <div className="panel-heading"><span>Propiedades</span><button className="icon-button desktop-only" aria-label="Ocultar propiedades" onClick={() => setRightOpen(false)}><PanelRightClose size={18} /></button><button className="icon-button mobile-only" aria-label="Cerrar propiedades" onClick={() => setMobilePanel(null)}><X size={20} /></button></div>
     <div className="inspector-title"><span className="inspector-icon">{tab === 'color' ? <Paintbrush size={19} /> : tab === 'light' ? <Sun size={19} /> : tab === 'space' ? <Ruler size={19} /> : <Box size={19} />}</span><h2>{tab === 'item' ? selectedName || 'Elemento' : tab === 'space' ? 'Cuarto' : tab === 'color' ? 'Materiales' : 'Iluminación'}</h2></div>
-    <div className="inspector-tabs" role="tablist" aria-label="Propiedades">{([['item', MousePointer2, 'Elemento'], ['space', Ruler, 'Cuarto'], ['color', Paintbrush, 'Color'], ['light', Sun, 'Luz']] as const).map(([key, Icon, name]) => <button key={key} role="tab" id={'tab-' + key} aria-controls={'panel-' + key} aria-selected={tab === key} className={tab === key ? 'active' : ''} onClick={() => setTab(key)}><Icon size={13} />{name}</button>)}</div>
-    <div className="inspector-content" role="tabpanel" id={'panel-' + tab} aria-labelledby={'tab-' + tab}>{tab === 'item' ? itemPanel : tab === 'space' ? spacePanel : tab === 'color' ? colorPanel : lightPanel}</div>
-    <div className="inspector-footer"><span className="status-dot" />{readOnly ? 'Solo lectura' : status === 'saving' ? 'Guardando…' : status === 'error' ? 'No guardado' : 'Cambios guardados'}</div>
+    <div className="inspector-content" id={'panel-' + tab}>{tab === 'item' ? itemPanel : tab === 'space' ? spacePanel : tab === 'color' ? colorPanel : lightPanel}</div>
   </>;
 
   return <div className={'studio editor-ui ' + (leftOpen ? '' : 'left-collapsed') + ' ' + (rightOpen ? '' : 'right-collapsed')}>
     <header className="app-header"><div className="brand"><span className="brand-mark"><Box size={24} strokeWidth={1.5} /></span><strong>espacio<span>.</span></strong></div><div className="header-divider" />
-      <details className="file-menu"><summary>Archivo <ChevronDown size={12} /></summary><div><button disabled={readOnly} onClick={() => importRef.current?.click()}><ArrowUpFromLine size={15} />Abrir proyecto</button><button onClick={exportRoom}><ArrowDownToLine size={15} />Descargar copia</button></div></details>
-      <button className="editor-home" onClick={onHome}><Layers3 size={16} /><span>Mis diseños</span></button>
+      <details ref={fileRef} className="file-menu"><summary onClick={() => setMobilePanel(null)}>Archivo <ChevronDown size={16} /></summary><div><button disabled={readOnly} onClick={() => { importRef.current?.click(); if (fileRef.current) fileRef.current.open = false; }}><ArrowUpFromLine size={17} />Abrir proyecto</button><button onClick={() => { exportRoom(); if (fileRef.current) fileRef.current.open = false; }}><ArrowDownToLine size={17} />Descargar copia</button></div></details>
+      <button className="editor-home" aria-label="Mis diseños" title="Mis diseños" onClick={onHome}><Layers3 size={19} /><span>Mis diseños</span></button>
       <div className="project-name"><span className="project-dot" /><input aria-label="Nombre del proyecto" readOnly={readOnly} value={room.name} maxLength={80} onChange={event => { if (event.target.value.trim()) change({ ...room, name: event.target.value }); }} /></div>
-      <div className="header-actions"><span className="saved-status" role="status">{readOnly ? 'Solo lectura' : status === 'saving' ? <><LoaderCircle size={13} className="saving-spinner" />Guardando…</> : status === 'error' ? <><CircleHelp size={13} />No guardado</> : <><Check size={13} />Cambios guardados</>}</span><button className="header-help icon-button" aria-label="Controles" onClick={() => setHelpOpen(true)}><CircleHelp size={18} /></button><button className="save-button" disabled={status === 'saving' || status === 'error'} onClick={() => setShareOpen(true)}><Share2 size={15} />Compartir</button></div>
+      <div className="header-actions"><span className="saved-status" role="status">{readOnly ? 'Solo lectura' : status === 'saving' ? <><LoaderCircle size={16} className="saving-spinner" />Guardando…</> : status === 'error' ? <><CircleHelp size={16} />No guardado</> : <><Check size={16} />Guardado</>}</span><button className="header-help icon-button" aria-label="Controles" onClick={() => setHelpOpen(true)}><CircleHelp size={20} /></button><button className="save-button" aria-label="Compartir diseño" disabled={status === 'saving' || status === 'error'} onClick={() => setShareOpen(true)}><Share2 size={18} /><span>Compartir</span></button></div>
       <input ref={importRef} hidden type="file" accept="application/json,.json" onChange={event => void importRoom(event.target.files?.[0])} />
     </header>
-    <div className="workspace-bar"><div className="workspace-label"><Box size={14} /><strong>{room.name}</strong></div><div className="workspace-right"><span className="unit-label">{readOnly ? 'Solo lectura · metros' : 'Unidades: metros'}</span><button className="icon-button" aria-label="Centrar cámara" onClick={() => setResetKey(value => value + 1)}><Focus size={15} /></button></div></div>
+    <div className="workspace-bar"><nav className="workspace-tools" aria-label="Herramientas del cuarto"><button aria-expanded={elementsVisible} className={elementsVisible ? 'active' : ''} onClick={toggleElements}><Layers3 size={18} /><span>Elementos</span></button>{([['space', Ruler, 'Cuarto'], ['color', Paintbrush, 'Materiales'], ['light', Sun, 'Luz']] as const).map(([key, Icon, name]) => <button key={key} aria-controls={'panel-' + key} aria-expanded={tab === key && propertiesVisible} className={tab === key && propertiesVisible ? 'active' : ''} onClick={() => showProperties(key)}><Icon size={18} /><span>{name}</span></button>)}</nav><details ref={optionsRef} className="view-options"><summary aria-label="Opciones de vista" title="Opciones de vista" onClick={() => setMobilePanel(null)}><Settings2 size={20} /></summary><div className="view-options-content"><fieldset disabled={readOnly} className="property-fields"><Section title="Calidad visual"><div className="quality-switch" role="group" aria-label="Calidad visual">{(['standard', 'realistic', 'hyperrealistic'] as const).map(quality => <button key={quality} aria-pressed={room.renderQuality === quality} className={room.renderQuality === quality ? 'active' : ''} onClick={() => change({ ...room, renderQuality: quality })}>{quality === 'standard' ? 'Estándar' : quality === 'realistic' ? 'Realista' : 'Hiperrealista'}</button>)}</div></Section><Section title="Movimiento" defaultOpen={false}><label className="check-field"><input type="checkbox" checked={room.editing.snap} onChange={event => change({ ...room, editing: { ...room.editing, snap: event.target.checked } })} /><Magnet size={17} />Ajustar a cuadrícula</label><NumberField label="Paso de ajuste" value={room.editing.step} min={0.01} max={1} step={0.01} onChange={step => change({ ...room, editing: { ...room.editing, step } })} /><label className="check-field"><input type="checkbox" checked={room.editing.bounds} onChange={event => setBounds(event.target.checked)} /><Shield size={17} />Respetar límites y colisiones</label></Section></fieldset><button className="view-options-help" onClick={() => { if (optionsRef.current) optionsRef.current.open = false; setHelpOpen(true); }}><CircleHelp size={18} />Controles</button></div></details></div>
     <aside className={'scene-panel ' + (mobilePanel === 'scene' ? 'mobile-open' : '')}>{scenePanel}</aside>
     <main className="viewport">
       <div className="viewport-top editor-toolbar">
-        <button className="icon-button tablet-only" aria-label="Mostrar elementos" onClick={() => setMobilePanel('scene')}><Menu size={17} /></button>
-        <div className="view-tabs" role="tablist" aria-label="Vista"><button role="tab" aria-selected={mode !== 'plan'} className={mode !== 'plan' ? 'active' : ''} onClick={() => setMode('orbit')}><Box size={14} />Vista 3D</button><button role="tab" aria-selected={mode === 'plan'} className={mode === 'plan' ? 'active' : ''} onClick={() => setMode('plan')}><Grid2X2 size={14} />Planta 2D</button></div>
-        <button className="add-toolbar-button" disabled={readOnly} onClick={() => setAddOpen(true)}><Plus size={15} />Agregar</button>
-        <button className={'walk-button ' + (mode === 'walk' ? 'active' : '')} onClick={() => { setMode(mode === 'walk' ? 'orbit' : 'walk'); setMobilePanel(null); }}><Footprints size={14} />{mode === 'walk' ? 'Salir' : 'Recorrer'}</button>
-        <div className="editor-options"><div className="quality-switch" role="group" aria-label="Calidad visual">{(['standard', 'realistic', 'hyperrealistic'] as const).map(quality => <button key={quality} disabled={readOnly} aria-pressed={room.renderQuality === quality} className={room.renderQuality === quality ? 'active' : ''} onClick={() => change({ ...room, renderQuality: quality })}>{quality === 'standard' ? 'Estándar' : quality === 'realistic' ? 'Realista' : 'Hiperrealista'}</button>)}</div><label className="toolbar-check"><input type="checkbox" aria-label="Ajustar a cuadrícula" disabled={readOnly} checked={room.editing.snap} onChange={event => change({ ...room, editing: { ...room.editing, snap: event.target.checked } })} /><Magnet size={13} />Ajuste</label><label className="toolbar-check"><input type="checkbox" aria-label="Respetar límites" disabled={readOnly} checked={room.editing.bounds} onChange={event => setBounds(event.target.checked)} /><Shield size={13} />Límites</label></div>
+        <div className="view-tabs" role="tablist" aria-label="Vista"><button role="tab" aria-selected={mode !== 'plan'} className={mode !== 'plan' ? 'active' : ''} onClick={() => setMode('orbit')}><Box size={18} />3D</button><button role="tab" aria-selected={mode === 'plan'} className={mode === 'plan' ? 'active' : ''} onClick={() => setMode('plan')}><Grid2X2 size={18} />Planta</button></div>
+        <button className="add-toolbar-button" aria-label="Agregar elemento" title="Agregar elemento" disabled={readOnly} onClick={() => { setAddOpen(true); setMobilePanel(null); }}><Plus size={18} /><span>Agregar</span></button>
+        <button className={'walk-button ' + (mode === 'walk' ? 'active' : '')} onClick={() => { setMode(mode === 'walk' ? 'orbit' : 'walk'); setMobilePanel(null); }}><Footprints size={18} />{mode === 'walk' ? 'Salir' : 'Recorrer'}</button>
       </div>
       <div className="viewport-body">
         {mode === 'plan' ? <div className="large-plan"><PlanEditor room={room} onChange={change} selection={selection} onSelect={next => select(next)} large sketchUrl={sketchUrl} onSketchChange={uploadSketch} readOnly={readOnly} /></div> : <RoomScene room={room} mode={mode} selection={selection} onSelect={next => select(next)} onChange={change} readOnly={readOnly} transformMode={transformMode} showFurniture={room.showFurniture} resetKey={resetKey} />}
         {mode !== 'plan' && <><div className="view-title"><span className="view-title-dot" />{mode === 'walk' ? 'Vista interior' : 'Perspectiva'}</div><div className="viewport-bottom"><div className="navigation-hint"><MousePointer2 size={13} />{mode === 'walk' ? 'Arrastra para mirar' : !readOnly && selection && (furniture || opening || light) ? 'Arrastra el elemento o sus controles' : 'Toca para seleccionar · Arrastra para girar'}</div><button className="focus-button" aria-label="Restablecer vista" onClick={() => setResetKey(value => value + 1)}><Focus size={16} /></button></div></>}
-        {selection && mode !== 'walk' && <div className="selection-dock"><span>{selectedName}</span>{(furniture || opening || light) && !readOnly && <><button className={transformMode === 'translate' ? 'active' : ''} aria-pressed={transformMode === 'translate'} onClick={() => setTransformMode('translate')}><Move size={16} />Mover</button>{furniture && <button className={transformMode === 'rotate' ? 'active' : ''} aria-pressed={transformMode === 'rotate'} onClick={() => setTransformMode('rotate')}><RotateCcw size={16} />Girar</button>}</>}<button aria-label="Propiedades del elemento" onClick={() => showProperties(tab)}><Settings2 size={17} /><span>Medidas</span></button>{(furniture || opening || light) && !readOnly && <button aria-label="Eliminar elemento seleccionado" onClick={removeSelected}><Trash2 size={16} /></button>}<button aria-label="Deseleccionar elemento" onClick={() => select(null)}><X size={15} /></button></div>}
+        {selection && mode !== 'walk' && <div className="selection-dock"><span>{selectedName}</span>{(furniture || opening || light) && !readOnly && <><button className={transformMode === 'translate' ? 'active' : ''} aria-label="Mover elemento" title="Mover elemento" aria-pressed={transformMode === 'translate'} onClick={() => setTransformMode('translate')}><Move size={18} /><span>Mover</span></button>{furniture && <button className={transformMode === 'rotate' ? 'active' : ''} aria-label="Girar elemento" title="Girar elemento" aria-pressed={transformMode === 'rotate'} onClick={() => setTransformMode('rotate')}><RotateCcw size={18} /><span>Girar</span></button>}</>}<button aria-label="Propiedades del elemento" onClick={() => showProperties(selection.kind === 'wall' || selection.kind === 'floor' || selection.kind === 'ceiling' ? 'color' : 'item')}><Settings2 size={19} /><span>Propiedades</span></button>{(furniture || opening || light) && !readOnly && <button aria-label="Eliminar elemento seleccionado" onClick={removeSelected}><Trash2 size={18} /></button>}<button aria-label="Deseleccionar elemento" onClick={() => select(null)}><X size={18} /></button></div>}
       </div>
-      <div className="viewport-status"><span>{readOnly ? 'Solo lectura' : mode === 'plan' ? 'Planta' : mode === 'walk' ? 'Recorrido' : 'Selecciona un elemento'}</span><span>{area.toFixed(1)} m² · {room.vertices.length} paredes</span></div>
-      {!leftOpen && <button className="restore-panel restore-left desktop-only" aria-label="Mostrar elementos" onClick={() => setLeftOpen(true)}><Menu size={17} /></button>}{!rightOpen && <button className="restore-panel restore-right desktop-only" aria-label="Mostrar propiedades" onClick={() => setRightOpen(true)}><Settings2 size={17} /></button>}
+      <div className="viewport-status"><span>{readOnly ? 'Solo lectura' : status === 'saving' ? 'Guardando…' : status === 'error' ? 'No guardado' : 'Guardado'}</span><span>{area.toFixed(1)} m² · {room.vertices.length} paredes</span></div>
     </main>
     <aside className={'properties-panel ' + (mobilePanel === 'properties' ? 'mobile-open' : '')}>{propertiesPanel}</aside>
-    <nav className="mobile-nav" aria-label="Herramientas móviles"><button className={mobilePanel === 'scene' ? 'active' : ''} onClick={() => setMobilePanel(mobilePanel === 'scene' ? null : 'scene')}><Layers3 size={19} /><span>Elementos</span></button><button className={mode === 'plan' ? 'active' : ''} onClick={() => { setMode(mode === 'plan' ? 'orbit' : 'plan'); setMobilePanel(null); }}><Grid2X2 size={19} /><span>Planta</span></button><button className={addOpen ? 'active' : ''} disabled={readOnly} onClick={() => setAddOpen(true)}><Plus size={20} /><span>Agregar</span></button><button className={mobilePanel === 'properties' ? 'active' : ''} onClick={() => setMobilePanel(mobilePanel === 'properties' ? null : 'properties')}><Settings2 size={19} /><span>Propiedades</span></button></nav>
     {mobilePanel && <button className="mobile-backdrop" aria-label="Cerrar panel" onClick={() => setMobilePanel(null)} />}
     {status === 'error' && <div className="save-error" role="alert"><CircleHelp size={17} /><span>{saveError}</span><button onClick={retry}>Reintentar</button><button aria-label="Descargar cambios sin guardar" onClick={exportRoom}><ArrowDownToLine size={15} /></button></div>}
     {notice && <div className="toast" role="status"><CircleHelp size={17} /><span>{notice}</span><button aria-label="Cerrar aviso" onClick={() => setNotice('')}><X size={15} /></button></div>}

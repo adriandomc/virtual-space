@@ -1,13 +1,14 @@
 import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from 'react';
 import { Box, Eye, EyeOff, LoaderCircle, LogOut, Plus, Trash2 } from 'lucide-react';
-import { createDefaultRoom } from './model';
+import { createBlankRoom } from './onboardingModel';
 import { accountRequest } from './accountApi';
 import './account.css';
 
 const RoomEditor = lazy(() => import('./App'));
+const SetupApp = lazy(() => import('./SetupApp'));
 
 type User = { id: string; username: string };
-type Design = { id: string; name: string; updatedAt: string };
+type Design = { id: string; name: string; updatedAt: string; setupStep?: 0 | 1 | 2 };
 
 function Brand() {
   return <div className="account-brand"><Box size={24} strokeWidth={1.5} /><strong>espacio<span>.</span></strong></div>;
@@ -85,8 +86,8 @@ export default function AccountApp() {
     setPending('create'); setError('');
     creationId.current ??= crypto.randomUUID();
     try {
-      const result = await accountRequest<{ id: string }>('/api/rooms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: creationId.current, room: createDefaultRoom() }) });
-      window.location.assign('/?room=' + encodeURIComponent(result.id));
+      const result = await accountRequest<{ id: string }>('/api/rooms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: creationId.current, room: createBlankRoom() }) });
+      window.location.assign('/?room=' + encodeURIComponent(result.id) + '&setup=1');
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudo crear el diseño.'); setPending(null); }
   }
   async function deleteDesign(design: Design) {
@@ -104,14 +105,14 @@ export default function AccountApp() {
     finally { setPending(null); }
   }
 
-  if (roomId) return <Suspense fallback={<main className="account-page account-loading" aria-label="Cargando diseño"><LoaderCircle className="saving-spinner" size={25} /></main>}><RoomEditor onHome={() => window.location.assign('/')} /></Suspense>;
+  if (roomId) return <Suspense fallback={<main className="account-page account-loading" aria-label="Cargando diseño"><LoaderCircle className="saving-spinner" size={25} /></main>}>{new URL(window.location.href).searchParams.get('setup') === '1' ? <SetupApp /> : <RoomEditor onHome={() => window.location.assign('/')} />}</Suspense>;
   if (loadingSession) return <main className="account-page account-loading" aria-label="Cargando cuenta"><LoaderCircle className="saving-spinner" size={25} /></main>;
   if (sessionError) return <main className="account-page account-loading"><p className="account-error" role="alert">{sessionError}</p><button className="account-secondary" onClick={() => setSessionAttempt(current => current + 1)}>Reintentar</button></main>;
   if (!user) return <AuthScreen onAuthenticated={setUser} />;
   return <main className="account-page library-page"><header className="account-header"><Brand /><div><span className="account-username">{user.username}</span><button type="button" className="account-secondary" disabled={!!pending} onClick={() => void logout()}><LogOut size={17} /><span>Cerrar sesión</span></button></div></header>
     <section className="design-library" aria-labelledby="designs-title"><div className="library-heading"><h1 id="designs-title">Mis diseños</h1><button type="button" className="account-primary" disabled={!!pending} onClick={() => void createDesign()}>{pending === 'create' ? <LoaderCircle size={17} className="saving-spinner" /> : <Plus size={19} />}Nuevo diseño</button></div>
       {error && <div className="library-error"><p className="account-error" role="alert">{error}</p><button type="button" className="account-secondary" disabled={!!pending} onClick={() => setLibraryAttempt(current => current + 1)}>Reintentar</button></div>}
-      {loadingDesigns ? <div className="library-empty" aria-label="Cargando diseños"><LoaderCircle size={23} className="saving-spinner" /></div> : designs.length ? <ul className="design-list">{designs.map(design => <li key={design.id}><a href={'/?room=' + encodeURIComponent(design.id)} className="design-open"><span className="design-icon"><Box size={27} strokeWidth={1.3} /></span><span><strong>{design.name}</strong><time dateTime={new Date(design.updatedAt).toISOString()}>{new Date(design.updatedAt).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' })}</time></span></a><button type="button" className="design-delete" aria-label={'Eliminar ' + design.name} disabled={!!pending} onClick={() => void deleteDesign(design)}>{pending === design.id ? <LoaderCircle size={19} className="saving-spinner" /> : <Trash2 size={19} />}</button></li>)}</ul> : !error && <p className="library-empty">Sin diseños</p>}
+      {loadingDesigns ? <div className="library-empty" aria-label="Cargando diseños"><LoaderCircle size={23} className="saving-spinner" /></div> : designs.length ? <ul className="design-list">{designs.map(design => <li key={design.id}><a href={'/?room=' + encodeURIComponent(design.id) + (design.setupStep === undefined ? '' : '&setup=1')} className="design-open"><span className="design-icon"><Box size={27} strokeWidth={1.3} /></span><span><strong>{design.name}</strong><>{design.setupStep === undefined ? <time dateTime={new Date(design.updatedAt).toISOString()}>{new Date(design.updatedAt).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' })}</time> : <span className="design-progress">Continuar preparación</span>}</></span></a><button type="button" className="design-delete" aria-label={'Eliminar ' + design.name} disabled={!!pending} onClick={() => void deleteDesign(design)}>{pending === design.id ? <LoaderCircle size={19} className="saving-spinner" /> : <Trash2 size={19} />}</button></li>)}</ul> : !error && <p className="library-empty">Sin diseños</p>}
     </section>
   </main>;
 }

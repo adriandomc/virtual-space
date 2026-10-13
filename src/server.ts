@@ -100,8 +100,8 @@ export function createServer({ dataDir = process.env.DATA_DIR ?? './data', stati
       if (pathname === '/api/auth/logout' && method === 'POST') { auth.logout(request, response); sendJson(response, 200, { user: null }); return; }
       if (pathname === '/api/rooms' && method === 'GET') {
         const user = auth.requireUser(request);
-        const rooms = database.prepare('SELECT id, json_extract(room, \'$.name\') AS name, shared, updated_at FROM rooms WHERE owner_id = ? ORDER BY updated_at DESC, id').all(user.id) as { id: string; name: string; shared: number; updated_at: number }[];
-        sendJson(response, 200, { rooms: rooms.map(row => ({ id: row.id, name: row.name, shared: row.shared === 1, updatedAt: new Date(row.updated_at).toISOString() })) }); return;
+        const rooms = database.prepare('SELECT id, json_extract(room, \'$.name\') AS name, json_extract(room, \'$.setupStep\') AS setup_step, shared, updated_at FROM rooms WHERE owner_id = ? ORDER BY updated_at DESC, id').all(user.id) as { id: string; name: string; setup_step: Room['setupStep'] | null; shared: number; updated_at: number }[];
+        sendJson(response, 200, { rooms: rooms.map(row => ({ id: row.id, name: row.name, setupStep: row.setup_step ?? undefined, shared: row.shared === 1, updatedAt: new Date(row.updated_at).toISOString() })) }); return;
       }
       if (pathname === '/api/rooms' && method === 'POST') {
         const user = auth.requireUser(request);

@@ -12,12 +12,14 @@ type Props = {
   large?: boolean;
   sketchUrl?: string | null;
   onSketchChange?: (file: File | null) => Promise<void>;
+  onDrawingChange?: (drawing: boolean) => void;
+  hideSurfaceControls?: boolean;
   readOnly?: boolean;
 };
 type Viewport = { scale: number; cx: number; cz: number };
 type Drag = { kind: 'vertex'; index: number } | { kind: 'item'; selection: Selection; offset: Point } | { kind: 'rotate'; id: string; angle: number; rotation: number };
 
-export default function PlanEditor({ room, onChange, selection: selected, onSelect, large = false, sketchUrl = null, onSketchChange, readOnly = false }: Props) {
+export default function PlanEditor({ room, onChange, selection: selected, onSelect, large = false, sketchUrl = null, onSketchChange, onDrawingChange, hideSurfaceControls = false, readOnly = false }: Props) {
   const svg = useRef<SVGSVGElement>(null), input = useRef<HTMLInputElement>(null), drag = useRef<Drag | null>(null);
   const [uploading, setUploading] = useState(false), [drawing, setDrawing] = useState(false);
   const [points, setPoints] = useState<Point[]>([]), [hover, setHover] = useState<Point | null>(null);
@@ -37,6 +39,10 @@ export default function PlanEditor({ room, onChange, selection: selected, onSele
   function cancelDrawing() { setDrawing(false); setPoints([]); setHover(null); setFixedView(null); setError(''); }
   function releaseDrag() { drag.current = null; if (!drawing) setFixedView(null); }
   useEffect(() => { if (readOnly) { drag.current = null; setDrawing(false); setPoints([]); setHover(null); setFixedView(null); } }, [readOnly]);
+  useEffect(() => {
+    onDrawingChange?.(drawing);
+    return () => onDrawingChange?.(false);
+  }, [drawing, onDrawingChange]);
 
   async function changeSketch(file: File | null) {
     if (readOnly || !onSketchChange || uploading) return;
@@ -113,14 +119,13 @@ export default function PlanEditor({ room, onChange, selection: selected, onSele
       <input ref={input} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (!file) return; if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || file.size > 10 * 1024 * 1024) { setError('Usa una imagen PNG, JPG o WebP de hasta 10 MB.'); return; } void changeSketch(file); }} />
       <button type="button" className={drawing ? 'active' : ''} disabled={readOnly} onClick={() => { if (drawing) cancelDrawing(); else { onSelect(null); setDrawing(true); setPoints([]); setHover(null); setError(''); setFixedView(view); setReferenceWidth(box.width.toFixed(2)); setGrid(room.editing.snap); } }}><Pencil size={15} />{drawing ? 'Cancelar' : 'Dibujar planta'}</button>
       {sketchUrl && <button type="button" className="plan-icon-button" disabled={readOnly || uploading || !onSketchChange} onClick={() => void changeSketch(null)} aria-label="Quitar croquis"><ImageOff size={15} /></button>}
-      {!drawing && <><button type="button" className={selected?.kind === 'floor' ? 'active' : ''} onClick={() => select({ kind: 'floor' })}>Piso</button><button type="button" className={selected?.kind === 'ceiling' ? 'active' : ''} onClick={() => select({ kind: 'ceiling' })}>Techo</button></>}
+      {!drawing && !hideSurfaceControls && <><button type="button" className={selected?.kind === 'floor' ? 'active' : ''} onClick={() => select({ kind: 'floor' })}>Piso</button><button type="button" className={selected?.kind === 'ceiling' ? 'active' : ''} onClick={() => select({ kind: 'ceiling' })}>Techo</button></>}
     </div>
     {drawing && <div className="plan-drawing-controls">
       <p title="Enter cierra · Retroceso deshace · Escape cancela">Toca las esquinas y vuelve a la primera para cerrar.</p>
       <div className="plan-draw-options"><label><input type="checkbox" checked={grid} onChange={event => setGrid(event.target.checked)} />Ajustar a cuadrícula</label><label><input type="checkbox" checked={angles} onChange={event => setAngles(event.target.checked)} />Líneas rectas</label><label>Ángulo<select aria-label="Paso angular del trazo" value={angleStep} onChange={event => setAngleStep(Number(event.target.value))}>{[15, 30, 45, 90].map(value => <option key={value} value={value}>{value}°</option>)}</select></label></div>
       <label>Ancho total trazado<span><input aria-label="Ancho total de la planta en metros" type="number" min="0.5" max="50" step="0.1" value={referenceWidth} onChange={event => setReferenceWidth(event.target.value)} />m</span></label>
       <details className="plan-coordinates"><summary>Coordenadas</summary><div className="plan-toolbar"><label>X<input aria-label="Coordenada X de nueva esquina" type="number" step={room.editing.step} value={cornerX} onChange={event => setCornerX(event.target.value)} /></label><label>Z<input aria-label="Coordenada Z de nueva esquina" type="number" step={room.editing.step} value={cornerZ} onChange={event => setCornerZ(event.target.value)} /></label><button type="button" onClick={() => addCorner({ x: cornerX.trim() ? Number(cornerX) : NaN, z: cornerZ.trim() ? Number(cornerZ) : NaN })}>Añadir esquina</button></div></details>
-      <p className="plan-replacement-note">Mantiene los objetos; un error conserva la planta actual.</p>
       <div className="plan-toolbar"><button type="button" onClick={() => { setPoints(points.slice(0, -1)); setHover(null); }} disabled={!points.length}><Undo2 size={14} />Deshacer</button><button type="button" onClick={finishDrawing} disabled={points.length < 3}><Check size={14} />Cerrar planta</button><button type="button" className="plan-icon-button" aria-label="Cancelar planta" onClick={cancelDrawing}><X size={14} /></button></div>
     </div>}
     <div className="plan-canvas">

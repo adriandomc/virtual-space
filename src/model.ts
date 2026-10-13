@@ -268,6 +268,7 @@ const overlapping = (a: Opening, b: Opening) => a.wall === b.wall && a.offset < 
 export function validateRoom(value: unknown): Room {
   const raw = record(value, 'El proyecto');
   if (raw.version !== 1) throw new Error('La versión del proyecto no es compatible.');
+  if (raw.setupStep !== undefined && raw.setupStep !== 0 && raw.setupStep !== 1 && raw.setupStep !== 2) throw new Error('El paso de preparación no es válido.');
   const vertices = array(raw.vertices, 3, 24, 'El contorno').map((value, i) => {
     const p = record(value, `Punto ${i + 1}`);
     return { x: number(p.x, -50, 50, `Punto ${i + 1}, X`), z: number(p.z, -50, 50, `Punto ${i + 1}, Z`) };
@@ -320,7 +321,7 @@ export function validateRoom(value: unknown): Room {
   for (const item of furniture) if (editing.bounds && !furnitureInside(item, vertices)) throw new Error(`${FURNITURE_LABELS[item.type]} debe quedar completamente dentro del cuarto.`);
   const sun = record(raw.sun, 'El sol');
   return {
-    version: 1, name: text(raw.name, 'El nombre'), vertices, wallColors, height,
+    version: 1, ...(raw.setupStep === undefined ? {} : { setupStep: raw.setupStep }), name: text(raw.name, 'El nombre'), vertices, wallColors, height,
     thickness: number(raw.thickness, 0.05, 0.6, 'El espesor'), floorColor: color(raw.floorColor, 'El color de piso'), ceilingColor: color(raw.ceilingColor === undefined ? '#f2f0e9' : raw.ceilingColor, 'El color de techo'), floorFinish: floorFinish as FloorFinish, renderQuality, editing, showFurniture: raw.showFurniture === undefined ? true : boolean(raw.showFurniture, 'Los muebles'), furniture, openings, lights,
     sun: { enabled: boolean(sun.enabled, 'El sol'), hour: number(sun.hour, 0, 24, 'La hora'), azimuth: number(sun.azimuth, 0, 360, 'La orientación solar'), intensity: number(sun.intensity, 0, 10, 'La intensidad solar') },
   };
