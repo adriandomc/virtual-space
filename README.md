@@ -2,13 +2,17 @@
 
 Aplicación React + TypeScript + Three.js para construir la planta de un cuarto, elegir colores de pared y recorrerlo en 3D. Usa materiales TSL y el renderizador WebGPU de Three.js, con alternativa WebGL cuando el dispositivo no ofrece WebGPU. Un servidor Node.js guarda cada proyecto y su croquis en SQLite.
 
-## Proyectos guardados y enlaces
+## Cuentas y diseños
 
-Cada proyecto tiene un enlace de edición privado. Los cambios se guardan automáticamente en el servidor: dimensiones, contorno, colores y acabados, puertas, ventanas, focos e interruptores, sol, muebles, calidad visual y ajustes de movimiento. La imagen del croquis también queda guardada en el proyecto. Espera a que el estado indique que se guardó antes de cerrar la página o compartirla.
+El acceso sólo necesita usuario y contraseña. El usuario se normaliza en minúsculas, admite de 3 a 32 letras ASCII, números o guiones bajos. La contraseña admite de 8 a 128 caracteres y se confirma al registrarse. No hay correo ni recuperación automática de contraseñas. La aplicación no tiene pagos ni suscripciones.
 
-Guarda tu dirección completa de edición como marcador. Contiene `?room=<identificador>#edit=<clave>`; la clave permite modificar ese proyecto. Quien obtenga ese enlace privado puede editarlo. Si pierdes la clave, no hay un inicio de sesión que permita recuperarla.
+**Mis diseños** permite crear, abrir y eliminar diseños propios. Las modificaciones y el croquis se guardan automáticamente en el servidor. Espera a que el estado indique que se guardó antes de cerrar la página. Sólo el propietario puede editar o eliminar su diseño.
 
-El botón **Compartir** copia una dirección de consulta sin la clave: `?room=<identificador>`. Otra persona puede abrirla desde otro dispositivo y ver el mismo proyecto guardado, incluido el croquis, y navegar la escena en modo de solo lectura. No recibe permisos de edición. Quien tenga el enlace de consulta puede ver el proyecto.
+Los diseños son privados inicialmente. **Compartir → Crear enlace** habilita una dirección de lectura `?room=<identificador>`: quien reciba ese enlace puede ver el diseño y su croquis, y recorrerlo sin iniciar sesión. **Desactivar enlace** revoca ese acceso. El enlace no concede permisos de edición.
+
+Las cuentas, sesiones, diseños, croquis y contadores de seguridad se guardan en `/data/accounts.sqlite`. La base anterior `rooms.sqlite` no se lee ni se migra; se inicia el sistema de cuentas desde cero. Las contraseñas se guardan con scrypt y sal aleatoria; los tokens de sesión sólo se guardan como hashes. La sesión dura 30 días y se revoca al cerrar sesión.
+
+Los límites persisten tras reinicios: 5 intentos de acceso por usuario/IP en 15 minutos, 30 intentos totales por IP en ese intervalo y bloqueo progresivo tras 10 fallos, de 15 minutos hasta 24 horas. Se agrupan direcciones IPv6 por `/64`. El registro se limita a 5 cuentas por IP/hora; también hay límites de peticiones, creación de diseños y cargas. La derivación de contraseñas limita su concurrencia para mantener controlado el uso de memoria. Los límites de una IP no bloquean globalmente una cuenta.
 
 Los datos se conservan en el servidor, sin depender del almacenamiento local del navegador. La exportación JSON permite respaldar los parámetros del cuarto; el respaldo completo de los proyectos y croquis se hace desde el volumen de datos del servidor.
 
@@ -49,7 +53,7 @@ En otra terminal, desde esta misma carpeta:
 npm run dev
 ```
 
-Abre la dirección que muestra Vite. Sus solicitudes `/api` se envían al servidor en `http://localhost:8080`. Los datos de desarrollo se guardan en `data/rooms.sqlite`; cambiar `DATA_DIR` permite elegir otra carpeta. Para acceder desde otro dispositivo conectado a la misma red utiliza la IP del equipo; habilita HTTPS para probar WebGPU fuera de `localhost`.
+Abre la dirección que muestra Vite. Sus solicitudes `/api` se envían al servidor en `http://localhost:8080`. Los datos de desarrollo se guardan en `data/accounts.sqlite`; cambiar `DATA_DIR` permite elegir otra carpeta. Para acceder desde otro dispositivo conectado a la misma red utiliza la IP del equipo; habilita HTTPS para probar WebGPU fuera de `localhost`.
 
 Para comprobar y ejecutar la versión de producción:
 
@@ -67,10 +71,10 @@ Con Docker activo, desde esta carpeta:
 
 ```sh
 docker build -t virtual-space .
-docker run --rm -p 8080:8080 -v virtual-space-data:/data virtual-space
+docker run --rm -p 8080:8080 -e NODE_ENV=development -v virtual-space-data:/data virtual-space
 ```
 
-Abre `http://localhost:8080`. El Dockerfile construye el cliente y servidor y los ejecuta con Node.js 24, usuario sin privilegios y puerto interno **8080**. El volumen `virtual-space-data` conserva la base de datos y croquis al eliminar o reemplazar el contenedor.
+Abre `http://localhost:8080`. Este comando permite probar las sesiones por HTTP sólo en desarrollo local; en Coolify conserva `NODE_ENV=production` y usa HTTPS. El Dockerfile construye el cliente y servidor y los ejecuta con Node.js 24, usuario sin privilegios y puerto interno **8080**. El volumen `virtual-space-data` conserva la base de datos y croquis al eliminar o reemplazar el contenedor.
 
 ## Despliegue en Coolify desde GitHub
 
@@ -84,6 +88,10 @@ El código y el Dockerfile pertenecen al repositorio independiente [adriandomc/v
 
 Consulta la [configuración oficial de Dockerfile en Coolify](https://coolify.io/docs/applications/builds/dockerfile) y [su almacenamiento persistente](https://coolify.io/docs/applications/configuration/persistent-storage).
 
-Configura el DNS del dominio hacia el servidor y habilita TLS en Coolify. **HTTPS es necesario para WebGPU en producción**; los navegadores y GPU compatibles determinan si se usa WebGPU o la alternativa WebGL.
+En producción las cookies de sesión son `__Host-`, `Secure`, `HttpOnly`, `SameSite=Lax` y no tienen `Domain`. Todas las mutaciones exigen un `Origin` que corresponda al sitio. Configura `APP_ORIGIN` con el origen completo del dominio, por ejemplo `https://tudominio.example`, sin ruta; si se omite, se usa el host recibido y el protocolo del proxy autorizado.
+
+`TRUSTED_PROXIES` admite una lista de IPs o CIDRs separados por comas. Ajusta ese valor a la red real de Traefik/Coolify para identificar al visitante mediante `X-Forwarded-For`: se recorre la cadena desde la derecha hasta el primer salto no confiable. De forma predeterminada sólo se confían loopback y redes privadas IPv4 habituales de Docker; cabeceras enviadas directamente desde una IP pública se ignoran. Evita publicar el puerto interno `8080` fuera del proxy o activar la confianza indiscriminada de cabeceras de Traefik. Con un CDN delante, la confianza de sus direcciones debe configurarse también en Traefik. [Referencia de cabeceras confiables](https://doc.traefik.io/traefik/reference/install-configuration/entrypoints/#forwarded-headers).
+
+Configura el DNS del dominio hacia el servidor y habilita TLS en Coolify. **HTTPS es necesario para las sesiones y para WebGPU en producción**; los navegadores y GPU compatibles determinan si se usa WebGPU o la alternativa WebGL.
 
 Respalda periódicamente el volumen `/data`. Para un respaldo consistente de SQLite, detén la aplicación antes de copiar la carpeta completa; así también conservas los archivos auxiliares que pudiera necesitar la base de datos.

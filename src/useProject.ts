@@ -2,21 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createDefaultRoom, validateRoom } from './model';
 import type { Room } from './types';
 
-type Snapshot = { id: string; room: Room; revision: number; canEdit: boolean; hasSketch: boolean; sketchVersion: number; editKey: string; shareUrl: string };
-type Session = { id: string; editKey: string; revision: number; readOnly: boolean };
+type Snapshot = { id: string; room: Room; revision: number; canEdit: boolean; hasSketch: boolean; sketchVersion: number; shared: boolean; shareUrl: string };
+type Session = { id: string; revision: number; readOnly: boolean };
 type Status = 'loading' | 'saving' | 'saved' | 'error';
 let initialization: Promise<Snapshot> | null = null;
-let creationIdentity: { id: string; editKey: string } | null = null;
-
-function identity() {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  const editKey = Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('');
-  const idBytes = crypto.getRandomValues(new Uint8Array(16));
-  idBytes[6] = (idBytes[6] & 15) | 64;
-  idBytes[8] = (idBytes[8] & 63) | 128;
-  const hex = Array.from(idBytes, value => value.toString(16).padStart(2, '0')).join('');
-  return { id: hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' + hex.slice(12, 16) + '-' + hex.slice(16, 20) + '-' + hex.slice(20), editKey };
-}
 
 async function responseJson(response: Response) {
   let body: Record<string, unknown>;
@@ -39,22 +28,13 @@ function initialize(): Promise<Snapshot> {
   initialization = (async () => {
     const url = new URL(window.location.href);
     const id = url.searchParams.get('room');
-    const editKey = new URLSearchParams(url.hash.slice(1)).get('edit') ?? '';
-    let response: Response;
-    let key = editKey;
-    if (id) response = await request('/api/rooms/' + encodeURIComponent(id), { headers: key ? { Authorization: 'Bearer ' + key } : undefined });
-    else {
-      creationIdentity ??= identity();
-      key = creationIdentity.editKey;
-      response = await request('/api/rooms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...creationIdentity, room: createDefaultRoom() }) });
-    }
-    const data = await responseJson(response);
+    if (!id) throw new Error('Selecciona un diseño.');
+    const data = await responseJson(await request('/api/rooms/' + encodeURIComponent(id)));
     if (typeof data.id !== 'string' || !Number.isSafeInteger(data.revision)) throw new Error('El servidor devolvió un proyecto inválido.');
     const room = validateRoom(data.room);
     url.searchParams.set('room', data.id);
-    if (!id) { url.hash = 'edit=' + key; window.history.replaceState(null, '', url); }
     const share = new URL(url); share.hash = '';
-    return { id: data.id, room, revision: data.revision as number, canEdit: data.canEdit === true, hasSketch: data.hasSketch === true, sketchVersion: Number(data.sketchVersion) || 0, editKey: key, shareUrl: share.href };
+    return { id: data.id, room, revision: data.revision as number, canEdit: data.canEdit === true, hasSketch: data.hasSketch === true, sketchVersion: Number(data.sketchVersion) || 0, shared: data.shared === true, shareUrl: share.href };
   })().finally(() => { initialization = null; });
   return initialization;
 }
@@ -66,6 +46,7 @@ export default function useProject() {
   const [error, setError] = useState('');
   const [readOnly, setReadOnly] = useState(true);
   const [shareUrl, setShareUrl] = useState('');
+  const [shared, setShared] = useState(false);
   const [sketchUrl, setSketchUrl] = useState<string | null>(null);
   const session = useRef<Session | null>(null);
   const pending = useRef<Room | null>(null);
@@ -95,9 +76,10 @@ export default function useProject() {
     try {
       const snapshot = await initialize();
       if (!mounted.current || attempt !== initializationAttempt.current) return;
-      session.current = { id: snapshot.id, editKey: snapshot.editKey, revision: snapshot.revision, readOnly: !snapshot.canEdit };
+      session.current = { id: snapshot.id, revision: snapshot.revision, readOnly: !snapshot.canEdit };
       setRoomState(snapshot.room); setReadOnly(!snapshot.canEdit); setShareUrl(snapshot.shareUrl);
       setSketchUrl(sketchAddress(snapshot.id, snapshot.hasSketch, snapshot.sketchVersion));
+      setShared(snapshot.shared);
       lastError.current = ''; setStatus('saved'); setReady(true);
     } catch (cause) { if (mounted.current && attempt === initializationAttempt.current) failure(cause); }
   }, [failure]);
@@ -113,7 +95,7 @@ export default function useProject() {
         if (retrySnapshot.current) retrySnapshot.current = null;
         else pending.current = null;
         try {
-          const result = await responseJson(await request('/api/rooms/' + active.id, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + active.editKey }, body: JSON.stringify({ room: submitted, revision: active.revision }) }));
+          const result = await responseJson(await request('/api/rooms/' + active.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ room: submitted, revision: active.revision }) }));
           if (!Number.isSafeInteger(result.revision)) throw new Error('No se pudo confirmar el guardado.');
           active.revision = result.revision as number;
         } catch (cause) { retrySnapshot.current = submitted; failure(cause); return; }
@@ -130,7 +112,7 @@ export default function useProject() {
         const file = pendingSketch.current;
         pendingSketch.current = undefined;
         try {
-          const result = await responseJson(await request('/api/rooms/' + active.id + '/sketch', { method: file ? 'PUT' : 'DELETE', headers: { Authorization: 'Bearer ' + active.editKey, ...(file ? { 'Content-Type': file.type } : {}) }, body: file ?? undefined }));
+          const result = await responseJson(await request('/api/rooms/' + active.id + '/sketch', { method: file ? 'PUT' : 'DELETE', headers: file ? { 'Content-Type': file.type } : undefined, body: file ?? undefined }));
           if (mounted.current) setSketchUrl(sketchAddress(active.id, result.hasSketch === true, Number(result.sketchVersion)));
         } catch (cause) { if (pendingSketch.current === undefined) pendingSketch.current = file; failure(cause); throw cause; }
       }
@@ -160,6 +142,14 @@ export default function useProject() {
     clearError(); void save(); void saveSketch().catch(() => {}); finishStatus();
   }, [clearError, finishStatus, load, save, saveSketch]);
 
+  const setSharing = useCallback(async (enabled: boolean) => {
+    const active = session.current;
+    if (!active || active.readOnly) throw new Error('No puedes cambiar los permisos de este diseño.');
+    const result = await responseJson(await request('/api/rooms/' + active.id + '/share', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled }) }));
+    if (typeof result.shared !== 'boolean') throw new Error('No se pudo confirmar el enlace.');
+    if (mounted.current) setShared(result.shared);
+  }, []);
+
   useEffect(() => {
     mounted.current = true;
     void load();
@@ -174,7 +164,7 @@ export default function useProject() {
       if (new Blob([body]).size > 60 * 1024) return;
       if (timer.current) { clearTimeout(timer.current); timer.current = null; }
       const submitted = pending.current; pending.current = null; saving.current = true;
-      void fetch('/api/rooms/' + active.id, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + active.editKey }, body, keepalive: true }).then(responseJson).then(result => { active.revision = result.revision as number; }).catch(cause => { retrySnapshot.current = submitted; failure(cause); }).finally(() => { saving.current = false; finishStatus(); if (pending.current && !lastError.current) void save(); });
+      void fetch('/api/rooms/' + active.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body, keepalive: true }).then(responseJson).then(result => { active.revision = result.revision as number; }).catch(cause => { retrySnapshot.current = submitted; failure(cause); }).finally(() => { saving.current = false; finishStatus(); if (pending.current && !lastError.current) void save(); });
     };
     const warnUnsaved = (event: BeforeUnloadEvent) => {
       if (saving.current || pending.current || retrySnapshot.current || sketchSaving.current || pendingSketch.current !== undefined) { event.preventDefault(); event.returnValue = ''; }
@@ -184,5 +174,5 @@ export default function useProject() {
     return () => { window.removeEventListener('pagehide', flush); window.removeEventListener('beforeunload', warnUnsaved); };
   }, [failure, finishStatus, save]);
 
-  return { room, setRoom, ready, status, error, readOnly, shareUrl, uploadSketch, sketchUrl, retry };
+  return { room, setRoom, ready, status, error, readOnly, shareUrl, shared, setSharing, uploadSketch, sketchUrl, retry };
 }
