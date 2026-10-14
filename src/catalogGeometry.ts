@@ -246,6 +246,8 @@ export function buildCatalogGeometry(group: THREE.Group, item: CatalogItem, mate
     else if (part.material === 'light') material = light ??= new THREE.MeshStandardNodeMaterial({ color: '#fff4d9', emissive: '#ffe5bd', emissiveIntensity: 0.65, roughness: 0.3 });
     else material = materials[part.material];
     const mesh = new THREE.Mesh(geometry, material);
+    const narrowAxis = size.indexOf(Math.min(...size));
+    mesh.name = part.material === 'mirror' ? 'Espejo' : part.material === 'light' ? 'Foco' : part.material === 'handles' ? part.kind === 'cylinder' ? 'Barra' : 'Jaladera' : part.kind === 'ellipse' ? 'Marco' : part.kind === 'cylinder' ? 'Pata' : narrowAxis === 1 ? 'Tabla' : narrowAxis === 0 ? 'Lateral' : part.material === 'face' ? 'Frente' : 'Panel';
     mesh.position.set(part.at[0] * item.width, part.at[1] * item.height, part.at[2] * item.depth);
     mesh.castShadow = part.material !== 'mirror' && part.material !== 'light';
     mesh.receiveShadow = true;

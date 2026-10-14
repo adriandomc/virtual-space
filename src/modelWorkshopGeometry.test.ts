@@ -4,7 +4,29 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshStandardNodeMaterial } from 'three/webgpu';
 import { validateGlb } from './modelAssets';
-import { addModelFace, addModelVertex, cloneWorkshopModel, deleteModelFace, deleteModelVertex, disposeWorkshopModel, exportWorkshopGLB, getEditableVertices, getModelFaces, moveModelVertex, setWorkshopMaterial } from './modelWorkshopGeometry';
+import { addModelFace, addModelVertex, clampWorkshopScale, cloneWorkshopModel, deleteModelFace, deleteModelVertex, disposeWorkshopModel, exportWorkshopGLB, fitWorkshopCamera, getEditableVertices, getModelFaces, moveModelVertex, setWorkshopMaterial } from './modelWorkshopGeometry';
+
+test('framing retains the full model and a visible margin on portrait, square and landscape screens', () => {
+  const camera = new THREE.PerspectiveCamera(43), bounds = new THREE.Box3(new THREE.Vector3(-.6, 0, -.3), new THREE.Vector3(.6, 2, .3));
+  for (const aspect of [.45, 1, 2.5]) {
+    fitWorkshopCamera(camera, bounds, aspect);
+    for (const x of [bounds.min.x, bounds.max.x]) for (const y of [bounds.min.y, bounds.max.y]) for (const z of [bounds.min.z, bounds.max.z]) {
+      const point = new THREE.Vector3(x, y, z).project(camera);
+      assert.ok(Math.abs(point.x) < .95 && Math.abs(point.y) < .95 && point.z > -1 && point.z < 1);
+    }
+  }
+});
+
+test('workshop transforms retain reflected imported pieces while bounding scale magnitudes', () => {
+  const scale = new THREE.Vector3(-1, -0.00001, 3000);
+  clampWorkshopScale(scale);
+  assert.deepEqual(scale.toArray(), [-1, -.001, 1000]);
+  const original = new THREE.Mesh(new THREE.BoxGeometry(1, 2, 3), new THREE.MeshStandardMaterial());
+  original.scale.copy(scale); const before = new THREE.Box3().setFromObject(original).getSize(new THREE.Vector3());
+  original.position.set(2, 3, 4); clampWorkshopScale(original.scale);
+  assert.ok(new THREE.Box3().setFromObject(original).getSize(new THREE.Vector3()).distanceTo(before) < 1e-9);
+  disposeWorkshopModel(new THREE.Group().add(original));
+});
 
 test('moving a welded vertex moves all texture seams and recomputes finite normals', () => {
   const geometry = new THREE.BoxGeometry(1, 1, 1), vertices = getEditableVertices(geometry);
@@ -99,4 +121,24 @@ test('flattening an imported hierarchy preserves geometry under parent shear', (
   const expected = new THREE.Box3().setFromObject(source), copy = cloneWorkshopModel(source), actual = new THREE.Box3().setFromObject(copy);
   assert.ok(actual.min.distanceTo(expected.min) < .000001 && actual.max.distanceTo(expected.max) < .000001);
   disposeWorkshopModel(source); disposeWorkshopModel(copy);
+});
+
+test('saving loose vertices keeps them editable locally without distorting saved model dimensions', async () => {
+  const previous = globalThis.FileReader;
+  class Reader {
+    result: ArrayBuffer | null = null; onloadend?: () => void;
+    readAsArrayBuffer(blob: Blob) { void blob.arrayBuffer().then(bytes => { this.result = bytes; this.onloadend?.(); }); }
+  }
+  globalThis.FileReader = Reader as unknown as typeof FileReader;
+  const geometry = new THREE.BoxGeometry(.5, .5, .5), mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial()), group = new THREE.Group().add(mesh);
+  addModelVertex(geometry, [9, 0, 0]);
+  try {
+    const output = await exportWorkshopGLB(group), metadata = validateGlb(Buffer.from(output));
+    assert.equal(metadata.width, .5); assert.equal(metadata.height, .5); assert.equal(metadata.depth, .5); assert.equal(metadata.triangles, 12);
+    const loaded = await new GLTFLoader().parseAsync(output, ''), restored = loaded.scene.getObjectByProperty('isMesh', true) as THREE.Mesh;
+    assert.equal(getEditableVertices(restored.geometry).length, 8);
+    assert.equal(getEditableVertices(geometry).length, 9);
+    assert.equal(geometry.getAttribute('uv').count, geometry.getAttribute('position').count);
+    disposeWorkshopModel(loaded.scene);
+  } finally { globalThis.FileReader = previous; disposeWorkshopModel(group); }
 });

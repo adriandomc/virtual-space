@@ -6,6 +6,20 @@ export type EditableVertex = { id: number; position: [number, number, number]; i
 const EPSILON = 0.000001;
 const finitePoint = (point: number[]) => point.length === 3 && point.every(value => Number.isFinite(value) && Math.abs(value) <= 10000);
 
+export function clampWorkshopScale(scale: THREE.Vector3) {
+  for (const axis of ['x', 'y', 'z'] as const) scale[axis] = (Math.sign(scale[axis]) || 1) * THREE.MathUtils.clamp(Math.abs(scale[axis]), .001, 1000);
+}
+
+export function fitWorkshopCamera(camera: THREE.PerspectiveCamera, bounds: THREE.Box3, aspect: number) {
+  const size = bounds.getSize(new THREE.Vector3()), center = bounds.getCenter(new THREE.Vector3()), span = Math.max(.01, ...size.toArray());
+  const vertical = THREE.MathUtils.degToRad(camera.fov), horizontal = 2 * Math.atan(Math.tan(vertical / 2) * aspect);
+  const distance = Math.max(.005, size.length() / 2) / Math.sin(Math.min(vertical, horizontal) / 2) * 1.15;
+  camera.aspect = aspect; camera.near = Math.max(.0001, span / 1000); camera.far = Math.max(100, span * 100);
+  camera.position.copy(center).add(new THREE.Vector3(1.1, .8, 1.2).normalize().multiplyScalar(distance));
+  camera.lookAt(center); camera.updateProjectionMatrix(); camera.updateMatrixWorld();
+  return center;
+}
+
 export function getEditableVertices(geometry: THREE.BufferGeometry): EditableVertex[] {
   const position = geometry.getAttribute('position');
   const vertices: EditableVertex[] = [], groups = new Map<string, EditableVertex>();
@@ -144,11 +158,54 @@ export function setWorkshopColor(mesh: THREE.Mesh, color: string) {
 
 export function cloneWorkshopModel(source: THREE.Group): THREE.Group {
   const result = new THREE.Group();
+  const consumed = new Set<THREE.Object3D>();
+  const mergePrimitives = (primitives: THREE.Mesh[]) => {
+    const geometry = new THREE.BufferGeometry(), materials: THREE.Material[] = [], copies: THREE.BufferGeometry[] = [];
+    try {
+      for (const primitive of primitives) {
+        const copy = primitive.geometry.clone(); copies.push(copy); compactVisibleGeometry(copy);
+        if (!copy.getAttribute('normal')) copy.computeVertexNormals();
+        copy.applyMatrix4(primitive.matrix);
+        if (primitive.matrix.determinant() < 0) {
+          const index = copy.index!;
+          for (let i = 0; i < index.count; i += 3) { const first = index.getX(i); index.setX(i, index.getX(i + 1)); index.setX(i + 1, first); }
+        }
+      }
+      const fields: [string, number][] = [['position', 3], ['normal', 3], ['uv', 2], ...(copies.some(copy => copy.getAttribute('uv1')) ? [['uv1', 2] as [string, number]] : []), ...(copies.some(copy => copy.getAttribute('color')) ? [['color', 4] as [string, number]] : [])];
+      const total = copies.reduce((sum, copy) => sum + copy.getAttribute('position').count, 0);
+      for (const [name, size] of fields) {
+        const values = new Float32Array(total * size); let offset = 0;
+        for (const copy of copies) {
+          const attribute = copy.getAttribute(name), count = copy.getAttribute('position').count;
+          for (let i = 0; i < count; i++) for (let j = 0; j < size; j++) values[(offset + i) * size + j] = attribute && j < attribute.itemSize ? attribute.getComponent(i, j) : name === 'color' ? 1 : 0;
+          offset += count;
+        }
+        geometry.setAttribute(name, new THREE.BufferAttribute(values, size));
+      }
+      const indices: number[] = []; let vertices = 0;
+      copies.forEach((copy, i) => {
+        const primitive = primitives[i], sources = Array.isArray(primitive.material) ? primitive.material : [primitive.material], start = indices.length, materialOffset = materials.length;
+        materials.push(...sources.map(standardModelMaterial));
+        for (let n = 0; n < copy.index!.count; n++) indices.push(copy.index!.getX(n) + vertices);
+        if (Array.isArray(primitive.material) && copy.groups.length) copy.groups.forEach(group => geometry.addGroup(start + group.start, group.count, materialOffset + (group.materialIndex ?? 0)));
+        else geometry.addGroup(start, copy.index!.count, materialOffset);
+        vertices += copy.getAttribute('position').count;
+      });
+      geometry.setIndex(indices); geometry.computeBoundingBox(); geometry.computeBoundingSphere();
+      return { geometry, materials };
+    } catch (error) { geometry.dispose(); materials.forEach(material => material.dispose()); throw error; }
+    finally { copies.forEach(copy => copy.dispose()); }
+  };
   source.updateWorldMatrix(true, true);
   source.traverseVisible(object => {
-    if (!(object instanceof THREE.Mesh) || !object.visible || !object.geometry.getAttribute('position')) return;
-    const materials = (Array.isArray(object.material) ? object.material : [object.material]).map(standardModelMaterial);
-    const mesh = new THREE.Mesh<THREE.BufferGeometry, THREE.Material | THREE.Material[]>(object.geometry.clone(), materials.length === 1 ? materials[0] : materials);
+    if (consumed.has(object)) return;
+    const primitives = object.userData.logicalModelMesh ? object.children.filter((child): child is THREE.Mesh => child instanceof THREE.Mesh && child.visible && child.userData.logicalModelPrimitive === true && !!child.geometry.getAttribute('position')) : [];
+    if (!(object instanceof THREE.Mesh) && !primitives.length) return;
+    if (object instanceof THREE.Mesh && !object.geometry.getAttribute('position')) return;
+    const cloned = primitives.length ? mergePrimitives(primitives) : { geometry: (object as THREE.Mesh).geometry.clone(), materials: (Array.isArray((object as THREE.Mesh).material) ? (object as THREE.Mesh).material as THREE.Material[] : [(object as THREE.Mesh).material as THREE.Material]).map(standardModelMaterial) };
+    primitives.forEach(primitive => consumed.add(primitive));
+    const { geometry, materials } = cloned;
+    const mesh = new THREE.Mesh<THREE.BufferGeometry, THREE.Material | THREE.Material[]>(geometry, materials.length === 1 ? materials[0] : materials);
     object.matrixWorld.decompose(mesh.position, mesh.quaternion, mesh.scale);
     const reconstructed = new THREE.Matrix4().compose(mesh.position, mesh.quaternion, mesh.scale);
     if (object.matrixWorld.elements.some((value, index) => Math.abs(value - reconstructed.elements[index]) > .00001)) {
@@ -169,6 +226,24 @@ export function disposeWorkshopModel(group: THREE.Object3D) {
   geometries.forEach(geometry => geometry.dispose()); materials.forEach(material => material.dispose()); group.clear();
 }
 
+function compactVisibleGeometry(geometry: THREE.BufferGeometry) {
+  const positions = geometry.getAttribute('position'), start = geometry.drawRange.start, end = Math.min(geometry.index?.count ?? positions.count, start + geometry.drawRange.count);
+  const used: number[] = [], indices: number[] = [], lookup = new Map<number, number>();
+  for (let i = start; i < end; i++) {
+    const original = geometry.index?.getX(i) ?? i;
+    if (!lookup.has(original)) { lookup.set(original, used.length); used.push(original); }
+    indices.push(lookup.get(original)!);
+  }
+  for (const [name, attribute] of Object.entries(geometry.attributes)) {
+    const values = new Float32Array(used.length * attribute.itemSize);
+    used.forEach((original, target) => { for (let i = 0; i < attribute.itemSize; i++) values[target * attribute.itemSize + i] = attribute.getComponent(original, i); });
+    geometry.setAttribute(name, new THREE.BufferAttribute(values, attribute.itemSize));
+  }
+  const groups = geometry.groups.map(group => ({ start: Math.max(start, group.start) - start, count: Math.max(0, Math.min(end, group.start + group.count) - Math.max(start, group.start)), materialIndex: group.materialIndex }));
+  geometry.clearGroups(); groups.filter(group => group.count).forEach(group => geometry.addGroup(group.start, group.count, group.materialIndex));
+  geometry.setIndex(indices); geometry.setDrawRange(0, indices.length); geometry.computeBoundingBox(); geometry.computeBoundingSphere();
+}
+
 export async function exportWorkshopGLB(group: THREE.Group): Promise<ArrayBuffer> {
   if (!group.children.length) throw new Error('Agrega al menos una pieza.');
   const copy = cloneWorkshopModel(group);
@@ -181,7 +256,9 @@ export async function exportWorkshopGLB(group: THREE.Group): Promise<ArrayBuffer
     copy.traverse(object => {
       object.userData = {};
       if (!(object instanceof THREE.Mesh)) return;
-      const geometry = object.geometry, positions = geometry.getAttribute('position');
+      const geometry = object.geometry;
+      compactVisibleGeometry(geometry);
+      const positions = geometry.getAttribute('position');
       triangles += (geometry.index?.count ?? positions.count) / 3;
       for (let i = 0; i < positions.count; i++) if (!finitePoint([positions.getX(i), positions.getY(i), positions.getZ(i)])) throw new Error('El modelo contiene coordenadas no válidas.');
       if (![...object.position.toArray(), ...object.scale.toArray(), ...object.quaternion.toArray()].every(Number.isFinite) || object.scale.toArray().some(value => value === 0)) throw new Error('Revisa el tamaño y la posición de las piezas.');

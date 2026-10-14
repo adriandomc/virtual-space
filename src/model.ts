@@ -223,6 +223,7 @@ function readFurniture(value: unknown, height: number, index = 0): FurnitureItem
   const p = record(value, `Mueble ${index + 1}`);
   if (typeof p.type !== 'string' || !Object.hasOwn(FURNITURE_LABELS, p.type)) throw new Error('El mueble debe ser cama, ropero, tocador o buró.');
   const type = p.type as FurnitureItem['type'];
+  const minSize = type === 'custom' ? 0.01 : 0.1;
   let bedSize: BedSize | undefined;
   if (type === 'bed') {
     const size = p.bedSize === undefined ? 'double' : p.bedSize;
@@ -259,7 +260,7 @@ function readFurniture(value: unknown, height: number, index = 0): FurnitureItem
     }
     asset = { assetId: p.assetId, name, ...(p.parts === undefined ? {} : { parts }) };
   } else if (p.assetId !== undefined || p.parts !== undefined || p.name !== undefined) throw new Error('El archivo y sus piezas sólo corresponden a modelos propios.');
-  return { id, type, ...asset, ...(p.variant === undefined ? {} : { variant: String(p.variant) }), ...(bedSize ? { bedSize } : {}), ...(material === undefined ? {} : { material }), ...(p.color === undefined ? {} : { color: color(p.color, `Color de mueble ${index + 1}`) }), x: number(p.x, -50, 50, `Mueble ${index + 1}, X`), z: number(p.z, -50, 50, `Mueble ${index + 1}, Z`), width: number(p.width, 0.1, 10, `Ancho de mueble ${index + 1}`), depth: number(p.depth, 0.1, 10, `Fondo de mueble ${index + 1}`), height: number(p.height, 0.1, height, `Altura de mueble ${index + 1}`), rotation: number(p.rotation, 0, 360, `Giro de mueble ${index + 1}`) };
+  return { id, type, ...asset, ...(p.variant === undefined ? {} : { variant: String(p.variant) }), ...(bedSize ? { bedSize } : {}), ...(material === undefined ? {} : { material }), ...(p.color === undefined ? {} : { color: color(p.color, `Color de mueble ${index + 1}`) }), x: number(p.x, -50, 50, `Mueble ${index + 1}, X`), z: number(p.z, -50, 50, `Mueble ${index + 1}, Z`), width: number(p.width, minSize, 10, `Ancho de mueble ${index + 1}`), depth: number(p.depth, minSize, 10, `Fondo de mueble ${index + 1}`), height: number(p.height, minSize, height, `Altura de mueble ${index + 1}`), rotation: number(p.rotation, 0, 360, `Giro de mueble ${index + 1}`) };
 }
 
 function placeFurniture(room: Room, rawItem: FurnitureItem, avoid: FurnitureItem[]): FurnitureItem {
@@ -444,8 +445,9 @@ export function addFurniture(room: Room, type: FurnitureItem['type'], bedSize: B
 }
 
 export function addCustomFurniture(room: Room, asset: { id: string; name: string; width: number; depth: number; height: number }): Room {
+  number(asset.width, 0.01, 10000, 'El ancho del modelo'); number(asset.depth, 0.01, 10000, 'El fondo del modelo'); number(asset.height, 0.01, 10000, 'La altura del modelo');
   const factor = Math.min(1, 10 / asset.width, 10 / asset.depth, room.height / asset.height);
-  const item = placeFurniture(room, { id: itemId(), type: 'custom', assetId: asset.id, name: asset.name, ...interiorPoint(room.vertices), width: Math.max(0.1, asset.width * factor), depth: Math.max(0.1, asset.depth * factor), height: Math.max(0.1, asset.height * factor), rotation: 0 }, room.furniture);
+  const item = placeFurniture(room, { id: itemId(), type: 'custom', assetId: asset.id, name: asset.name, ...interiorPoint(room.vertices), width: Math.max(0.01, asset.width * factor), depth: Math.max(0.01, asset.depth * factor), height: Math.max(0.01, asset.height * factor), rotation: 0 }, room.furniture);
   return validateRoom({ ...room, furniture: [...room.furniture, item] });
 }
 

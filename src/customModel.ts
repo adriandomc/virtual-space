@@ -60,6 +60,21 @@ function trimCache() {
 export function clearCustomModelCache() {
   for (const [key, entry] of cache) if (!entry.references) { cache.delete(key); if (entry.value) disposeTemplate(entry.value); }
 }
+
+/** Trust parser associations, never uploaded extras, for logical GLTF meshes. */
+export function prepareCustomModelTemplate(gltf: GLTF) {
+  gltf.scene.traverse(object => {
+    const association = gltf.parser.associations.get(object) as { nodes?: number; meshes?: number; primitives?: number } | undefined;
+    object.userData = {};
+    if (association?.nodes !== undefined) object.userData.modelNodeKey = String(association.nodes);
+    if (object instanceof THREE.Group && association?.meshes !== undefined && association.primitives === undefined) object.userData.logicalModelMesh = true;
+    if (object instanceof THREE.Mesh) {
+      if (association?.meshes !== undefined && association.primitives !== undefined && association.nodes === undefined) object.userData.logicalModelPrimitive = true;
+      object.geometry.userData = {};
+      for (const material of Array.isArray(object.material) ? object.material : [object.material]) material.userData = {};
+    }
+  });
+}
 function loadTemplate(key: string): Entry {
   const existing = cache.get(key);
   if (existing) { existing.references++; existing.touched = Date.now(); return existing; }
@@ -76,16 +91,7 @@ function loadTemplate(key: string): Entry {
     const manager = new THREE.LoadingManager();
     manager.setURLModifier(url => { if (!url.startsWith('blob:')) throw new Error('El modelo contiene enlaces externos.'); return url; });
     const gltf = await new GLTFLoader(manager).parseAsync(bytes, '');
-    gltf.scene.traverse(object => {
-      const association = gltf.parser.associations.get(object);
-      // Uploaded extras must not override editor selection or lifecycle hooks.
-      object.userData = {};
-      if (association?.nodes !== undefined) object.userData.modelNodeKey = String(association.nodes);
-      if (object instanceof THREE.Mesh) {
-        object.geometry.userData = {};
-        for (const material of Array.isArray(object.material) ? object.material : [object.material]) material.userData = {};
-      }
-    });
+    prepareCustomModelTemplate(gltf);
     const template = { scene: gltf.scene, bounds: new THREE.Box3().setFromObject(gltf.scene), gltf };
     entry.value = template;
     if (cache.get(key) !== entry) disposeTemplate(template);
