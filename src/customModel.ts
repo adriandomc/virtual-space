@@ -3,35 +3,38 @@ import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { createFurnitureMaterial } from './materials';
 import type { FurnitureItem, ModelPart, Room } from './types';
 import type { ModelAsset } from './modelAssets';
-import { accountRequest } from './accountApi';
+import { accountRequest, isNetworkError } from './accountApi';
+import { readWorkshopGroup } from './workshopGrouping';
+import { copyOfflineModel, forgetOfflineModel, listOfflineModels, loadModelBlob, readModelMetadata, reconcileOfflineModels, rememberModelMetadata, uploadOfflineModel } from './offlineAssets';
+import { onOfflinePurge } from './offlineStorage';
 
 export type { ModelAsset } from './modelAssets';
 export const modelAssetUrl = (id: string, roomId?: string) => `/api/models/${encodeURIComponent(id)}${roomId ? '?room=' + encodeURIComponent(roomId) : ''}`;
 export async function uploadModel(file: File, roomId: string): Promise<ModelAsset> {
-  if (!/\.glb$/i.test(file.name)) throw new Error('Selecciona un modelo GLB.');
-  if (file.size > 20 * 1024 * 1024) throw new Error('El modelo debe pesar como máximo 20 MB.');
-  const result = await accountRequest<{ model: ModelAsset }>('/api/models?room=' + encodeURIComponent(roomId), { method: 'POST', headers: { 'Content-Type': 'model/gltf-binary', 'X-Model-Name': encodeURIComponent(file.name) }, body: file });
-  return result.model;
+  return uploadOfflineModel(file, roomId);
 }
 export async function listModels(roomId?: string, scope: 'room' | 'mine' = 'room'): Promise<ModelAsset[]> {
-  return (await accountRequest<{ models: ModelAsset[] }>('/api/models' + (roomId ? '?room=' + encodeURIComponent(roomId) + (scope === 'mine' ? '&scope=mine' : '') : ''))).models;
+  try {
+    const models = (await accountRequest<{ models: ModelAsset[] }>('/api/models' + (roomId ? '?room=' + encodeURIComponent(roomId) + (scope === 'mine' ? '&scope=mine' : '') : ''))).models;
+    if (roomId) {
+      await reconcileOfflineModels(roomId, models, scope);
+      await rememberModelMetadata(roomId, models);
+      const cached = await listOfflineModels(roomId, scope, true);
+      return [...models, ...cached.filter(asset => !models.some(model => model.id === asset.id))];
+    }
+    return models;
+  } catch (error) {
+    if (isNetworkError(error) && roomId) return listOfflineModels(roomId, scope);
+    throw error;
+  }
 }
 export async function copyModel(asset: ModelAsset, roomId: string): Promise<ModelAsset> {
-  const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 15000);
-  try {
-    const response = await fetch(modelAssetUrl(asset.id), { credentials: 'same-origin', cache: 'no-store', signal: controller.signal });
-    if (!response.ok) throw new Error('Este modelo no está disponible para copiar.');
-    const data = await response.blob();
-    return await uploadModel(new File([data], asset.name + '.glb', { type: 'model/gltf-binary' }), roomId);
-  } catch (cause) {
-    if (cause instanceof TypeError || cause instanceof DOMException && cause.name === 'AbortError') throw new Error('No se pudo copiar el modelo. Inténtalo de nuevo.');
-    throw cause;
-  } finally { clearTimeout(timeout); }
+  return copyOfflineModel(asset, roomId);
 }
 export async function modelMetadata(id: string, roomId?: string): Promise<ModelAsset> {
-  return (await accountRequest<{ model: ModelAsset }>(modelAssetUrl(id, roomId) + (roomId ? '&' : '?') + 'metadata=1')).model;
+  return readModelMetadata(id, roomId);
 }
-export async function deleteModel(id: string): Promise<void> { await accountRequest(modelAssetUrl(id), { method: 'DELETE' }); }
+export async function deleteModel(id: string): Promise<void> { await accountRequest(modelAssetUrl(id), { method: 'DELETE' }); await forgetOfflineModel(id); clearCustomModelCache(); }
 
 type Template = { scene: THREE.Group; bounds: THREE.Box3; gltf: GLTF };
 type Entry = { promise: Promise<Template>; references: number; touched: number; value?: Template };
@@ -57,15 +60,25 @@ function trimCache() {
     if (entry.value) disposeTemplate(entry.value);
   }
 }
+function releaseTemplate(key: string, entry: Entry) {
+  entry.references--; entry.touched = Date.now();
+  if (cache.get(key) !== entry && !entry.references && entry.value) { disposeTemplate(entry.value); entry.value = undefined; }
+  trimCache();
+}
 export function clearCustomModelCache() {
   for (const [key, entry] of cache) if (!entry.references) { cache.delete(key); if (entry.value) disposeTemplate(entry.value); }
 }
+onOfflinePurge(() => {
+  for (const [key, entry] of cache) { cache.delete(key); if (!entry.references && entry.value) disposeTemplate(entry.value); }
+});
 
 /** Trust parser associations, never uploaded extras, for logical GLTF meshes. */
 export function prepareCustomModelTemplate(gltf: GLTF) {
   gltf.scene.traverse(object => {
     const association = gltf.parser.associations.get(object) as { nodes?: number; meshes?: number; primitives?: number } | undefined;
+    const group = readWorkshopGroup(object.userData.workshopGroup);
     object.userData = {};
+    if (group) object.userData.workshopGroup = group;
     if (association?.nodes !== undefined) object.userData.modelNodeKey = String(association.nodes);
     if (object instanceof THREE.Group && association?.meshes !== undefined && association.primitives === undefined) object.userData.logicalModelMesh = true;
     if (object instanceof THREE.Mesh) {
@@ -81,20 +94,15 @@ function loadTemplate(key: string): Entry {
   const entry: Entry = { references: 1, touched: Date.now(), promise: Promise.resolve(null as unknown as Template) };
   cache.set(key, entry);
   entry.promise = (async () => {
-    const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 15000);
-    let bytes: ArrayBuffer;
-    try {
-      const response = await fetch(key, { credentials: 'same-origin', cache: 'no-store', signal: controller.signal });
-      if (!response.ok) throw new Error('Este modelo no está disponible.');
-      bytes = await response.arrayBuffer();
-    } finally { clearTimeout(timeout); }
+    const parsed = new URL(key, 'https://3d-space.invalid');
+    const bytes = await (await loadModelBlob(decodeURIComponent(parsed.pathname.slice('/api/models/'.length)), parsed.searchParams.get('room') ?? undefined)).arrayBuffer();
     const manager = new THREE.LoadingManager();
     manager.setURLModifier(url => { if (!url.startsWith('blob:')) throw new Error('El modelo contiene enlaces externos.'); return url; });
     const gltf = await new GLTFLoader(manager).parseAsync(bytes, '');
     prepareCustomModelTemplate(gltf);
     const template = { scene: gltf.scene, bounds: new THREE.Box3().setFromObject(gltf.scene), gltf };
     entry.value = template;
-    if (cache.get(key) !== entry) disposeTemplate(template);
+    if (cache.get(key) !== entry && !entry.references) { disposeTemplate(template); entry.value = undefined; }
     else trimCache();
     return template;
   })().catch(error => { if (cache.get(key) === entry) cache.delete(key); throw error; });
@@ -163,7 +171,7 @@ function instantiate(template: Template, item: FurnitureItem, quality: Room['ren
 
 export async function loadEditableModel(item: FurnitureItem, roomId?: string): Promise<THREE.Group> {
   if (!item.assetId) throw new Error('Selecciona un modelo personalizado.');
-  const entry = loadTemplate(modelAssetUrl(item.assetId, roomId));
+  const key = modelAssetUrl(item.assetId, roomId), entry = loadTemplate(key);
   try {
     const template = await entry.promise;
     const model = instantiate(template, item, 'realistic');
@@ -172,10 +180,10 @@ export async function loadEditableModel(item: FurnitureItem, roomId?: string): P
       if (disposed) return;
       disposed = true;
       model.traverse(object => { if (object instanceof THREE.Mesh) { object.geometry.dispose(); (Array.isArray(object.material) ? object.material : [object.material]).forEach(material => material.dispose()); } });
-      entry.references--; entry.touched = Date.now(); trimCache();
+      releaseTemplate(key, entry);
     };
     return model;
-  } catch (error) { entry.references--; trimCache(); throw error; }
+  } catch (error) { releaseTemplate(key, entry); throw error; }
 }
 
 export function attachCustomModel(parent: THREE.Group, item: FurnitureItem, quality: Room['renderQuality'], {
@@ -192,7 +200,7 @@ export function attachCustomModel(parent: THREE.Group, item: FurnitureItem, qual
       instance.traverse(object => { if (object instanceof THREE.Mesh) { object.geometry.dispose(); (Array.isArray(object.material) ? object.material : [object.material]).forEach(material => material.dispose()); } });
       instance.removeFromParent(); instance = null;
     }
-    entry.references--; entry.touched = Date.now(); trimCache();
+    releaseTemplate(key, entry);
   };
   parent.userData.disposeCustomModel = cleanup;
   void entry.promise.then(template => {

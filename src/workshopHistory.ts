@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 
-export type WorkshopSnapshot = { content: THREE.Group; selected: string | null; name: string; bytes: number };
+export type WorkshopSnapshot = { content: THREE.Group; selected: string | null; selectedIds: string[]; name: string; bytes: number };
 const MAX_STEPS = 20, MAX_BYTES = 64 * 1024 * 1024;
 
-export function captureWorkshopSnapshot(content: THREE.Group, selected: string | null, name: string): WorkshopSnapshot {
+export function captureWorkshopSnapshot(content: THREE.Group, selected: string | null, name: string, selectedIds = selected ? [selected] : []): WorkshopSnapshot {
   const copy = content.clone(true), geometries = new Map<THREE.BufferGeometry, THREE.BufferGeometry>(), materials = new Map<THREE.Material, THREE.Material>(), buffers = new Set<ArrayBufferLike>();
   const material = (source: THREE.Material) => {
     if (!materials.has(source)) materials.set(source, source.clone());
@@ -24,7 +24,7 @@ export function captureWorkshopSnapshot(content: THREE.Group, selected: string |
     const array = attribute instanceof THREE.InterleavedBufferAttribute ? attribute.data.array : attribute.array;
     if (!buffers.has(array.buffer)) { buffers.add(array.buffer); bytes += array.buffer.byteLength; }
   }
-  return { content: copy, selected, name, bytes };
+  return { content: copy, selected, selectedIds: [...selectedIds], name, bytes };
 }
 
 /** Geometry and materials are owned here; authored textures remain owned by the model loader. */

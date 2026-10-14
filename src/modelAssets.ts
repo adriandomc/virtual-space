@@ -256,17 +256,26 @@ export function createModelAssets(database: DatabaseSync, { now = Date.now, canV
     return row;
   };
   return {
-    upload(ownerId: string, data: Buffer, name: string, roomId: string): ModelAsset {
+    upload(ownerId: string, data: Buffer, name: string, roomId: string, requestedId?: string): ModelAsset {
       const room = UUID.test(roomId) ? database.prepare('SELECT owner_id FROM rooms WHERE id = ?').get(roomId) as { owner_id: string } | undefined : undefined;
       if (!room || room.owner_id !== ownerId) throw new HttpError(404, 'Este proyecto no existe.');
       const metadata = validateGlb(data);
       const cleanName = typeof name === 'string' ? name.trim().replace(/[\x00-\x1f\x7f]/g, '').replace(/\.glb$/i, '').slice(0, 80) : '';
       if (!cleanName) throw new HttpError(400, 'Escribe un nombre para el modelo.');
+      if (requestedId !== undefined && !UUID.test(requestedId)) throw new HttpError(400, 'La identidad del modelo no es válida.');
       database.exec('BEGIN IMMEDIATE');
       try {
+        if (requestedId) {
+          const existing = find.get(requestedId) as AssetRow | undefined;
+          if (existing) {
+            const stored = database.prepare('SELECT data FROM model_assets WHERE id = ?').get(requestedId) as { data: Uint8Array };
+            if (existing.owner_id !== ownerId || existing.room_id !== roomId || existing.name !== cleanName || !Buffer.from(stored.data).equals(data)) throw new HttpError(409, 'La identidad del modelo ya está en uso.');
+            database.exec('COMMIT'); return describe(existing);
+          }
+        }
         const used = database.prepare('SELECT COALESCE(SUM(size), 0) AS total, COUNT(*) AS count FROM model_assets WHERE owner_id = ?').get(ownerId) as { total: number; count: number };
         if (used.total + data.length > MODEL_ACCOUNT_BYTES || used.count >= 100) throw new HttpError(413, 'Tu biblioteca admite hasta 100 MB y 100 modelos.');
-        const id = randomUUID(), createdAt = now();
+        const id = requestedId ?? randomUUID(), createdAt = now();
         database.prepare('INSERT INTO model_assets (id, owner_id, room_id, name, size, created_at, metadata, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(id, ownerId, roomId, cleanName, data.length, createdAt, JSON.stringify(metadata), data);
         database.exec('COMMIT');
         return { id, roomId, name: cleanName, size: data.length, createdAt: new Date(createdAt).toISOString(), ...metadata };

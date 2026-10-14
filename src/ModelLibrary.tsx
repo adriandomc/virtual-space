@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { ArrowLeft, Box, Download, LoaderCircle, Plus, RefreshCw, Trash2, Upload } from 'lucide-react';
-import { copyModel, deleteModel, listModels, modelAssetUrl, uploadModel, type ModelAsset } from './customModel';
+import { copyModel, deleteModel, listModels, uploadModel, type ModelAsset } from './customModel';
+import { loadLibraryModelBlob } from './offlineAssets';
 import './modelLibrary.css';
 
 type Props = { roomId: string; canManage?: boolean; disabled?: boolean; onSelect: (asset: ModelAsset) => void; onCreate: () => void; onBack?: () => void };
@@ -52,6 +53,18 @@ export default function ModelLibrary(props: Props) {
     catch (cause) { if (active.current) setError(cause instanceof Error ? cause.message : 'No se pudo eliminar el modelo.'); }
     finally { if (active.current) setBusy(false); }
   };
+  const download = async (asset: ModelAsset) => {
+    if (busy) return;
+    setBusy(true); setError('');
+    try {
+      const blob = await loadLibraryModelBlob(asset, roomId);
+      if (!active.current || latest.current.roomId !== roomId) return;
+      const url = URL.createObjectURL(blob), anchor = document.createElement('a');
+      anchor.href = url; anchor.download = asset.name + '.glb'; anchor.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (cause) { if (active.current) setError(cause instanceof Error ? cause.message : 'No se pudo descargar el modelo.'); }
+    finally { if (active.current) setBusy(false); }
+  };
   return <section className="model-library" aria-label="Mis modelos">
     <div className="model-library-heading">{onBack && <button type="button" onClick={onBack} aria-label="Volver" className="model-library-icon"><ArrowLeft size={20} /></button>}<h3>Modelos</h3><button type="button" onClick={() => void refresh()} disabled={busy || loading} aria-label="Actualizar modelos" className="model-library-icon"><RefreshCw size={18} /></button></div>
     <div className="model-library-tabs" aria-label="Biblioteca de modelos"><button type="button" aria-pressed={scope === 'room'} disabled={busy} onClick={() => setScope('room')}>Este diseño</button><button type="button" aria-pressed={scope === 'mine'} disabled={busy} onClick={() => setScope('mine')}>Mis modelos</button></div>
@@ -61,6 +74,6 @@ export default function ModelLibrary(props: Props) {
     {error && <p className="model-library-error" role="alert">{error}<button type="button" onClick={() => void refresh()} disabled={busy || loading}>Reintentar</button></p>}
     {loading && <p className="model-library-loading" role="status"><LoaderCircle size={20} />Cargando…</p>}
     {!loading && !error && !models.length && <p className="model-library-empty">Aún no hay modelos.</p>}
-    <ul className="model-library-list">{models.map(asset => <li key={asset.id} className="model-library-card"><button type="button" className="model-library-select" onClick={() => void select(asset)} disabled={disabled || busy} aria-label={`Añadir ${asset.name}`}><span className="model-library-preview"><Box size={28} strokeWidth={1.4} /></span><span>{asset.name}</span><Plus size={18} /></button><div className="model-library-card-actions"><a href={modelAssetUrl(asset.id, asset.roomId ?? roomId)} download={asset.name + '.glb'} aria-label={`Descargar ${asset.name}`} className="model-library-icon"><Download size={18} /></a>{canManage && <button type="button" onClick={() => void remove(asset)} disabled={disabled || busy} aria-label={`Eliminar ${asset.name}`} className="model-library-icon"><Trash2 size={18} /></button>}</div></li>)}</ul>
+    <ul className="model-library-list">{models.map(asset => <li key={asset.id} className="model-library-card"><button type="button" className="model-library-select" onClick={() => void select(asset)} disabled={disabled || busy} aria-label={`Añadir ${asset.name}`}><span className="model-library-preview"><Box size={28} strokeWidth={1.4} /></span><span>{asset.name}</span><Plus size={18} /></button><div className="model-library-card-actions"><button type="button" onClick={() => void download(asset)} disabled={busy} aria-label={`Descargar ${asset.name}`} className="model-library-icon"><Download size={18} /></button>{canManage && <button type="button" onClick={() => void remove(asset)} disabled={disabled || busy} aria-label={`Eliminar ${asset.name}`} className="model-library-icon"><Trash2 size={18} /></button>}</div></li>)}</ul>
   </section>;
 }

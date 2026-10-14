@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { WebGLRenderer } from 'three/src/renderers/WebGLRenderer.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { Copy, Focus, LoaderCircle, Magnet, Move, PanelRight, Plus, Redo2, RotateCw, Scaling, Trash2, Undo2, X } from 'lucide-react';
+import { Copy, Focus, Group, LoaderCircle, Magnet, Move, PanelRight, Pencil, Plus, Redo2, RotateCw, Scaling, Trash2, Undo2, Ungroup, X } from 'lucide-react';
 import FurnitureCatalog from './FurnitureCatalog.tsx';
 import type { FurniturePreset } from './furnitureCatalog';
 import { createFurnitureModel } from './RoomScene';
@@ -18,13 +18,14 @@ import { captureWorkshopSnapshot, WorkshopHistory, type WorkshopSnapshot } from 
 import { startWorkshopBoolean } from './workshopBooleanClient';
 import type { WorkshopBooleanOperation } from './workshopBoolean';
 import { alignWorkshopPiece, snapWorkshopPiece, type WorkshopAxis, type WorkshopAlignment } from './workshopAlignment';
+import { applySelectionTransform, captureSelectionTransform, createSelectionProxy, duplicateWorkshopPieces, groupWorkshopPieces, ungroupWorkshopPieces, workshopGroup, workshopSelectionUnit, type WorkshopSelectionTransform } from './workshopGrouping';
 import './modelWorkshop.css';
 
 type Props = { item?: FurnitureItem; roomId: string; onSaved: (asset: ModelAsset) => boolean | void; onClose: () => void };
 type Panel = 'add' | 'model' | 'pieces' | 'alignment' | 'geometry';
 type Tool = 'translate' | 'rotate' | 'scale';
 type GeometryTool = 'vertices' | 'faces';
-type Runtime = { scene: THREE.Scene; camera: THREE.PerspectiveCamera; renderer: WebGLRenderer; controls: OrbitControls; transform: TransformControls; content: THREE.Group; proxy: THREE.Object3D; outline: THREE.BoxHelper | null; toolOutline: THREE.BoxHelper | null; snapGuide: THREE.LineSegments | null; points: THREE.Points | null; face: THREE.Mesh | null; dragged: boolean; vertexIndices: number[]; vertexMesh: THREE.Mesh | null; vertexId: number; pendingNormals: boolean };
+type Runtime = { scene: THREE.Scene; camera: THREE.PerspectiveCamera; renderer: WebGLRenderer; controls: OrbitControls; transform: TransformControls; content: THREE.Group; proxy: THREE.Object3D; selectionProxy: THREE.Mesh | null; selectionTransform: WorkshopSelectionTransform | null; selectionOutlines: THREE.BoxHelper[]; outline: THREE.BoxHelper | null; toolOutline: THREE.BoxHelper | null; snapGuide: THREE.LineSegments | null; points: THREE.Points | null; face: THREE.Mesh | null; dragged: boolean; vertexIndices: number[]; vertexMesh: THREE.Mesh | null; vertexId: number; pendingNormals: boolean };
 const AXES = ['x', 'y', 'z'] as const;
 const numberFormat = (value: number) => Number(value.toFixed(4)).toString();
 const firstMaterial = (mesh: THREE.Mesh) => (Array.isArray(mesh.material) ? mesh.material[0] : mesh.material) as THREE.MeshStandardMaterial;
@@ -68,6 +69,13 @@ function removeHelper(runtime: Runtime, key: 'points' | 'face' | 'outline' | 'to
   runtime[key] = null;
 }
 
+function clearSelectionHelpers(active: Runtime) {
+  for (const outline of active.selectionOutlines) { outline.removeFromParent(); outline.geometry.dispose(); (outline.material as THREE.Material).dispose(); }
+  active.selectionOutlines = [];
+  if (active.selectionProxy) { active.selectionProxy.removeFromParent(); active.selectionProxy.geometry.dispose(); (active.selectionProxy.material as THREE.Material).dispose(); }
+  active.selectionProxy = null; active.selectionTransform = null;
+}
+
 function showSnapGuide(active: Runtime, piece: THREE.Mesh, matches: ReturnType<typeof snapWorkshopPiece>) {
   removeHelper(active, 'snapGuide');
   const points: number[] = [];
@@ -87,6 +95,7 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
   const dialog = useRef<HTMLDialogElement>(null), mount = useRef<HTMLDivElement>(null), panelContent = useRef<HTMLDivElement>(null), runtime = useRef<Runtime | null>(null);
   const [ready, setReady] = useState(false), [error, setError] = useState(''), [saving, setSaving] = useState(false), [revision, setRevision] = useState(0);
   const [selected, setSelected] = useState<string | null>(null), [panel, setPanel] = useState<Panel>(item ? 'model' : 'add'), [tool, setTool] = useState<Tool>('translate'), [geometryTool, setGeometryTool] = useState<GeometryTool>('vertices');
+  const [selectedIds, setSelectedIds] = useState<string[]>([]), [multiSelect, setMultiSelect] = useState(false);
   const [palette, setPalette] = useState<'primitives' | 'prefabs' | 'furniture'>('prefabs'), [second, setSecond] = useState(''), [operation, setOperation] = useState<WorkshopBooleanOperation>('union');
   const [computing, setComputing] = useState(false), [previewing, setPreviewing] = useState(false);
   const history = useRef(new WorkshopHistory()), dragSnapshot = useRef<WorkshopSnapshot | null>(null);
@@ -98,17 +107,33 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
   const [panelOpen, setPanelOpen] = useState(true);
   const [snapEnabled, setSnapEnabled] = useState(true), [snapGrid, setSnapGrid] = useState(true), [snapPieces, setSnapPieces] = useState(true), [gridStep, setGridStep] = useState(.05), [angleStep, setAngleStep] = useState(15);
   const [alignmentReference, setAlignmentReference] = useState(''), [alignmentAxis, setAlignmentAxis] = useState<WorkshopAxis>('x');
-  const latest = useRef({ selected, panel, tool, geometryTool, vertexId, faceId, saving, computing, previewing, name, snapEnabled, snapGrid, snapPieces, gridStep });
-  latest.current = { selected, panel, tool, geometryTool, vertexId, faceId, saving, computing, previewing, name, snapEnabled, snapGrid, snapPieces, gridStep };
+  const latest = useRef({ selected, selectedIds, multiSelect, panel, tool, geometryTool, vertexId, faceId, saving, computing, previewing, name, snapEnabled, snapGrid, snapPieces, gridStep });
+  latest.current = { selected, selectedIds, multiSelect, panel, tool, geometryTool, vertexId, faceId, saving, computing, previewing, name, snapEnabled, snapGrid, snapPieces, gridStep };
   const change = () => { setRevision(value => value + 1); setError(''); };
   const pieces = (runtime.current?.content.children ?? []).filter((object): object is THREE.Mesh => object instanceof THREE.Mesh);
   const mesh = pieces.find(piece => piece.uuid === selected);
+  const selection = pieces.filter(piece => selectedIds.includes(piece.uuid));
+  const isMultiple = selection.length > 1;
+  const commonGroup = isMultiple && mesh && workshopGroup(mesh) && selection.every(piece => workshopGroup(piece)?.id === workshopGroup(mesh)?.id) ? workshopGroup(mesh) : null;
   const vertices = mesh && panel === 'geometry' ? getEditableVertices(mesh.geometry) : [];
   const faces = mesh && panel === 'geometry' && geometryTool === 'faces' ? getModelFaces(mesh.geometry) : [];
   const vertex = vertices[Math.min(vertexId, Math.max(0, vertices.length - 1))];
-  const reference = pieces.find(piece => piece.uuid === alignmentReference && piece !== mesh);
+  const reference = pieces.find(piece => piece.uuid === alignmentReference && !selectedIds.includes(piece.uuid));
 
-  function selectPiece(piece: THREE.Mesh | null) { if (piece && latest.current.selected && piece.uuid !== latest.current.selected) setAlignmentReference(latest.current.selected); setSelected(piece?.uuid ?? null); setSecond(value => value === piece?.uuid ? '' : value); setVertexId(0); setFaceId(0); setFaceVertices([0, 1, 2]); }
+  function selectIds(ids: string[], primary = ids[0] ?? null) {
+    setSelectedIds(ids); setSelected(primary); setSecond(value => ids.includes(value) ? '' : value);
+    setVertexId(0); setFaceId(0); setFaceVertices([0, 1, 2]);
+  }
+  function selectPiece(piece: THREE.Mesh | null, options: { toggle?: boolean; individual?: boolean } = {}) {
+    const all = (runtime.current?.content.children ?? []).filter((object): object is THREE.Mesh => object instanceof THREE.Mesh);
+    if (piece && latest.current.selected && piece.uuid !== latest.current.selected) setAlignmentReference(latest.current.selected);
+    const unit = piece ? options.individual ? [piece] : workshopSelectionUnit(piece, all) : [];
+    if (options.toggle) {
+      const unitIds = unit.map(value => value.uuid), current = latest.current.selectedIds;
+      const ids = unitIds.some(id => current.includes(id)) ? current.filter(id => !unitIds.includes(id)) : [...new Set([...current, ...unitIds])];
+      selectIds(ids, piece && ids.includes(piece.uuid) ? piece.uuid : ids[0]);
+    } else selectIds(unit.map(value => value.uuid), piece?.uuid);
+  }
   function discardPreview() {
     booleanSequence.current++;
     booleanJob.current?.cancel(); booleanJob.current = null;
@@ -120,15 +145,16 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
     const active = runtime.current;
     if (!active) { disposeWorkshopModel(snapshot.content); return; }
     active.transform.detach();
+    clearSelectionHelpers(active);
     for (const key of ['points', 'face', 'outline', 'toolOutline', 'snapGuide'] as const) removeHelper(active, key);
     disposeWorkshopModel(active.content);
     while (snapshot.content.children.length) active.content.add(snapshot.content.children[0]);
-    setName(snapshot.name); setSelected(snapshot.selected); setSecond(''); setVertexId(0); setFaceId(0); change();
+    setName(snapshot.name); setSelected(snapshot.selected); setSelectedIds(snapshot.selectedIds); setSecond(''); setVertexId(0); setFaceId(0); change();
   }
   function run(action: () => void | boolean, key?: string) {
     const active = runtime.current;
     if (!active || active.transform.dragging || latest.current.saving || latest.current.computing || latest.current.previewing) return;
-    const before = captureWorkshopSnapshot(active.content, latest.current.selected, latest.current.name);
+    const before = captureWorkshopSnapshot(active.content, latest.current.selected, latest.current.name, latest.current.selectedIds);
     try { if (action() === false) { disposeWorkshopModel(before.content); return; } if (active.content.children.reduce((sum, piece) => sum + faceCount(piece as THREE.Mesh), 0) > 200000) throw new Error('El modelo admite hasta 200 000 caras.'); history.current.record(before, key); change(); }
     catch (cause) { restore(before); setError(cause instanceof Error ? cause.message : 'No se pudo hacer el cambio.'); }
   }
@@ -136,13 +162,13 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
     const active = runtime.current;
     if (!active || active.transform.dragging || latest.current.saving || latest.current.computing) return;
     discardPreview();
-    const current = captureWorkshopSnapshot(active.content, selected, name);
+    const current = captureWorkshopSnapshot(active.content, selected, name, selectedIds);
     const previous = history.current[direction](current);
     if (previous) restore(previous);
   }
   async function previewBoolean() {
     const active = runtime.current, cutter = pieces.find(piece => piece.uuid === second);
-    if (!active || active.transform.dragging || !mesh || !cutter || computing) return;
+    if (!active || active.transform.dragging || !mesh || !cutter || computing || isMultiple) return;
     discardPreview(); const sequence = booleanSequence.current; setError(''); setComputing(true);
     try {
       const job = startWorkshopBoolean(mesh, cutter, operation); booleanJob.current = job;
@@ -162,7 +188,9 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
     if (!value || !active) return;
     if (pieces.filter(piece => piece !== value.base && piece !== value.cutter).reduce((sum, piece) => sum + faceCount(piece), faceCount(value.result)) > 200000) { setError('El resultado supera las 200 000 caras del modelo.'); return; }
     value.base.visible = value.visibility[0]; value.cutter.visible = value.visibility[1];
-    const before = captureWorkshopSnapshot(active.content, selected, name);
+    const before = captureWorkshopSnapshot(active.content, selected, name, selectedIds);
+    const group = workshopGroup(value.base);
+    if (group) value.result.userData.workshopGroup = group;
     active.transform.detach(); value.base.removeFromParent(); value.cutter.removeFromParent();
     disposeWorkshopModel(new THREE.Group().add(value.base, value.cutter));
     active.content.add(value.result); preview.current = null;
@@ -203,7 +231,7 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
         const controls = new OrbitControls(camera, canvas); controls.enableDamping = true; controls.dampingFactor = .08;
         camera.position.set(1.8, 1.2, 1.8); controls.target.set(0, .25, 0); controls.update();
         const transform = new TransformControls(camera, canvas); transform.setSize(window.matchMedia('(pointer: coarse)').matches ? 1.35 : 1.05); transform.setColors('#ce756a', '#819968', '#6d97b4', '#d7ab5b'); scene.add(transform.getHelper());
-        active = { scene, camera, renderer, controls, transform, content, proxy, outline: null, toolOutline: null, snapGuide: null, points: null, face: null, dragged: false, vertexIndices: [], vertexMesh: null, vertexId: 0, pendingNormals: false };
+        active = { scene, camera, renderer, controls, transform, content, proxy, selectionProxy: null, selectionTransform: null, selectionOutlines: [], outline: null, toolOutline: null, snapGuide: null, points: null, face: null, dragged: false, vertexIndices: [], vertexMesh: null, vertexId: 0, pendingNormals: false };
         runtime.current = active;
         const value = active;
         const resize = () => {
@@ -243,8 +271,10 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
               const id = getEditableVertices(selectedMesh.geometry).find(vertex => vertex.indices.includes(indices[0]))?.id;
               if (id !== undefined) setVertexId(id);
             }
-          } else if (event.shiftKey && latest.current.selected && selectedMesh.uuid !== latest.current.selected) { setSecond(selectedMesh.uuid); setPanel('pieces'); setPanelOpen(true); }
-          else { selectPiece(selectedMesh); if (latest.current.panel === 'add') setPanel('model'); }
+          } else {
+            selectPiece(selectedMesh, { toggle: latest.current.panel !== 'geometry' && (event.shiftKey || event.ctrlKey || event.metaKey || latest.current.multiSelect), individual: latest.current.panel === 'geometry' });
+            if (latest.current.panel === 'add') setPanel('model');
+          }
         };
         const changed = () => {
           if (latest.current.saving || latest.current.computing || latest.current.previewing) return;
@@ -262,21 +292,24 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
               if (object instanceof THREE.Mesh && value.transform.mode === 'translate' && latest.current.snapEnabled) {
                 const axes = AXES.filter(axis => value.transform.axis?.includes(axis.toUpperCase()));
                 const tolerance = THREE.MathUtils.clamp(2 * camera.position.distanceTo(controls.target) * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) / Math.max(1, host.clientHeight) * (window.matchMedia('(pointer: coarse)').matches ? 14 : 8), .002, .06);
-                showSnapGuide(value, object, snapWorkshopPiece(object, content.children.filter((piece): piece is THREE.Mesh => piece instanceof THREE.Mesh), axes, { grid: latest.current.snapGrid ? latest.current.gridStep : null, pieces: latest.current.snapPieces, tolerance }));
+                showSnapGuide(value, object, snapWorkshopPiece(object, content.children.filter((piece): piece is THREE.Mesh => piece instanceof THREE.Mesh && (object !== value.selectionProxy || !latest.current.selectedIds.includes(piece.uuid))), axes, { grid: latest.current.snapGrid ? latest.current.gridStep : null, pieces: latest.current.snapPieces, tolerance }));
               } else removeHelper(value, 'snapGuide');
+              if (object === value.selectionProxy && value.selectionTransform) applySelectionTransform(value.selectionTransform, object.position, object.quaternion);
             }
           }
           value.outline?.update();
         };
         const dragging = (event: { value: unknown }) => {
           controls.enabled = !event.value;
-          if (event.value) { value.dragged = false; dragSnapshot.current = captureWorkshopSnapshot(content, latest.current.selected, latest.current.name); }
+          if (event.value) {
+            value.dragged = false; dragSnapshot.current = captureWorkshopSnapshot(content, latest.current.selected, latest.current.name, latest.current.selectedIds);
+            if (value.selectionProxy) value.selectionTransform = captureSelectionTransform(content.children.filter((piece): piece is THREE.Mesh => piece instanceof THREE.Mesh && latest.current.selectedIds.includes(piece.uuid)));
+          }
           if (!event.value) {
             removeHelper(value, 'snapGuide');
             if (value.pendingNormals && value.vertexMesh) { value.vertexMesh.geometry.computeVertexNormals(); value.vertexMesh.geometry.computeBoundingBox(); value.vertexMesh.geometry.computeBoundingSphere(); const raw = value.vertexIndices[0]; const welded = getEditableVertices(value.vertexMesh.geometry).find(vertex => vertex.indices.includes(raw)); if (welded) setVertexId(welded.id); value.pendingNormals = false; }
             if (dragSnapshot.current) {
-              const object = value.transform.object, before = dragSnapshot.current.content.children.find(piece => piece.uuid === object?.uuid);
-              const moved = object && before && (!object.position.equals(before.position) || !object.quaternion.equals(before.quaternion) || !object.scale.equals(before.scale));
+              const moved = content.children.some(object => { const before = dragSnapshot.current!.content.children.find(piece => piece.uuid === object.uuid); return before && (!object.position.equals(before.position) || !object.quaternion.equals(before.quaternion) || !object.scale.equals(before.scale)); });
               if (value.dragged && (value.vertexMesh || moved)) history.current.record(dragSnapshot.current); else disposeWorkshopModel(dragSnapshot.current.content);
               dragSnapshot.current = null;
             }
@@ -286,7 +319,7 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
         canvas.addEventListener('pointerdown', pointerDown, true); canvas.addEventListener('pointerup', pointerUp);
         transform.addEventListener('objectChange', changed); transform.addEventListener('dragging-changed', dragging);
         removeEvents = () => { canvas.removeEventListener('pointerdown', pointerDown, true); canvas.removeEventListener('pointerup', pointerUp); transform.removeEventListener('objectChange', changed); transform.removeEventListener('dragging-changed', dragging); };
-        renderer.setAnimationLoop(() => { if (!cancelled) { controls.update(); value.outline?.update(); value.toolOutline?.update(); renderer.render(scene, camera); } });
+        renderer.setAnimationLoop(() => { if (!cancelled) { controls.update(); value.outline?.update(); value.toolOutline?.update(); value.selectionOutlines.forEach(outline => outline.update()); renderer.render(scene, camera); } });
         if (item) source = item.type === 'custom' ? await loadEditableModel(item, roomId) : createFurnitureModel(item);
         else source = new THREE.Group();
         if (cancelled) { releaseSource(source); source = null; return; }
@@ -299,7 +332,7 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
       cancelled = true; observer?.disconnect(); removeEvents();
       booleanSequence.current++; booleanJob.current?.cancel(); booleanJob.current = null; preview.current = null;
       history.current.clear(); if (dragSnapshot.current) disposeWorkshopModel(dragSnapshot.current.content); dragSnapshot.current = null;
-      if (active) { active.renderer.setAnimationLoop(null); active.transform.detach(); active.scene.remove(active.transform.getHelper()); active.transform.dispose(); active.controls.dispose(); disposeWorkshopModel(active.scene); active.renderer.dispose(); active.renderer.domElement.remove(); }
+      if (active) { active.renderer.setAnimationLoop(null); active.transform.detach(); clearSelectionHelpers(active); active.scene.remove(active.transform.getHelper()); active.transform.dispose(); active.controls.dispose(); disposeWorkshopModel(active.scene); active.renderer.dispose(); active.renderer.domElement.remove(); }
       if (source) releaseSource(source);
       runtime.current = null;
     };
@@ -330,12 +363,21 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
     const active = runtime.current;
     if (!active || !ready) return;
     active.transform.detach(); active.vertexMesh = null; active.vertexIndices = [];
+    clearSelectionHelpers(active);
     for (const key of ['points', 'face', 'outline', 'toolOutline', 'snapGuide'] as const) removeHelper(active, key);
     if (previewing) return;
     if (panel === 'pieces' && second) { const cutter = active.content.children.find(piece => piece.uuid === second); if (cutter) { active.toolOutline = new THREE.BoxHelper(cutter, '#678cb4'); active.scene.add(active.toolOutline); } }
     if (panel === 'alignment' && reference) { active.toolOutline = new THREE.BoxHelper(reference, '#678cb4'); active.scene.add(active.toolOutline); }
     const object = active.content.children.find(object => object.uuid === selected);
     if (!(object instanceof THREE.Mesh)) return;
+    const members = active.content.children.filter((piece): piece is THREE.Mesh => piece instanceof THREE.Mesh && selectedIds.includes(piece.uuid));
+    if (members.length > 1 && panel !== 'geometry') {
+      const proxy = createSelectionProxy(members); active.content.parent!.add(proxy); active.selectionProxy = proxy;
+      active.selectionOutlines = members.map(piece => { const outline = new THREE.BoxHelper(piece, '#b88a3d'); active.scene.add(outline); return outline; });
+      active.transform.enabled = !saving && !computing;
+      active.transform.setMode(tool === 'scale' ? 'translate' : tool); active.transform.setSpace('world'); active.transform.attach(proxy);
+      return;
+    }
     active.outline = new THREE.BoxHelper(object, '#b88a3d'); active.scene.add(active.outline);
     active.transform.enabled = !saving && !computing;
     if (panel === 'geometry') {
@@ -355,7 +397,7 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
         }
       }
     } else { active.transform.setMode(tool); active.transform.setSpace(tool === 'translate' ? 'world' : 'local'); active.transform.attach(object); }
-  }, [ready, selected, second, alignmentReference, panel, tool, geometryTool, vertexId, faceId, revision, saving, computing, previewing]);
+  }, [ready, selected, selectedIds, second, alignmentReference, panel, tool, geometryTool, vertexId, faceId, revision, saving, computing, previewing]);
 
   function addPiece(id: string) {
     run(() => {
@@ -384,16 +426,37 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
     });
   }
   function duplicatePiece() {
-    if (!mesh) return;
+    if (!selection.length) return;
     run(() => {
       const content = runtime.current!.content;
-      if (content.children.length >= 511) throw new Error('El modelo admite hasta 511 piezas.');
-      const copy = mesh.clone(); copy.geometry = mesh.geometry.clone(); copy.material = Array.isArray(mesh.material) ? mesh.material.map(material => material.clone()) : mesh.material.clone(); copy.name = `${mesh.name} copia`.slice(0, 80); copy.position.x += .15; content.add(copy); selectPiece(copy);
+      if (content.children.length + selection.length > 511) throw new Error('El modelo admite hasta 511 piezas.');
+      const copies = duplicateWorkshopPieces(selection); content.add(...copies); selectIds(copies.map(piece => piece.uuid));
     });
   }
   function deletePiece() {
-    if (!mesh) return;
-    run(() => { runtime.current!.transform.detach(); mesh.removeFromParent(); disposeWorkshopModel(new THREE.Group().add(mesh)); selectPiece(runtime.current!.content.children[0] as THREE.Mesh ?? null); });
+    if (!selection.length) return;
+    run(() => { const active = runtime.current!; active.transform.detach(); for (const piece of selection) piece.removeFromParent(); disposeWorkshopModel(new THREE.Group().add(...selection)); selectPiece(active.content.children[0] as THREE.Mesh ?? null); });
+  }
+  function groupSelection() {
+    run(() => {
+      const count = new Set(pieces.map(piece => workshopGroup(piece)?.id).filter(Boolean)).size;
+      return groupWorkshopPieces(selection, `Grupo ${count + 1}`);
+    });
+  }
+  function ungroupSelection() {
+    run(() => { const ids = new Set(selection.map(piece => workshopGroup(piece)?.id).filter(Boolean)); ungroupWorkshopPieces(pieces.filter(piece => ids.has(workshopGroup(piece)?.id))); });
+  }
+  function moveSelection(axis: WorkshopAxis, value: number) {
+    run(() => { const snapshot = captureSelectionTransform(selection), position = snapshot.center.clone(); position[axis] = value; return applySelectionTransform(snapshot, position); }, `selection-position-${selectedIds.join('-')}-${axis}`);
+  }
+  function alignSelection(alignment: WorkshopAlignment) {
+    if (!reference || !selection.length) return;
+    run(() => {
+      if (selection.length === 1) return alignWorkshopPiece(selection[0], reference, alignmentAxis, alignment);
+      const proxy = createSelectionProxy(selection), snapshot = captureSelectionTransform(selection); runtime.current!.content.add(proxy);
+      try { if (!alignWorkshopPiece(proxy, reference, alignmentAxis, alignment)) return false; return applySelectionTransform(snapshot, proxy.position); }
+      finally { proxy.removeFromParent(); proxy.geometry.dispose(); (proxy.material as THREE.Material).dispose(); }
+    });
   }
   async function save() {
     const active = runtime.current, modelName = parseName(name);
@@ -421,7 +484,14 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
   const locked = saving || computing || previewing;
   if (mesh && !mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
   const dimensions = mesh ? mesh.geometry.boundingBox!.getSize(new THREE.Vector3()) : new THREE.Vector3();
-  const openPanel = (next: Panel) => { if (locked) return; setPanel(next); setPanelOpen(true); };
+  const openPanel = (next: Panel) => { if (locked) return; if (next === 'geometry' && mesh) { selectPiece(mesh, { individual: true }); setMultiSelect(false); } setPanel(next); setPanelOpen(true); };
+  const selectionCenter = isMultiple ? captureSelectionTransform(selection).center : null;
+  const selectionActions = <div className="workshop-selection-actions">
+    <button type="button" disabled={selection.length < 2 || !!commonGroup} onClick={groupSelection}><Group size={17} />Agrupar</button>
+    <button type="button" disabled={!selection.some(piece => workshopGroup(piece))} onClick={ungroupSelection}><Ungroup size={17} />Desagrupar</button>
+    <button type="button" disabled={!selection.length} onClick={duplicatePiece}><Copy size={17} />Duplicar</button>
+    <button type="button" disabled={!selection.length} onClick={deletePiece}><Trash2 size={17} />Eliminar</button>
+  </div>;
   const alignmentPanel = <>
     <div className="workshop-snap-options">
       <details className="workshop-transforms"><summary>Opciones de snap</summary>
@@ -430,14 +500,14 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
         <div className="workshop-snap-steps"><label className="workshop-field"><span>Paso</span><select value={gridStep} onChange={event => setGridStep(Number(event.target.value))}>{[.01, .05, .1, .25].map(step => <option value={step} key={step}>{step * 100} cm</option>)}</select></label><label className="workshop-field"><span>Giro</span><select value={angleStep} onChange={event => setAngleStep(Number(event.target.value))}>{[5, 15, 30, 45, 90].map(step => <option value={step} key={step}>{step}°</option>)}</select></label></div>
       </details>
     </div>
-    <div className="workshop-align-targets"><label className="workshop-field"><span>Pieza a mover</span><select value={selected ?? ''} onChange={event => selectPiece(pieces.find(piece => piece.uuid === event.target.value) ?? null)}><option value="" disabled>Seleccionar</option>{pieces.map((piece, index) => <option key={piece.uuid} value={piece.uuid}>{piece.name} · {index + 1}</option>)}</select></label>
-    <label className="workshop-field"><span>Alinear con</span><select value={reference?.uuid ?? ''} onChange={event => setAlignmentReference(event.target.value)}><option value="">Seleccionar pieza</option>{pieces.filter(piece => piece !== mesh).map(piece => <option key={piece.uuid} value={piece.uuid}>{piece.name} · {pieces.indexOf(piece) + 1}</option>)}</select></label></div>
+    <div className="workshop-align-targets"><label className="workshop-field"><span>{isMultiple ? `${selection.length} piezas a mover` : 'Pieza a mover'}</span><select value={selected ?? ''} onChange={event => selectPiece(pieces.find(piece => piece.uuid === event.target.value) ?? null)}><option value="" disabled>Seleccionar</option>{pieces.map((piece, index) => <option key={piece.uuid} value={piece.uuid}>{piece.name} · {index + 1}</option>)}</select></label>
+    <label className="workshop-field"><span>Alinear con</span><select value={reference?.uuid ?? ''} onChange={event => setAlignmentReference(event.target.value)}><option value="">Seleccionar pieza</option>{pieces.filter(piece => !selectedIds.includes(piece.uuid)).map(piece => <option key={piece.uuid} value={piece.uuid}>{piece.name} · {pieces.indexOf(piece) + 1}</option>)}</select></label></div>
     <div className="workshop-alignment-axis" role="group" aria-label="Eje de alineación">{([['x', 'Ancho'], ['y', 'Altura'], ['z', 'Fondo']] as const).map(([axis, label]) => <button type="button" key={axis} aria-pressed={alignmentAxis === axis} onClick={() => setAlignmentAxis(axis)}>{label}</button>)}</div>
-    <div className="workshop-align-buttons" role="group" aria-label="Alinear bordes o centro">{ALIGNMENTS.slice(0, 3).map((alignment, index) => <button type="button" key={alignment} disabled={!mesh || !reference} onClick={() => run(() => alignWorkshopPiece(mesh!, reference!, alignmentAxis, alignment))}>{ALIGNMENT_LABELS[alignmentAxis][index]}</button>)}</div>
-    <div className="workshop-align-buttons is-contact" role="group" aria-label="Juntar piezas">{ALIGNMENTS.slice(3).map((alignment, index) => <button type="button" key={alignment} disabled={!mesh || !reference} onClick={() => run(() => alignWorkshopPiece(mesh!, reference!, alignmentAxis, alignment))}>{ALIGNMENT_LABELS[alignmentAxis][index + 3]}</button>)}</div>
+    <div className="workshop-align-buttons" role="group" aria-label="Alinear bordes o centro">{ALIGNMENTS.slice(0, 3).map((alignment, index) => <button type="button" key={alignment} disabled={!mesh || !reference} onClick={() => alignSelection(alignment)}>{ALIGNMENT_LABELS[alignmentAxis][index]}</button>)}</div>
+    <div className="workshop-align-buttons is-contact" role="group" aria-label="Juntar piezas">{ALIGNMENTS.slice(3).map((alignment, index) => <button type="button" key={alignment} disabled={!mesh || !reference} onClick={() => alignSelection(alignment)}>{ALIGNMENT_LABELS[alignmentAxis][index + 3]}</button>)}</div>
   </>;
   const geometryPanel = mesh ? <>
-    <label className="workshop-field"><span>Pieza</span><select value={selected ?? ''} onChange={event => selectPiece(pieces.find(piece => piece.uuid === event.target.value) ?? null)}>{pieces.map((piece, i) => <option key={piece.uuid} value={piece.uuid}>{piece.name} · {i + 1}</option>)}</select></label>
+    <label className="workshop-field"><span>Pieza</span><select value={selected ?? ''} onChange={event => selectPiece(pieces.find(piece => piece.uuid === event.target.value) ?? null, { individual: true })}>{pieces.map((piece, i) => <option key={piece.uuid} value={piece.uuid}>{piece.name} · {i + 1}</option>)}</select></label>
     <div className="workshop-geometry-tabs"><button type="button" aria-pressed={geometryTool === 'vertices'} onClick={() => setGeometryTool('vertices')}>Vértices</button><button type="button" aria-pressed={geometryTool === 'faces'} onClick={() => setGeometryTool('faces')}>Caras</button></div>
     {geometryTool === 'vertices' ? <>
       {vertex && <><NumberControl label={`Vértice (0–${vertices.length - 1})`} value={vertex.id} min={0} max={vertices.length - 1} integer onChange={setVertexId} /><div className="workshop-coordinates">{AXES.map((axis, i) => <NumberControl key={axis} label={axis.toUpperCase()} value={vertex.position[i]} onChange={value => setVertexCoordinate(i, value)} />)}</div></>}
@@ -448,7 +518,7 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
     </>}
   </> : <p className="workshop-empty">Selecciona una pieza.</p>;
 
-  return <dialog ref={dialog} className={'model-workshop' + (!pieces.length ? ' is-empty' : '') + (panel === 'alignment' ? ' is-aligning' : '')} aria-labelledby="workshop-title" onCancel={event => { event.preventDefault(); if (!saving) onClose(); }} onKeyDown={event => {
+  return <dialog ref={dialog} className={'model-workshop' + (!pieces.length ? ' is-empty' : '') + (panel === 'alignment' || panel === 'pieces' ? ' is-aligning' : '')} aria-labelledby="workshop-title" onCancel={event => { event.preventDefault(); if (!saving) onClose(); }} onKeyDown={event => {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z' && !(event.target as HTMLElement).closest('input,textarea,select,[contenteditable="true"]')) { event.preventDefault(); travelHistory(event.shiftKey ? 'redo' : 'undo'); }
   }}>
     <header className="workshop-header"><h2 id="workshop-title">{item ? 'Editar modelo' : 'Crear modelo'}</h2><button type="button" className="workshop-save primary-button" onClick={() => void save()} disabled={!ready || locked || !pieces.length}>{saving && <LoaderCircle size={17} className="saving-spinner" />}{saving ? 'Guardando' : item ? 'Guardar copia' : 'Guardar modelo'}</button><button type="button" className="icon-button" aria-label="Cerrar editor de modelo" onClick={onClose} disabled={saving}><X size={22} /></button></header>
@@ -459,7 +529,7 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
           <button type="button" className="workshop-add" onClick={() => openPanel('add')} disabled={!ready || locked} aria-label="Agregar pieza"><Plus size={18} /><span>Agregar</span></button>
           <button type="button" aria-label="Deshacer" title="Deshacer (Ctrl+Z)" disabled={!ready || saving || computing || !history.current.canUndo} onClick={() => travelHistory('undo')}><Undo2 size={20} /></button>
           <button type="button" aria-label="Rehacer" title="Rehacer (Ctrl+Mayús+Z)" disabled={!ready || locked || !history.current.canRedo} onClick={() => travelHistory('redo')}><Redo2 size={20} /></button>
-          {([['translate', Move, 'Mover'], ['rotate', RotateCw, 'Girar'], ['scale', Scaling, 'Tamaño']] as const).map(([mode, Icon, label]) => <button type="button" key={mode} aria-label={label} title={label} aria-pressed={tool === mode && panel !== 'geometry'} disabled={locked || panel === 'geometry' || !mesh} onClick={() => setTool(mode)}><Icon size={20} /></button>)}
+          {([['translate', Move, 'Mover'], ['rotate', RotateCw, 'Girar'], ['scale', Scaling, 'Tamaño']] as const).map(([mode, Icon, label]) => <button type="button" key={mode} aria-label={label} title={label} aria-pressed={tool === mode && panel !== 'geometry' && (!isMultiple || mode !== 'scale')} disabled={locked || panel === 'geometry' || !mesh || isMultiple && mode === 'scale'} onClick={() => setTool(mode)}><Icon size={20} /></button>)}
           <button type="button" className="workshop-snap" aria-label="Snap" title={snapEnabled ? 'Desactivar snap' : 'Activar snap'} aria-pressed={snapEnabled} disabled={!ready || locked} onClick={() => setSnapEnabled(value => !value)}><Magnet size={19} /><span>Snap</span></button>
           <button type="button" className="workshop-center" aria-label="Centrar" title="Centrar" onClick={frameModel} disabled={!ready || !pieces.length}><Focus size={20} /><span>Centrar</span></button><button type="button" aria-label={panelOpen ? 'Ocultar panel' : 'Mostrar panel'} title={panelOpen ? 'Ocultar panel' : 'Mostrar panel'} aria-expanded={panelOpen} aria-controls="workshop-panel" onClick={() => setPanelOpen(value => !value)}><PanelRight size={20} /></button>
         </div>
@@ -467,24 +537,27 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
       <aside id="workshop-panel" className="workshop-panel" hidden={!panelOpen}>
         <nav className="workshop-tabs" aria-label="Panel del modelo">{([['add', 'Agregar'], ['model', 'Editar'], ['pieces', 'Piezas'], ['alignment', 'Alinear'], ['geometry', 'Geometría']] as const).map(([tab, label]) => <button key={tab} type="button" disabled={locked} aria-pressed={panel === tab} onClick={() => openPanel(tab)}>{label}</button>)}</nav>
         <div ref={panelContent} className="workshop-panel-content"><fieldset disabled={!ready || locked}>
+          {panel !== 'add' && panel !== 'geometry' && <div className="workshop-selection-bar"><label className="workshop-toggle"><input type="checkbox" checked={multiSelect} onChange={event => setMultiSelect(event.target.checked)} />Seleccionar varias</label><span aria-live="polite">{selection.length} seleccionadas</span></div>}
           {panel === 'add' ? <>
             <nav className="workshop-palette-tabs" aria-label="Tipo de pieza">{([['primitives', 'Formas'], ['prefabs', 'Piezas'], ['furniture', 'Muebles']] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={palette === value} onClick={() => setPalette(value)}>{label}</button>)}</nav>
             {palette === 'furniture' ? <FurnitureCatalog onSelect={addFurniture} /> : <div className="workshop-piece-grid">{WORKSHOP_PIECES.filter(preset => preset.category === palette).map(preset => <button type="button" key={preset.id} aria-label={`Agregar ${preset.label.toLowerCase()}`} onClick={() => addPiece(preset.id)}><PieceThumbnail preset={preset} /><span>{preset.label}</span></button>)}</div>}
           </> : panel === 'model' ? <>
             <NameControl label="Nombre del modelo" value={name} onChange={value => run(() => setName(value), 'model-name')} />
             {mesh ? <>
-              <NameControl label="Pieza" value={mesh.name} onChange={value => run(() => { mesh.name = value; }, `piece-name-${mesh.uuid}`)} />
-              <label className="workshop-field"><span>Material</span><select value={workshopSurface(firstMaterial(mesh))} onChange={event => run(() => setWorkshopMaterial(mesh, event.target.value as FurnitureMaterial, '#' + firstMaterial(mesh).color.getHexString()))}><option value="wood">Madera</option><option value="plastic">Plástico</option><option value="metal">Metal</option></select></label>
-              <ColorControl value={'#' + firstMaterial(mesh).color.getHexString()} onChange={value => run(() => setWorkshopColor(mesh, value), `color-${mesh.uuid}`)} />
-              <div className="workshop-group"><span>Tamaño (m)</span><div className="workshop-coordinates">{([['x', 'Ancho'], ['y', 'Alto'], ['z', 'Fondo']] as const).filter(([axis]) => dimensions[axis] > .000001).map(([axis, label]) => <NumberControl key={axis} label={label} value={dimensions[axis] * Math.abs(mesh.scale[axis])} min={.001} max={Math.min(10000, dimensions[axis] * 1000)} onChange={value => run(() => { mesh.scale[axis] = (Math.sign(mesh.scale[axis]) || 1) * value / dimensions[axis]; }, `size-${mesh.uuid}-${axis}`)} />)}</div></div>
-              <details className="workshop-transforms"><summary>Posición y giro</summary>{([['position', 'Posición (m)'], ['rotation', 'Giro (°)']] as const).map(([attribute, label]) => <div className="workshop-group" key={attribute}><span>{label}</span><div className="workshop-coordinates">{AXES.map(axis => <NumberControl key={axis} label={axis.toUpperCase()} value={attribute === 'rotation' ? THREE.MathUtils.radToDeg(mesh.rotation[axis]) : mesh.position[axis]} onChange={value => run(() => { if (attribute === 'rotation') mesh.rotation[axis] = THREE.MathUtils.degToRad(value); else mesh.position[axis] = value; }, `${attribute}-${mesh.uuid}-${axis}`)} />)}</div></div>)}</details>
-              <div className="workshop-piece-actions"><button type="button" onClick={duplicatePiece}><Copy size={17} />Duplicar</button><button type="button" onClick={deletePiece}><Trash2 size={17} />Eliminar</button></div>
+              {commonGroup ? <NameControl label="Grupo" value={commonGroup.name} onChange={value => run(() => { for (const piece of selection) piece.userData.workshopGroup = { ...commonGroup, name: value }; }, `group-name-${commonGroup.id}`)} /> : !isMultiple && <NameControl label="Pieza" value={mesh.name} onChange={value => run(() => { mesh.name = value; }, `piece-name-${mesh.uuid}`)} />}
+              <label className="workshop-field"><span>{isMultiple ? 'Material de la selección' : 'Material'}</span><select value={workshopSurface(firstMaterial(mesh))} onChange={event => run(() => { for (const piece of selection) setWorkshopMaterial(piece, event.target.value as FurnitureMaterial, '#' + firstMaterial(piece).color.getHexString()); })}><option value="wood">Madera</option><option value="plastic">Plástico</option><option value="metal">Metal</option></select></label>
+              <ColorControl value={'#' + firstMaterial(mesh).color.getHexString()} onChange={value => run(() => { for (const piece of selection) setWorkshopColor(piece, value); }, `color-${selectedIds.join('-')}`)} />
+              {isMultiple ? <div className="workshop-group"><span>Posición (m)</span><div className="workshop-coordinates">{AXES.map(axis => <NumberControl key={axis} label={axis.toUpperCase()} value={selectionCenter![axis]} onChange={value => moveSelection(axis, value)} />)}</div></div> : <>
+                <div className="workshop-group"><span>Tamaño (m)</span><div className="workshop-coordinates">{([['x', 'Ancho'], ['y', 'Alto'], ['z', 'Fondo']] as const).filter(([axis]) => dimensions[axis] > .000001).map(([axis, label]) => <NumberControl key={axis} label={label} value={dimensions[axis] * Math.abs(mesh.scale[axis])} min={.001} max={Math.min(10000, dimensions[axis] * 1000)} onChange={value => run(() => { mesh.scale[axis] = (Math.sign(mesh.scale[axis]) || 1) * value / dimensions[axis]; }, `size-${mesh.uuid}-${axis}`)} />)}</div></div>
+                <details className="workshop-transforms"><summary>Posición y giro</summary>{([['position', 'Posición (m)'], ['rotation', 'Giro (°)']] as const).map(([attribute, label]) => <div className="workshop-group" key={attribute}><span>{label}</span><div className="workshop-coordinates">{AXES.map(axis => <NumberControl key={axis} label={axis.toUpperCase()} value={attribute === 'rotation' ? THREE.MathUtils.radToDeg(mesh.rotation[axis]) : mesh.position[axis]} onChange={value => run(() => { if (attribute === 'rotation') mesh.rotation[axis] = THREE.MathUtils.degToRad(value); else mesh.position[axis] = value; }, `${attribute}-${mesh.uuid}-${axis}`)} />)}</div></div>)}</details>
+              </>}
+              {selectionActions}
             </> : <p className="workshop-empty">Agrega o selecciona una pieza.</p>}
           </> : panel === 'alignment' ? alignmentPanel : panel === 'pieces' ? <>
-            <label className="workshop-field"><span>Pieza principal</span><select aria-label="Pieza principal" value={selected ?? ''} onChange={event => selectPiece(pieces.find(piece => piece.uuid === event.target.value) ?? null)}><option value="" disabled>Seleccionar</option>{pieces.map((piece, i) => <option key={piece.uuid} value={piece.uuid}>{piece.name} · {i + 1}</option>)}</select></label>
-            {mesh && pieces.length > 1 && <section className="workshop-booleans" aria-label="Combinar piezas"><label className="workshop-field"><span>Segunda pieza</span><select aria-label="Segunda pieza" value={second} onChange={event => setSecond(event.target.value)}><option value="">Seleccionar</option>{pieces.filter(piece => piece !== mesh).map(piece => <option key={piece.uuid} value={piece.uuid}>{piece.name} · {pieces.indexOf(piece) + 1}</option>)}</select></label><div className="workshop-boolean-choices" role="group" aria-label="Operación">{OPERATIONS.map(([value, label]) => <button type="button" key={value} aria-pressed={operation === value} onClick={() => setOperation(value)}><svg viewBox="0 0 48 30" aria-hidden="true"><circle cx="18" cy="15" r="12" fill={value === 'intersect' ? '#edf1e6' : '#96ac81'} /><circle cx="30" cy="15" r="12" fill={value === 'union' ? '#96ac81' : '#edf1e6'} stroke="#637b4e" />{value === 'intersect' && <path d="M24 4.6a12 12 0 0 1 0 20.8 12 12 0 0 1 0-20.8" fill="#96ac81" />}</svg><span>{label}</span></button>)}</div>{operation === 'subtract' && second && <p className="workshop-operation-hint">Se resta {pieces.find(piece => piece.uuid === second)?.name} de {mesh.name}.</p>}<button type="button" className="primary-button" disabled={!second} onClick={() => void previewBoolean()}>Ver resultado</button></section>}
-            <div className="workshop-pieces" aria-label="Piezas del modelo">{pieces.map((piece, i) => <button type="button" key={piece.uuid} aria-pressed={selected === piece.uuid} onClick={() => selectPiece(piece)}>{piece.name}<span>{i + 1}</span></button>)}</div>
-            {mesh && <div className="workshop-piece-actions"><button type="button" onClick={duplicatePiece}><Copy size={17} />Duplicar</button><button type="button" onClick={deletePiece}><Trash2 size={17} />Eliminar</button></div>}
+            {selectionActions}
+            <div className="workshop-list-actions"><button type="button" disabled={!pieces.length} onClick={() => selectIds(pieces.map(piece => piece.uuid))}>Seleccionar todo</button><button type="button" disabled={!selection.length} onClick={() => selectIds([])}>Quitar selección</button></div>
+            <div className="workshop-pieces" aria-label="Piezas del modelo">{pieces.map((piece, i) => <div className="workshop-piece-row" key={piece.uuid} data-selected={selectedIds.includes(piece.uuid)}><label className="workshop-piece-check"><input type="checkbox" aria-label={`Seleccionar ${piece.name} ${i + 1}`} checked={selectedIds.includes(piece.uuid)} onChange={() => selectPiece(piece, { toggle: true })} /></label><button type="button" aria-pressed={selectedIds.includes(piece.uuid)} onClick={() => selectPiece(piece, { toggle: multiSelect })}><span>{piece.name}{workshopGroup(piece) && <small>{workshopGroup(piece)!.name}</small>}</span><span>{i + 1}</span></button><button type="button" className="workshop-edit-piece" aria-label={`Editar solo ${piece.name} ${i + 1}`} title="Editar solo esta pieza" onClick={() => { selectPiece(piece, { individual: true }); setPanel('model'); setMultiSelect(false); }}><Pencil size={16} /></button></div>)}</div>
+            {mesh && !isMultiple && pieces.length > 1 && <details className="workshop-transforms"><summary>Combinar con otra pieza</summary><section className="workshop-booleans" aria-label="Combinar piezas"><label className="workshop-field"><span>Segunda pieza</span><select aria-label="Segunda pieza" value={second} onChange={event => setSecond(event.target.value)}><option value="">Seleccionar</option>{pieces.filter(piece => piece !== mesh).map(piece => <option key={piece.uuid} value={piece.uuid}>{piece.name} · {pieces.indexOf(piece) + 1}</option>)}</select></label><div className="workshop-boolean-choices" role="group" aria-label="Operación">{OPERATIONS.map(([value, label]) => <button type="button" key={value} aria-pressed={operation === value} onClick={() => setOperation(value)}><svg viewBox="0 0 48 30" aria-hidden="true"><circle cx="18" cy="15" r="12" fill={value === 'intersect' ? '#edf1e6' : '#96ac81'} /><circle cx="30" cy="15" r="12" fill={value === 'union' ? '#96ac81' : '#edf1e6'} stroke="#637b4e" />{value === 'intersect' && <path d="M24 4.6a12 12 0 0 1 0 20.8 12 12 0 0 1 0-20.8" fill="#96ac81" />}</svg><span>{label}</span></button>)}</div>{operation === 'subtract' && second && <p className="workshop-operation-hint">Se resta {pieces.find(piece => piece.uuid === second)?.name} de {mesh.name}.</p>}<button type="button" className="primary-button" disabled={!second} onClick={() => void previewBoolean()}>Ver resultado</button></section></details>}
           </> : geometryPanel}
         </fieldset></div>
       </aside>

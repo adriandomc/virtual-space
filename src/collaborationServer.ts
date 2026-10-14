@@ -319,6 +319,7 @@ export function createLiveCollaboration(deps: Dependencies) {
         if (Number(database.prepare('SELECT COUNT(*) AS count FROM room_members WHERE room_id = ?').get(id)?.count) >= 50) throw new HttpError(400, 'Este diseño admite hasta 50 invitados.');
         database.prepare('INSERT INTO room_members (id, room_id, user_id, inviter_id, role, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(randomUUID(), id, target.id, user.id, body.role, now());
         notify(target.id);
+        refresh(id);
         sendJson(response, 201, { members: memberList(id) }); return true;
       }
       if (members[2] && (method === 'PATCH' || method === 'DELETE')) {

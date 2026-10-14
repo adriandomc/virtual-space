@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { Archive, ArrowDownToLine, ArrowUpFromLine, BedDouble, Box, Check, ChevronDown, CircleHelp, Copy, DoorClosed, DoorOpen, Focus, Footprints, Grid2X2, Layers3, Lightbulb, LoaderCircle, Magnet, MousePointer2, Move, Paintbrush, PanelLeftClose, PanelRightClose, Plus, RotateCcw, Ruler, Settings2, Share2, Shield, Sun, Table2, Trash2, X } from 'lucide-react';
+import { Archive, ArrowDownToLine, ArrowUpFromLine, BedDouble, Box, Check, ChevronDown, CircleHelp, Copy, DoorClosed, DoorOpen, Focus, Footprints, Grid2X2, Layers3, Lightbulb, LoaderCircle, Magnet, MousePointer2, Move, Paintbrush, PanelLeftClose, PanelRightClose, Plus, RotateCcw, Ruler, Settings2, Share2, Shield, Sun, Table2, Trash2, WifiOff, X } from 'lucide-react';
 import RoomScene from './RoomScene';
 import Brand from './Brand';
 import PlanEditor from './PlanEditor';
@@ -17,6 +17,8 @@ import CustomModelEditor from './CustomModelEditor';
 import CollaborationPanel from './CollaborationPanel';
 import Notifications from './Notifications';
 import type { ModelAsset } from './customModel';
+import { uploadModel } from './customModel';
+import { parseProjectBackup } from './projectBackup';
 import { addCustomFurniture, addFurniture, addLight, addOpening, BED_SIZES, bounds, fitRoom, FURNITURE_COLORS, FURNITURE_LABELS, moveSceneItem, polygonArea, resizeRoom, validateRoom, wallLength } from './model';
 import type { BedSize, FloorFinish, FurnitureItem, FurnitureMaterial, Opening, Room, RoomLight, Selection, ViewMode } from './types';
 
@@ -58,7 +60,10 @@ function HexColorField({ value, onChange, readOnly, notify, label = 'Color perso
 }
 
 export default function App({ onHome = () => window.location.assign(DESIGNS_PATH) }: { onHome?: () => void }) {
-  const { room, setRoom, ready, status, error: saveError, readOnly, canManage, role, connected, roomId, shareUrl, shared, setSharing, uploadSketch, sketchUrl, retry } = useProject();
+  const { room, setRoom, ready, status, error: saveError, readOnly: projectReadOnly, canManage, role, connected, roomId, shareUrl, shared, setSharing, uploadSketch, sketchUrl, retry, offlineAllowed, pendingOffline, discardOffline, downloadOfflineBackup } = useProject();
+  const [importing, setImporting] = useState(false);
+  const importBusy = useRef(false);
+  const readOnly = projectReadOnly || importing;
   const [mode, setMode] = useState<ViewMode>('orbit');
   const [selection, setSelection] = useState<Selection | null>(null);
   const [transformMode, setTransformMode] = useState<'translate' | 'rotate'>('translate');
@@ -98,6 +103,8 @@ export default function App({ onHome = () => window.location.assign(DESIGNS_PATH
   const usedColors = [...new Set([...room.wallColors, room.ceilingColor, room.floorColor].map(hex => hex.toLowerCase()))];
   const propertiesVisible = compact ? mobilePanel === 'properties' : rightOpen;
   const elementsVisible = compact ? mobilePanel === 'scene' : leftOpen;
+  const saving = importing || status === 'saving' || status === 'syncing';
+  const statusLabel = importing ? 'Importando…' : status === 'conflict' ? 'Revisar cambios' : status === 'offline' ? pendingOffline ? 'Guardado en este dispositivo' : 'Sin conexión' : !connected ? 'Sin conexión' : readOnly ? 'Solo lectura' : saving ? 'Guardando…' : status === 'error' ? 'No guardado' : 'Guardado';
 
   useEffect(() => {
     const query = window.matchMedia('(max-width: 1000px)');
@@ -111,6 +118,11 @@ export default function App({ onHome = () => window.location.assign(DESIGNS_PATH
     const timer = setTimeout(() => setNotice(''), 4500);
     return () => clearTimeout(timer);
   }, [notice]);
+  useEffect(() => {
+    const offlineError = (event: Event) => { const message = (event as CustomEvent).detail; if (typeof message === 'string') setNotice(message); };
+    window.addEventListener('space-offline-error', offlineError);
+    return () => window.removeEventListener('space-offline-error', offlineError);
+  }, []);
   useEffect(() => { if (helpOpen) helpRef.current?.showModal(); else helpRef.current?.close(); }, [helpOpen]);
   useEffect(() => { if (shareOpen) shareRef.current?.showModal(); else shareRef.current?.close(); }, [shareOpen]);
   useEffect(() => { if (addOpen) addRef.current?.showModal(); else addRef.current?.close(); }, [addOpen]);
@@ -227,14 +239,36 @@ export default function App({ onHome = () => window.location.assign(DESIGNS_PATH
     const link = document.createElement('a'); link.href = url; link.download = (room.name.replace(/[^a-zA-Z0-9áéíóúñ _-]/g, '').trim() || 'habitacion') + '.json'; link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
+  async function downloadPending() {
+    try { await downloadOfflineBackup(); }
+    catch (cause) { setNotice(cause instanceof Error ? cause.message : 'No se pudo descargar la copia.'); }
+  }
+  async function useServerVersion() {
+    if (!window.confirm('¿Usar la versión del servidor? Los cambios pendientes de este dispositivo se descartarán. Puedes descargarlos antes.')) return;
+    try { await discardOffline(); }
+    catch (cause) { setNotice(cause instanceof Error ? cause.message : 'No se pudo abrir la versión guardada.'); }
+  }
   async function importRoom(file?: File) {
-    if (!file || readOnly) return;
+    if (!file || readOnly || importBusy.current) return;
+    importBusy.current = true; setImporting(true);
     try {
-      if (file.size > 1024 * 1024) throw new Error('El proyecto debe pesar menos de 1 MB.');
-      const next = validateRoom(JSON.parse(await file.text()));
-      change(next); select(null); setResetKey(value => value + 1); setNotice('Proyecto abierto.');
+      if (file.size > 150 * 1024 * 1024) throw new Error('La copia debe pesar menos de 150 MB.');
+      const data: unknown = JSON.parse(await file.text()), backup = parseProjectBackup(data);
+      if (!backup && file.size > 1024 * 1024) throw new Error('El proyecto debe pesar menos de 1 MB.');
+      let next = backup?.room ?? validateRoom(data);
+      if (backup) {
+        const mapped = new Map<string, string>();
+        for (const asset of backup.assets) {
+          const saved = await uploadModel(new File([asset.blob], asset.name + '.glb', { type: 'model/gltf-binary' }), roomId);
+          mapped.set(asset.id, saved.id);
+        }
+        next = validateRoom({ ...next, furniture: next.furniture.map(item => item.type === 'custom' ? { ...item, assetId: mapped.get(item.assetId!) } : item) });
+      }
+      if (!change(next)) throw new Error('No se pudo abrir la copia. Los archivos del modelo siguen disponibles en Modelos propios.');
+      if (backup) await uploadSketch(backup.sketch ? new File([backup.sketch], 'croquis', { type: backup.sketch.type }) : null);
+      select(null); setResetKey(value => value + 1); setNotice('Proyecto abierto.');
     } catch (error) { setNotice(error instanceof SyntaxError ? 'El archivo no es un proyecto válido.' : error instanceof Error ? error.message : 'No se pudo abrir el archivo.'); }
-    if (importRef.current) importRef.current.value = '';
+    finally { importBusy.current = false; setImporting(false); if (importRef.current) importRef.current.value = ''; }
   }
   const items: { selection: Selection; name: string; Icon: typeof Box }[] = [
     ...room.furniture.map((item, index) => ({ selection: { kind: 'furniture', id: item.id } as Selection, name: furnitureName(item) + ' ' + (index + 1), Icon: FURNITURE_ICONS[item.type] })),
@@ -317,7 +351,7 @@ export default function App({ onHome = () => window.location.assign(DESIGNS_PATH
       <details ref={fileRef} className="file-menu desktop-only"><summary onClick={() => setMobilePanel(null)}>Archivo <ChevronDown size={16} /></summary><div><button disabled={readOnly} onClick={() => { importRef.current?.click(); if (fileRef.current) fileRef.current.open = false; }}><ArrowUpFromLine size={17} />Abrir proyecto</button><button onClick={() => { exportRoom(); if (fileRef.current) fileRef.current.open = false; }}><ArrowDownToLine size={17} />Descargar copia</button></div></details>
       <button className="editor-home" aria-label="Mis diseños" title="Mis diseños" onClick={onHome}><Layers3 size={19} /><span>Mis diseños</span></button>
       <div className="project-name"><span className="project-dot" /><NameInput label="Nombre del proyecto" readOnly={readOnly} value={room.name} onChange={name => change({ ...room, name })} notify={setNotice} /></div>
-      <div className="header-actions"><span className={'saved-status ' + (readOnly ? 'readonly-status' : '')} role="status">{!connected ? <CircleHelp size={16} /> : readOnly ? <Shield size={16} /> : status === 'saving' ? <LoaderCircle size={16} className="saving-spinner" /> : status === 'error' ? <CircleHelp size={16} /> : <Check size={16} />}<span>{!connected ? 'Sin conexión' : readOnly ? 'Solo lectura' : status === 'saving' ? 'Guardando…' : status === 'error' ? 'No guardado' : 'Guardado'}</span></span>{role !== 'public' && <Notifications onOpen={() => { setMobilePanel(null); if (optionsRef.current) optionsRef.current.open = false; }} />}<button className="header-help icon-button" aria-label="Controles" onClick={() => setHelpOpen(true)}><CircleHelp size={20} /></button><button className="save-button" aria-label="Compartir diseño" disabled={status === 'saving' || status === 'error'} onClick={() => setShareOpen(true)}><Share2 size={18} /><span>Compartir</span></button></div>
+      <div className="header-actions"><span className={'saved-status ' + (readOnly ? 'readonly-status' : '')} role="status" title={statusLabel}>{status === 'offline' ? <WifiOff size={16} /> : !connected || status === 'conflict' || status === 'error' ? <CircleHelp size={16} /> : readOnly ? <Shield size={16} /> : saving ? <LoaderCircle size={16} className="saving-spinner" /> : <Check size={16} />}<span>{statusLabel}</span></span>{role !== 'public' && connected && <Notifications onOpen={() => { setMobilePanel(null); if (optionsRef.current) optionsRef.current.open = false; }} />}<button className="header-help icon-button" aria-label="Controles" onClick={() => setHelpOpen(true)}><CircleHelp size={20} /></button><button className="save-button" aria-label="Compartir diseño" disabled={!connected || saving || pendingOffline || status === 'error' || status === 'conflict'} onClick={() => setShareOpen(true)}><Share2 size={18} /><span>Compartir</span></button></div>
       <input ref={importRef} hidden type="file" accept="application/json,.json" onChange={event => void importRoom(event.target.files?.[0])} />
     </header>
     <div className="workspace-bar">
@@ -342,11 +376,12 @@ export default function App({ onHome = () => window.location.assign(DESIGNS_PATH
         {mode !== 'plan' && <><div className="view-title"><span className="view-title-dot" />{mode === 'walk' ? 'Vista interior' : 'Perspectiva'}</div><div className="viewport-bottom"><div className="navigation-hint"><MousePointer2 size={13} />{mode === 'walk' ? 'Arrastra para mirar' : !readOnly && selection && (furniture || opening || light) ? 'Arrastra el elemento o sus controles' : 'Toca para seleccionar · Arrastra para girar'}</div><button className="focus-button" aria-label="Restablecer vista" onClick={() => setResetKey(value => value + 1)}><Focus size={16} /></button></div></>}
         {selection && mode !== 'walk' && <div className="selection-dock"><span>{selectedName}</span>{(furniture || opening || light) && !readOnly && <><button className={transformMode === 'translate' ? 'active' : ''} aria-label="Mover elemento" title="Mover elemento" aria-pressed={transformMode === 'translate'} onClick={() => setTransformMode('translate')}><Move size={18} /><span>Mover</span></button>{furniture && <button className={transformMode === 'rotate' ? 'active' : ''} aria-label="Girar elemento" title="Girar elemento" aria-pressed={transformMode === 'rotate'} onClick={() => setTransformMode('rotate')}><RotateCcw size={18} /><span>Girar</span></button>}</>}<button className="selection-properties" aria-label="Propiedades del elemento" onClick={() => showProperties(selection.kind === 'wall' || selection.kind === 'floor' || selection.kind === 'ceiling' ? 'color' : 'item')}><Settings2 size={19} /><span>Editar</span></button>{(furniture || opening || light) && !readOnly && <button className="desktop-only" aria-label="Eliminar elemento seleccionado" onClick={removeSelected}><Trash2 size={18} /></button>}<button aria-label="Deseleccionar elemento" onClick={() => select(null)}><X size={18} /></button></div>}
       </div>
-      <div className="viewport-status"><span>{!connected ? 'Sin conexión' : readOnly ? 'Solo lectura' : status === 'saving' ? 'Guardando…' : status === 'error' ? 'No guardado' : 'Guardado'}</span><span>{area.toFixed(1)} m² · {room.vertices.length} paredes</span></div>
+      <div className="viewport-status"><span>{statusLabel}</span><span>{area.toFixed(1)} m² · {room.vertices.length} paredes</span></div>
     </main>
     <aside aria-label="Propiedades del diseño" className={'properties-panel ' + (mobilePanel === 'properties' ? 'mobile-open' : '')}>{propertiesPanel}</aside>
     {mobilePanel && <button className="mobile-backdrop" aria-label="Cerrar panel" onClick={() => setMobilePanel(null)} />}
-    {status === 'error' && <div className="save-error" role="alert"><CircleHelp size={17} /><span>{saveError}</span><button onClick={retry}>Reintentar</button><button aria-label="Descargar cambios sin guardar" onClick={exportRoom}><ArrowDownToLine size={15} /></button></div>}
+    {status === 'offline' && offlineAllowed && <div className="offline-note" role="status"><WifiOff size={17} /><span>{pendingOffline ? 'Sin conexión · Cambios guardados en este dispositivo' : 'Sin conexión · Puedes seguir editando'}</span><button aria-label="Reintentar conexión" onClick={retry}>Reconectar</button></div>}
+    {(status === 'error' || status === 'conflict') && <div className="save-error" role="alert"><CircleHelp size={17} /><span>{saveError}</span><button onClick={retry}>Reintentar</button><button aria-label="Descargar cambios sin guardar" onClick={offlineAllowed || pendingOffline ? () => void downloadPending() : exportRoom}><ArrowDownToLine size={15} /></button>{status === 'conflict' && <button onClick={() => void useServerVersion()}>Usar versión guardada</button>}</div>}
     {notice && <div className="toast" role="status"><CircleHelp size={17} /><span>{notice}</span><button aria-label="Cerrar aviso" onClick={() => setNotice('')}><X size={15} /></button></div>}
     <dialog ref={addRef} className="add-dialog catalog-dialog" onCancel={() => setAddOpen(false)}><header className="dialog-header"><button autoFocus className="icon-button dialog-close" aria-label="Cerrar agregar" onClick={() => setAddOpen(false)}><X size={20} /></button><h2>{addingOpening ? addingOpening === 'door' ? 'Agregar puerta' : 'Agregar ventana' : modelsOpen ? 'Modelos propios' : category ? FURNITURE_LABELS[category] : 'Agregar elemento'}</h2></header><fieldset className="property-fields" disabled={readOnly}>{addingOpening ? <OpeningForm key={addingOpening} room={room} type={addingOpening} initialWall={selectedWall} onCreate={createOpening} onCancel={() => setAddingOpening(null)} /> : category ? <FurnitureCatalog category={category} onBack={() => setCategory(null)} onSelect={preset => insert(preset.type, 'double', preset.id)} /> : modelsOpen ? <ModelLibrary roomId={roomId} canManage={canManage} disabled={readOnly} onSelect={insertModel} onCreate={() => openWorkshop()} onBack={() => setModelsOpen(false)} /> : <div className="add-item-grid"><button onClick={() => setAddingOpening('door')}><DoorOpen size={24} /><span>Puerta</span></button><button onClick={() => setAddingOpening('window')}><Grid2X2 size={24} /><span>Ventana</span></button><button onClick={() => insert('light')}><Lightbulb size={24} /><span>Foco</span></button>{Object.entries(BED_SIZES).map(([key, preset]) => <button key={key} onClick={() => insert('bed', key as BedSize)}><BedDouble size={25} /><span>Cama {preset.label.toLowerCase()}</span></button>)}{(['wardrobe', 'vanity', 'nightstand'] as const).map(type => { const Icon = FURNITURE_ICONS[type]; return <button key={type} onClick={() => setCategory(type)}><Icon size={24} /><span>{FURNITURE_LABELS[type]}</span></button>; })}<button onClick={() => openWorkshop()}><Plus size={24} /><span>Crear elemento</span></button><button onClick={() => setModelsOpen(true)}><Box size={24} /><span>Modelos propios</span></button></div>}</fieldset>{!addingOpening && addError && <p className="add-error field-feedback" role="alert">{addError}</p>}</dialog>
     <dialog ref={shareRef} className="share-dialog" onCancel={() => setShareOpen(false)}><header className="dialog-header"><button autoFocus className="icon-button dialog-close" aria-label="Cerrar compartir" onClick={() => setShareOpen(false)}><X size={20} /></button><h2>Compartir diseño</h2></header>{shared ? <><p>Enlace de lectura</p><input className="share-url" aria-label="Enlace del proyecto" readOnly value={shareUrl} onFocus={event => event.target.select()} /><button className="primary-button" onClick={async () => { try { await navigator.clipboard.writeText(shareUrl); setNotice('Enlace copiado.'); setShareOpen(false); } catch { setNotice('Selecciona el enlace para copiarlo.'); } }}><Copy size={15} />Copiar enlace</button>{canManage && <button className="outline-button full-width share-disable" disabled={sharing} onClick={() => void changeSharing(false)}>Desactivar enlace</button>}</> : canManage && <button className="primary-button" disabled={sharing} onClick={() => void changeSharing(true)}>{sharing ? <LoaderCircle size={16} className="saving-spinner" /> : <Share2 size={16} />}Crear enlace</button>}{shareError && <p className="share-error" role="alert">{shareError}</p>}{shareOpen && canManage && <CollaborationPanel roomId={roomId} />}{!canManage && !shared && <p>Solo el propietario puede dar acceso.</p>}</dialog>

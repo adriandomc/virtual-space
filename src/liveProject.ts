@@ -4,7 +4,7 @@ import { validateRoom } from './model';
 import type { Room } from './types';
 
 export type ProjectRole = 'owner' | 'editor' | 'reader' | 'public';
-export type ProjectSnapshot = { id: string; room: Room; revision: number; canEdit: boolean; canManage: boolean; role: ProjectRole; hasSketch: boolean; sketchVersion: number; shared: boolean };
+export type ProjectSnapshot = { id: string; room: Room; revision: number; canEdit: boolean; canManage: boolean; role: ProjectRole; hasSketch: boolean; sketchVersion: number; shared: boolean; accountId?: string | null; offlineAllowed?: boolean; sketchMutationId?: string | null };
 type Edit = { previous: Room; next: Room; update: Uint8Array; id: string; batch?: string };
 const encode = (data: Uint8Array) => {
   let value = ''; for (let i = 0; i < data.length; i += 8192) value += String.fromCharCode(...data.subarray(i, i + 8192));

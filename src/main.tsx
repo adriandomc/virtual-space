@@ -2,7 +2,10 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { LoaderCircle } from 'lucide-react';
 import { siteRoute } from './routes';
+import { registerAppOffline } from './appOffline';
 import './styles.css';
+
+registerAppOffline();
 
 const Landing = React.lazy(() => import('./Landing'));
 const AccountApp = React.lazy(() => import('./AccountApp'));

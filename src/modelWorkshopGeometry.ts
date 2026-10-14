@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+import { workshopGroup } from './workshopGrouping';
 import type { FurnitureMaterial } from './types';
 
 export type EditableVertex = { id: number; position: [number, number, number]; indices: number[] };
@@ -215,6 +216,8 @@ export function cloneWorkshopModel(source: THREE.Group): THREE.Group {
       mesh.quaternion.identity(); mesh.scale.set(1, 1, 1);
     }
     mesh.name = object.name || `Pieza ${result.children.length + 1}`; mesh.castShadow = mesh.receiveShadow = true;
+    const group = workshopGroup(object);
+    if (group) mesh.userData.workshopGroup = group;
     result.add(mesh);
   });
   return result;
@@ -254,7 +257,8 @@ export async function exportWorkshopGLB(group: THREE.Group): Promise<ArrayBuffer
     let triangles = 0;
     if (copy.children.length >= 512) throw new Error('El modelo admite hasta 511 piezas.');
     copy.traverse(object => {
-      object.userData = {};
+      const group = workshopGroup(object);
+      object.userData = group ? { workshopGroup: group } : {};
       if (!(object instanceof THREE.Mesh)) return;
       const geometry = object.geometry;
       compactVisibleGeometry(geometry);

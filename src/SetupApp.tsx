@@ -11,8 +11,8 @@ function editorAddress() {
 }
 
 export default function SetupApp() {
-  const { room, setRoom, ready, status, error, role, connected, canManage, sketchUrl, uploadSketch, retry } = useProject();
-  const readOnly = role !== 'owner' && role !== 'editor';
+  const { room, setRoom, ready, status, error, role, readOnly, canManage, sketchUrl, uploadSketch, retry, pendingOffline, downloadOfflineBackup, discardOffline } = useProject();
+  const unauthorized = role !== 'owner' && role !== 'editor';
   const [destination, setDestination] = useState<'editor' | 'library' | null>(null);
   const latestRoom = useRef(room);
   latestRoom.current = room;
@@ -25,11 +25,11 @@ export default function SetupApp() {
   }
 
   useEffect(() => {
-    if (ready && (readOnly || (room.setupStep === undefined && !destination))) window.location.replace(editorAddress());
-    else if (ready && destination && status === 'saved') window.location.replace(destination === 'editor' ? editorAddress() : DESIGNS_PATH);
-  }, [ready, readOnly, room.setupStep, destination, status]);
+    if (ready && (unauthorized || (room.setupStep === undefined && !destination))) window.location.replace(editorAddress());
+    else if (ready && destination && (status === 'saved' || status === 'offline')) window.location.replace(destination === 'editor' ? editorAddress() : DESIGNS_PATH);
+  }, [ready, unauthorized, room.setupStep, destination, status]);
 
-  if (!ready || readOnly || (room.setupStep === undefined && !destination)) return <main className="account-page account-loading">{status === 'error' ? <><CircleHelp size={24} /><p className="account-error" role="alert">{error}</p><button className="account-primary" onClick={retry}>Reintentar</button><a href={DESIGNS_PATH}>Mis diseños</a></> : <><LoaderCircle size={25} className="saving-spinner" /><span>Cargando diseño…</span></>}</main>;
+  if (!ready || unauthorized || (room.setupStep === undefined && !destination)) return <main className="account-page account-loading">{status === 'error' ? <><CircleHelp size={24} /><p className="account-error" role="alert">{error}</p><button className="account-primary" onClick={retry}>Reintentar</button><a href={DESIGNS_PATH}>Mis diseños</a></> : <><LoaderCircle size={25} className="saving-spinner" /><span>Cargando diseño…</span></>}</main>;
 
-  return <Onboarding disabled={!connected} canManage={canManage} room={destination === 'editor' ? { ...room, setupStep: 2 } : room} onChange={change} sketchUrl={sketchUrl} onSketchChange={uploadSketch} status={destination && status !== 'error' ? 'loading' : status} error={error} onRetry={retry} onFinish={finish} onCancel={() => setDestination('library')} />;
+  return <Onboarding disabled={readOnly} canManage={canManage} room={destination === 'editor' ? { ...room, setupStep: 2 } : room} onChange={change} sketchUrl={sketchUrl} onSketchChange={uploadSketch} status={destination && !['error', 'conflict', 'offline'].includes(status) ? 'loading' : status} error={error} onRetry={retry} onFinish={finish} onCancel={() => setDestination('library')} pendingOffline={pendingOffline} onDownload={downloadOfflineBackup} onDiscard={discardOffline} />;
 }

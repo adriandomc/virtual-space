@@ -17,7 +17,7 @@ export default function Privacy() {
     <header className="privacy-header"><a href="/" aria-label="3D Space, inicio"><Brand className="privacy-brand" /></a><a className="privacy-back" href="/"><ArrowLeft size={18} />Volver al inicio</a></header>
     <main className="privacy-main">
       <article className="privacy-document">
-        <header><h1>Aviso de privacidad</h1><p className="privacy-updated">Última actualización: 13 de octubre de 2026</p></header>
+        <header><h1>Aviso de privacidad</h1><p className="privacy-updated">Última actualización: 14 de octubre de 2026</p></header>
         {!complete && <p className="privacy-draft" role="status">Aviso en preparación: falta confirmar los datos del responsable y la configuración del servidor.</p>}
         <p className="privacy-summary">3D Space no incorpora analíticas de uso, publicidad ni rastreadores. Los diseños son privados por defecto y sólo se muestran a otras personas cuando decides compartirlos.</p>
         <nav className="privacy-index" aria-label="Secciones del aviso"><a href="#datos">Datos</a><a href="#cookies">Cookies</a><a href="#opciones">Tus opciones</a><a href="#contacto">Contacto</a></nav>
@@ -66,7 +66,9 @@ export default function Privacy() {
             <div><dt>Retirar la elección</dt><dd>Cierra sesión para eliminar la cookie y revocar ese acceso. Puedes volver a entrar sin marcar «Recordar sesión». También puedes borrar las cookies desde el navegador; borrarlas impide mantener el acceso a tu cuenta.</dd></div>
           </dl>
           <p>La cookie está protegida para que el código de la página no pueda leerla y se transmite por conexiones seguras en producción. Una elección nueva sobre recordar el acceso se aplica al volver a iniciar sesión.</p>
-          <p>Tus proyectos se guardan en el servidor; la aplicación no utiliza almacenamiento local del navegador para conservarlos. El navegador puede mantener recursos del sitio en su caché; puedes gestionarlos desde sus ajustes.</p>
+          <p>Los proyectos se guardan en el servidor. Para trabajar sin conexión, este navegador conserva una copia de los diseños privados sin colaboración que hayas abierto, sus croquis y modelos disponibles y los cambios pendientes. También mantiene los recursos de la aplicación en caché. Estas copias permiten reabrir el trabajo en este dispositivo durante una interrupción de la conexión; no son un respaldo externo.</p>
+          <p>Los borradores se separan por cuenta y no contienen contraseñas ni claves de sesión. Al reconectar, se comprueban la sesión, el acceso y la versión guardada antes de enviar los cambios. Si hay un conflicto, el borrador se conserva para que puedas recuperarlo. El trabajo sin conexión no renueva el plazo de inactividad de la cuenta en el servidor.</p>
+          <p>Al cerrar sesión correctamente, la aplicación elimina las copias sin conexión de este navegador. También puedes borrarlas desde los datos del sitio en los ajustes del navegador; esto elimina los cambios que todavía no se hayan sincronizado. La eliminación del contenido del servidor no puede borrar un dispositivo que permanece desconectado, ni las copias que hayas descargado por tu cuenta.</p>
           <p>No se muestra un banner para aceptar cookies opcionales durante la visita: la única elección adicional es recordar la sesión y se realiza en el formulario de acceso. Si se añaden cookies para otras finalidades, se informará y se solicitará la elección que corresponda antes de utilizarlas.</p>
         </section>
 

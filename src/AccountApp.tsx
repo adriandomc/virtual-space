@@ -3,7 +3,10 @@ import { Box, Eye, EyeOff, LoaderCircle, LogOut, Plus, Trash2 } from 'lucide-rea
 import Brand from './Brand';
 import Notifications from './Notifications';
 import { createBlankRoom } from './onboardingModel';
-import { accountRequest } from './accountApi';
+import { accountRequest, isNetworkError } from './accountApi';
+import { offlineIdentity, rememberOfflineIdentity } from './offlineIdentity';
+import { listOfflineDesigns } from './offlineProject';
+import { clearOffline, removeOffline } from './offlineStorage';
 import { TERMS_VERSION } from './legalPolicy';
 import { accountRedirect, DESIGNS_PATH, editorPath, LOGIN_PATH, type SitePage } from './routes';
 import './account.css';
@@ -66,6 +69,7 @@ export default function AccountApp({ page }: { page: Exclude<SitePage, 'landing'
   const [loadingSession, setLoadingSession] = useState(true);
   const [sessionError, setSessionError] = useState('');
   const [sessionAttempt, setSessionAttempt] = useState(0);
+  const [offline, setOffline] = useState(false);
   const [designs, setDesigns] = useState<Design[]>([]);
   const [loadingDesigns, setLoadingDesigns] = useState(false);
   const [libraryAttempt, setLibraryAttempt] = useState(0);
@@ -78,12 +82,29 @@ export default function AccountApp({ page }: { page: Exclude<SitePage, 'landing'
   const roomId = new URL(window.location.href).searchParams.get('room');
 
   useEffect(() => {
-    if (page === 'editor') return;
     let active = true;
     setLoadingSession(true); setSessionError('');
-    void accountRequest<{ user: User | null }>('/api/auth/session').then(result => { if (active) setUser(result.user); }).catch(cause => { if (active) setSessionError(cause instanceof Error ? cause.message : 'No se pudo conectar.'); }).finally(() => { if (active) setLoadingSession(false); });
+    void accountRequest<{ user: User | null }>('/api/auth/session').then(async result => {
+      if (!active) return;
+      if (result.user) await rememberOfflineIdentity(result.user).catch(() => {});
+      else await removeOffline('meta', 'identity').catch(() => {});
+      if (active) { setUser(result.user); setOffline(false); }
+    }).catch(async cause => {
+      const identity = isNetworkError(cause) ? await offlineIdentity().catch(() => null) : null;
+      if (!active) return;
+      if (identity) { setUser(identity); setOffline(true); }
+      else setSessionError(cause instanceof Error ? cause.message : 'No se pudo conectar.');
+    }).finally(() => { if (active) setLoadingSession(false); });
     return () => { active = false; };
   }, [page, sessionAttempt]);
+
+  useEffect(() => {
+    const reconnect = () => setSessionAttempt(current => current + 1);
+    const offlineError = (event: Event) => { const message = (event as CustomEvent).detail; if (typeof message === 'string') setError(message); };
+    window.addEventListener('online', reconnect);
+    window.addEventListener('space-offline-error', offlineError);
+    return () => { window.removeEventListener('online', reconnect); window.removeEventListener('space-offline-error', offlineError); };
+  }, []);
 
   const redirect = loadingSession || sessionError ? null : accountRedirect(page, !!user);
   useEffect(() => { if (redirect) window.location.replace(redirect); }, [redirect]);
@@ -97,14 +118,22 @@ export default function AccountApp({ page }: { page: Exclude<SitePage, 'landing'
       const generation = libraryGeneration.current;
       if (!silent) { setLoadingDesigns(true); setError(''); }
       void accountRequest<{ rooms: Design[] }>('/api/rooms').then(result => {
-        if (active && generation === libraryGeneration.current && !pendingAccount.current) setDesigns(result.rooms);
-      }).catch(cause => { if (active && generation === libraryGeneration.current) setError(cause instanceof Error ? cause.message : 'No se pudieron cargar los diseños.'); }).finally(() => { loading = false; if (active) setLoadingDesigns(false); });
+        if (active && generation === libraryGeneration.current && !pendingAccount.current) { setDesigns(result.rooms); setOffline(false); }
+      }).catch(async cause => {
+        if (!active || generation !== libraryGeneration.current) return;
+        if (isNetworkError(cause)) {
+          const cached = await listOfflineDesigns(user.id).catch(() => []);
+          if (!active || generation !== libraryGeneration.current) return;
+          setDesigns(cached); setOffline(true);
+          setError(cached.length ? '' : 'No hay diseños disponibles sin conexión en este dispositivo.');
+        } else setError(cause instanceof Error ? cause.message : 'No se pudieron cargar los diseños.');
+      }).finally(() => { loading = false; if (active) setLoadingDesigns(false); });
     };
     const refresh = () => { if (document.visibilityState === 'visible') load(true); };
     load();
     const timer = setInterval(refresh, 30000);
-    window.addEventListener('focus', refresh); document.addEventListener('visibilitychange', refresh);
-    return () => { active = false; clearInterval(timer); window.removeEventListener('focus', refresh); document.removeEventListener('visibilitychange', refresh); };
+    window.addEventListener('focus', refresh); window.addEventListener('online', refresh); document.addEventListener('visibilitychange', refresh);
+    return () => { active = false; clearInterval(timer); window.removeEventListener('focus', refresh); window.removeEventListener('online', refresh); document.removeEventListener('visibilitychange', refresh); };
   }, [user, page, libraryAttempt]);
 
   async function createDesign() {
@@ -129,7 +158,7 @@ export default function AccountApp({ page }: { page: Exclude<SitePage, 'landing'
     if (pending) return;
     libraryGeneration.current++;
     setPending('logout'); setError('');
-    try { await accountRequest('/api/auth/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); window.location.assign(LOGIN_PATH); }
+    try { await accountRequest('/api/auth/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); await clearOffline(); window.location.assign(LOGIN_PATH); }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudo cerrar sesión.'); }
     finally { setPending(null); }
   }
@@ -137,9 +166,10 @@ export default function AccountApp({ page }: { page: Exclude<SitePage, 'landing'
   if (page === 'editor' && roomId) return <Suspense fallback={<main className="account-page account-loading" aria-label="Cargando diseño"><LoaderCircle className="saving-spinner" size={25} /></main>}>{new URL(window.location.href).searchParams.get('setup') === '1' ? <SetupApp /> : <RoomEditor onHome={() => window.location.assign(DESIGNS_PATH)} />}</Suspense>;
   if (loadingSession || redirect) return <main className="account-page account-loading" aria-label="Cargando cuenta"><LoaderCircle className="saving-spinner" size={25} /></main>;
   if (sessionError) return <main className="account-page account-loading"><p className="account-error" role="alert">{sessionError}</p><button className="account-secondary" onClick={() => setSessionAttempt(current => current + 1)}>Reintentar</button></main>;
-  if (!user) return <AuthScreen onAuthenticated={setUser} />;
+  if (!user) return <AuthScreen onAuthenticated={next => { void rememberOfflineIdentity(next).catch(() => {}).finally(() => setUser(next)); }} />;
   return <main className="account-page library-page"><header className="account-header"><Brand /><div><span className="account-username">{user.username}</span><Notifications onAccepted={() => setLibraryAttempt(current => current + 1)} /><button type="button" className="account-secondary" aria-label="Cerrar sesión" disabled={!!pending} onClick={() => void logout()}><LogOut size={17} /><span>Cerrar sesión</span></button></div></header>
-    <section className="design-library" aria-labelledby="designs-title"><div className="library-heading"><h1 id="designs-title">Mis diseños</h1><button type="button" className="account-primary" disabled={!!pending} onClick={() => void createDesign()}>{pending === 'create' ? <LoaderCircle size={17} className="saving-spinner" /> : <Plus size={19} />}Nuevo diseño</button></div>
+    <section className="design-library" aria-labelledby="designs-title"><div className="library-heading"><h1 id="designs-title">Mis diseños</h1><button type="button" className="account-primary" disabled={!!pending || offline} onClick={() => void createDesign()}>{pending === 'create' ? <LoaderCircle size={17} className="saving-spinner" /> : <Plus size={19} />}Nuevo diseño</button></div>
+      {offline && <p className="account-note" role="status">Sin conexión · Diseños disponibles en este dispositivo</p>}
       {error && <div className="library-error"><p className="account-error" role="alert">{error}</p><button type="button" className="account-secondary" disabled={!!pending} onClick={() => setLibraryAttempt(current => current + 1)}>Reintentar</button></div>}
       {loadingDesigns ? <div className="library-empty" aria-label="Cargando diseños"><LoaderCircle size={23} className="saving-spinner" /></div> : designs.length ? <ul className="design-list">{designs.map(design => <li key={design.id}><a href={editorPath(design.id, design.role === 'owner' && design.setupStep !== undefined)} className="design-open"><span className="design-icon"><Box size={27} strokeWidth={1.3} /></span><span><strong>{design.name}</strong>{design.role !== 'owner' && <span className="design-progress">Compartido · {design.role === 'editor' ? 'Editor' : 'Lector'}</span>}{design.role === 'owner' && design.setupStep !== undefined ? <span className="design-progress">Continuar preparación</span> : <time dateTime={new Date(design.updatedAt).toISOString()}>{new Date(design.updatedAt).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' })}</time>}</span></a>{design.role === 'owner' && <button type="button" className="design-delete" aria-label={'Eliminar ' + design.name} disabled={!!pending} onClick={() => void deleteDesign(design)}>{pending === design.id ? <LoaderCircle size={19} className="saving-spinner" /> : <Trash2 size={19} />}</button>}</li>)}</ul> : !error && <p className="library-empty">Sin diseños</p>}
     </section>

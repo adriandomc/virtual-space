@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useId, useRef, useState } from 'react';
-import { Archive, ArrowLeft, ArrowRight, BedDouble, Box, Check, Copy, DoorClosed, DoorOpen, Grid2X2, Lightbulb, LoaderCircle, Plus, Table2, Trash2, X } from 'lucide-react';
+import { Archive, ArrowLeft, ArrowRight, BedDouble, Box, Check, Copy, DoorClosed, DoorOpen, Grid2X2, Lightbulb, LoaderCircle, Plus, Table2, Trash2, WifiOff, X } from 'lucide-react';
 import Brand from './Brand';
 import PlanEditor from './PlanEditor';
 import { parseColor } from './fieldDraft';
@@ -26,12 +26,15 @@ type Props = {
   onSketchChange: (file: File | null) => Promise<void>;
   onFinish: () => void;
   onCancel: () => void;
-  status: 'loading' | 'saving' | 'saved' | 'error';
+  status: 'loading' | 'saving' | 'saved' | 'error' | 'offline' | 'syncing' | 'conflict';
   error: string;
   onRetry: () => void;
   roomId?: string;
   canManage?: boolean;
   disabled?: boolean;
+  pendingOffline?: boolean;
+  onDownload?: () => Promise<void>;
+  onDiscard?: () => Promise<void>;
 };
 const STEPS: { id: OnboardingStep; label: string }[] = [{ id: 'plan', label: 'Croquis' }, { id: 'colors', label: 'Colores' }, { id: 'decoration', label: 'Decoración' }];
 const FINISHES: [FloorFinish, string][] = [['wood', 'Madera'], ['tile-grid', 'Loseta'], ['tile-brick', 'Loseta trabada'], ['tile-checker', 'Damero'], ['marble', 'Mármol'], ['concrete', 'Concreto']];
@@ -53,7 +56,7 @@ function ColorField({ label, value, onChange, onNotice, disabled }: { label: str
   }}><Copy size={19} /></button></div></div>;
 }
 
-export default function Onboarding({ room, onChange, sketchUrl, onSketchChange, onFinish, onCancel, status, error, onRetry, roomId, canManage = false, disabled: editingDisabled = false }: Props) {
+export default function Onboarding({ room, onChange, sketchUrl, onSketchChange, onFinish, onCancel, status, error, onRetry, roomId, canManage = false, disabled: editingDisabled = false, pendingOffline = false, onDownload, onDiscard }: Props) {
   const step = room.setupStep ?? 0;
   const [selection, setSelection] = useState<Selection | null>(null);
   const [surface, setSurface] = useState('all'), [bedSize, setBedSize] = useState<BedSize>('double');
@@ -199,7 +202,7 @@ export default function Onboarding({ room, onChange, sketchUrl, onSketchChange, 
       </fieldset>
       <section className="setup-preview" aria-label={step === 0 ? 'Croquis del diseño' : 'Vista previa del diseño'}>{step === 0 ? <PlanEditor key={planKey} room={room} onChange={change} selection={selection} onSelect={setSelection} sketchUrl={sketchUrl} onSketchChange={sketch} onDrawingChange={setDrawing} hideSurfaceControls readOnly={disabled} /> : <><Suspense fallback={<div className="setup-preview-loading" role="status"><LoaderCircle size={25} className="setup-spinner" /><span>Cargando vista…</span></div>}><RoomScene room={room} roomId={activeRoomId} mode="orbit" selection={sceneSelection} onSelect={selectScene} onChange={change} readOnly={disabled || step === 1} transformMode="translate" showFurniture={room.showFurniture} resetKey={step} /></Suspense><span className="setup-preview-label">Vista previa</span></>}</section>
     </main>
-    <footer className="setup-footer"><div className="setup-feedback" aria-live="polite">{(localError || error) ? <div className="setup-error" role="alert"><span>{localError || error}</span>{status === 'error' && <button type="button" onClick={onRetry}>Reintentar</button>}</div> : <><span className="setup-save-state">{status === 'saving' || busy ? <><LoaderCircle size={17} className="setup-spinner" />Guardando…</> : status === 'saved' ? <><Check size={17} />Guardado</> : null}</span>{notice && <span>{notice}</span>}</>}<details className="setup-legal"><summary>Información</summary><nav aria-label="Información legal"><a className="privacy-link" href="/privacy" target="_blank" rel="noopener">Aviso de privacidad</a><a className="privacy-link" href="/terms" target="_blank" rel="noopener">Condiciones de uso</a></nav></details></div><div className="setup-actions"><button type="button" className="setup-secondary setup-back" aria-label="Atrás" disabled={disabled || step === 0 || drawing} onClick={() => { change({ ...room, setupStep: (step - 1) as 0 | 1 }); setLocalError(''); setNotice(''); setSelection(null); }}><ArrowLeft size={18} /><span>Atrás</span></button><div><button type="button" className="setup-skip" disabled={disabled} onClick={() => void skip()}>Omitir</button><button type="button" className="setup-primary" disabled={disabled || drawing || status === 'error'} onClick={advance}>{step === 2 ? 'Abrir editor' : 'Continuar'}<ArrowRight size={18} /></button></div></div></footer>
+    <footer className="setup-footer"><div className="setup-feedback" aria-live="polite">{(localError || error) ? <div className="setup-error" role="alert"><span>{localError || error}</span>{(status === 'error' || status === 'conflict') && <button type="button" onClick={onRetry}>Reintentar</button>}{(pendingOffline || status === 'conflict') && onDownload && <button type="button" onClick={() => void onDownload().catch(cause => setLocalError(cause.message))}>Descargar copia</button>}{status === 'conflict' && onDiscard && <button type="button" onClick={() => { if (window.confirm('¿Usar la versión del servidor? Descarga antes los cambios que quieras conservar.')) void onDiscard().catch(cause => setLocalError(cause.message)); }}>Usar versión guardada</button>}</div> : <><span className="setup-save-state">{status === 'saving' || status === 'syncing' || busy ? <><LoaderCircle size={17} className="setup-spinner" />Guardando…</> : status === 'saved' ? <><Check size={17} />Guardado</> : status === 'offline' ? <><WifiOff size={17} />{pendingOffline ? 'Guardado en este dispositivo' : 'Sin conexión'}</> : null}</span>{notice && <span>{notice}</span>}</>}<details className="setup-legal"><summary>Información</summary><nav aria-label="Información legal"><a className="privacy-link" href="/privacy" target="_blank" rel="noopener">Aviso de privacidad</a><a className="privacy-link" href="/terms" target="_blank" rel="noopener">Condiciones de uso</a></nav></details></div><div className="setup-actions"><button type="button" className="setup-secondary setup-back" aria-label="Atrás" disabled={disabled || step === 0 || drawing} onClick={() => { change({ ...room, setupStep: (step - 1) as 0 | 1 }); setLocalError(''); setNotice(''); setSelection(null); }}><ArrowLeft size={18} /><span>Atrás</span></button><div><button type="button" className="setup-skip" disabled={disabled} onClick={() => void skip()}>Omitir</button><button type="button" className="setup-primary" disabled={disabled || drawing || status === 'error' || status === 'conflict'} onClick={advance}>{step === 2 ? 'Abrir editor' : 'Continuar'}<ArrowRight size={18} /></button></div></div></footer>
     <dialog ref={catalogDialog} className="add-dialog setup-catalog-dialog" aria-labelledby="setup-catalog-title" onCancel={() => setCatalog(null)} onClose={() => setCatalog(null)} onClick={event => { if (event.target === event.currentTarget) setCatalog(null); }}><header className="setup-catalog-header"><h2 id="setup-catalog-title">{catalog === 'custom' ? 'Modelos propios' : 'Muebles'}</h2><button type="button" className="icon-button" aria-label="Cerrar catálogo" onClick={() => setCatalog(null)}><X size={21} /></button></header>{catalog === 'custom' ? <Suspense fallback={<p role="status">Cargando modelos…</p>}><ModelLibrary roomId={activeRoomId} canManage={canManage} disabled={disabled || !activeRoomId} onSelect={addModel} onCreate={() => openWorkshop()} /></Suspense> : catalog && <FurnitureCatalog category={catalog} onSelect={addPreset} />}{localError && <p className="account-error" role="alert">{localError}</p>}</dialog>
     {workshop && <Suspense fallback={<div className="setup-workshop-loading" role="status"><LoaderCircle size={25} className="setup-spinner" />Cargando editor…</div>}><ModelWorkshop item={workshop === 'new' ? undefined : workshop} roomId={activeRoomId} onSaved={addModel} onClose={() => setWorkshop(null)} /></Suspense>}
   </div>;

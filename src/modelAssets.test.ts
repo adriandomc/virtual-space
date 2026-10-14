@@ -87,6 +87,21 @@ function storageFixture() {
   return { database, owner, editor, outsider, roomId, anotherRoom, room, service };
 }
 
+test('offline model upload retries preserve the stable id and reject collisions', () => {
+  const { database, owner, roomId, anotherRoom, service } = storageFixture();
+  try {
+    const id = randomUUID(), data = glbFixture();
+    const first = service.upload(owner, data, 'Mesa.glb', roomId, id);
+    assert.equal(first.id, id);
+    assert.deepEqual(service.upload(owner, data, 'Mesa.glb', roomId, id), first);
+    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM model_assets').get()!.count, 1);
+    assert.throws(() => service.upload(owner, data, 'Otra.glb', roomId, id), /ya está en uso/);
+    assert.throws(() => service.upload(owner, glbFixture((_, binary) => binary.writeFloatLE(2, 12)), 'Mesa.glb', roomId, id), /ya está en uso/);
+    assert.throws(() => service.upload(owner, data, 'Mesa.glb', anotherRoom, id), /ya está en uso/);
+    assert.throws(() => service.upload(owner, data, 'Mesa.glb', roomId, 'invalid-id'), /identidad/);
+  } finally { database.close(); }
+});
+
 test('room-owned model assets allow editors, hide unused models from public links and forbid other-room references', () => {
   const { database, owner, editor, outsider, roomId, anotherRoom, room, service } = storageFixture();
   try {
