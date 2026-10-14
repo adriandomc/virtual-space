@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { WebGLRenderer } from 'three/src/renderers/WebGLRenderer.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { Copy, LoaderCircle, Move, PanelRight, Plus, Redo2, RotateCw, Scaling, Trash2, Undo2, X } from 'lucide-react';
+import { Copy, Focus, LoaderCircle, Magnet, Move, PanelRight, Plus, Redo2, RotateCw, Scaling, Trash2, Undo2, X } from 'lucide-react';
 import FurnitureCatalog from './FurnitureCatalog.tsx';
 import type { FurniturePreset } from './furnitureCatalog';
 import { createFurnitureModel } from './RoomScene';
@@ -17,18 +17,25 @@ import { createWorkshopPiece, WORKSHOP_PIECES, type WorkshopPiecePreset } from '
 import { captureWorkshopSnapshot, WorkshopHistory, type WorkshopSnapshot } from './workshopHistory';
 import { startWorkshopBoolean } from './workshopBooleanClient';
 import type { WorkshopBooleanOperation } from './workshopBoolean';
+import { alignWorkshopPiece, snapWorkshopPiece, type WorkshopAxis, type WorkshopAlignment } from './workshopAlignment';
 import './modelWorkshop.css';
 
 type Props = { item?: FurnitureItem; roomId: string; onSaved: (asset: ModelAsset) => boolean | void; onClose: () => void };
-type Panel = 'add' | 'model' | 'pieces' | 'geometry';
+type Panel = 'add' | 'model' | 'pieces' | 'alignment' | 'geometry';
 type Tool = 'translate' | 'rotate' | 'scale';
 type GeometryTool = 'vertices' | 'faces';
-type Runtime = { scene: THREE.Scene; camera: THREE.PerspectiveCamera; renderer: WebGLRenderer; controls: OrbitControls; transform: TransformControls; content: THREE.Group; proxy: THREE.Object3D; outline: THREE.BoxHelper | null; toolOutline: THREE.BoxHelper | null; points: THREE.Points | null; face: THREE.Mesh | null; dragged: boolean; vertexIndices: number[]; vertexMesh: THREE.Mesh | null; vertexId: number; pendingNormals: boolean };
+type Runtime = { scene: THREE.Scene; camera: THREE.PerspectiveCamera; renderer: WebGLRenderer; controls: OrbitControls; transform: TransformControls; content: THREE.Group; proxy: THREE.Object3D; outline: THREE.BoxHelper | null; toolOutline: THREE.BoxHelper | null; snapGuide: THREE.LineSegments | null; points: THREE.Points | null; face: THREE.Mesh | null; dragged: boolean; vertexIndices: number[]; vertexMesh: THREE.Mesh | null; vertexId: number; pendingNormals: boolean };
 const AXES = ['x', 'y', 'z'] as const;
 const numberFormat = (value: number) => Number(value.toFixed(4)).toString();
 const firstMaterial = (mesh: THREE.Mesh) => (Array.isArray(mesh.material) ? mesh.material[0] : mesh.material) as THREE.MeshStandardMaterial;
 const OPERATIONS = [['union', 'Unir'], ['subtract', 'Restar'], ['intersect', 'Intersección']] as const;
 const faceCount = (object: THREE.Mesh) => (object.geometry.index?.count ?? object.geometry.getAttribute('position').count) / 3;
+const ALIGNMENT_LABELS = {
+  x: ['Izquierda', 'Centro', 'Derecha', 'Al lado izquierdo', 'Al lado derecho'],
+  y: ['Abajo', 'Centro', 'Arriba', 'Debajo', 'Encima'],
+  z: ['Frente', 'Centro', 'Fondo', 'Delante', 'Detrás'],
+};
+const ALIGNMENTS: WorkshopAlignment[] = ['min', 'center', 'max', 'before', 'after'];
 
 function NumberControl({ label, value, onChange, min = -10000, max = 10000, integer = false }: { label: string; value: number; onChange: (value: number) => void; min?: number; max?: number; integer?: boolean }) {
   const field = useFieldDraft({ value, format: numberFormat, parse: raw => { const next = parseNumber(raw, min, max); return next !== null && (!integer || Number.isInteger(next)) ? next : null; }, onCommit: onChange });
@@ -53,7 +60,7 @@ function PieceThumbnail({ preset }: { preset: WorkshopPiecePreset }) {
   </svg>;
 }
 
-function removeHelper(runtime: Runtime, key: 'points' | 'face' | 'outline' | 'toolOutline') {
+function removeHelper(runtime: Runtime, key: 'points' | 'face' | 'outline' | 'toolOutline' | 'snapGuide') {
   const object = runtime[key];
   if (!object) return;
   object.removeFromParent(); object.geometry.dispose();
@@ -61,8 +68,23 @@ function removeHelper(runtime: Runtime, key: 'points' | 'face' | 'outline' | 'to
   runtime[key] = null;
 }
 
+function showSnapGuide(active: Runtime, piece: THREE.Mesh, matches: ReturnType<typeof snapWorkshopPiece>) {
+  removeHelper(active, 'snapGuide');
+  const points: number[] = [];
+  for (const match of matches) {
+    if (!match.reference) continue;
+    const bounds = new THREE.Box3().setFromObject(piece).union(new THREE.Box3().setFromObject(match.reference)).expandByScalar(.08);
+    const other = AXES.filter(axis => axis !== match.axis), center = bounds.getCenter(new THREE.Vector3());
+    center[match.axis] = match.value;
+    for (const axis of other) { const start = center.clone(), end = center.clone(); start[axis] = bounds.min[axis]; end[axis] = bounds.max[axis]; points.push(...start.toArray(), ...end.toArray()); }
+  }
+  if (!points.length) return;
+  active.snapGuide = new THREE.LineSegments(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(points, 3)), new THREE.LineBasicMaterial({ color: '#4a935c', depthTest: false, transparent: true, opacity: .9 }));
+  active.snapGuide.renderOrder = 20; active.scene.add(active.snapGuide);
+}
+
 export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props) {
-  const dialog = useRef<HTMLDialogElement>(null), mount = useRef<HTMLDivElement>(null), runtime = useRef<Runtime | null>(null);
+  const dialog = useRef<HTMLDialogElement>(null), mount = useRef<HTMLDivElement>(null), panelContent = useRef<HTMLDivElement>(null), runtime = useRef<Runtime | null>(null);
   const [ready, setReady] = useState(false), [error, setError] = useState(''), [saving, setSaving] = useState(false), [revision, setRevision] = useState(0);
   const [selected, setSelected] = useState<string | null>(null), [panel, setPanel] = useState<Panel>(item ? 'model' : 'add'), [tool, setTool] = useState<Tool>('translate'), [geometryTool, setGeometryTool] = useState<GeometryTool>('vertices');
   const [palette, setPalette] = useState<'primitives' | 'prefabs' | 'furniture'>('prefabs'), [second, setSecond] = useState(''), [operation, setOperation] = useState<WorkshopBooleanOperation>('union');
@@ -74,16 +96,19 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
   const [vertexId, setVertexId] = useState(0), [faceId, setFaceId] = useState(0), [faceVertices, setFaceVertices] = useState<[number, number, number]>([0, 1, 2]);
   const [name, setName] = useState(item?.name ?? 'Mi modelo');
   const [panelOpen, setPanelOpen] = useState(true);
-  const latest = useRef({ selected, panel, tool, geometryTool, vertexId, faceId, saving, computing, previewing, name });
-  latest.current = { selected, panel, tool, geometryTool, vertexId, faceId, saving, computing, previewing, name };
+  const [snapEnabled, setSnapEnabled] = useState(true), [snapGrid, setSnapGrid] = useState(true), [snapPieces, setSnapPieces] = useState(true), [gridStep, setGridStep] = useState(.05), [angleStep, setAngleStep] = useState(15);
+  const [alignmentReference, setAlignmentReference] = useState(''), [alignmentAxis, setAlignmentAxis] = useState<WorkshopAxis>('x');
+  const latest = useRef({ selected, panel, tool, geometryTool, vertexId, faceId, saving, computing, previewing, name, snapEnabled, snapGrid, snapPieces, gridStep });
+  latest.current = { selected, panel, tool, geometryTool, vertexId, faceId, saving, computing, previewing, name, snapEnabled, snapGrid, snapPieces, gridStep };
   const change = () => { setRevision(value => value + 1); setError(''); };
   const pieces = (runtime.current?.content.children ?? []).filter((object): object is THREE.Mesh => object instanceof THREE.Mesh);
   const mesh = pieces.find(piece => piece.uuid === selected);
   const vertices = mesh && panel === 'geometry' ? getEditableVertices(mesh.geometry) : [];
   const faces = mesh && panel === 'geometry' && geometryTool === 'faces' ? getModelFaces(mesh.geometry) : [];
   const vertex = vertices[Math.min(vertexId, Math.max(0, vertices.length - 1))];
+  const reference = pieces.find(piece => piece.uuid === alignmentReference && piece !== mesh);
 
-  function selectPiece(piece: THREE.Mesh | null) { setSelected(piece?.uuid ?? null); setSecond(value => value === piece?.uuid ? '' : value); setVertexId(0); setFaceId(0); setFaceVertices([0, 1, 2]); }
+  function selectPiece(piece: THREE.Mesh | null) { if (piece && latest.current.selected && piece.uuid !== latest.current.selected) setAlignmentReference(latest.current.selected); setSelected(piece?.uuid ?? null); setSecond(value => value === piece?.uuid ? '' : value); setVertexId(0); setFaceId(0); setFaceVertices([0, 1, 2]); }
   function discardPreview() {
     booleanSequence.current++;
     booleanJob.current?.cancel(); booleanJob.current = null;
@@ -95,16 +120,16 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
     const active = runtime.current;
     if (!active) { disposeWorkshopModel(snapshot.content); return; }
     active.transform.detach();
-    for (const key of ['points', 'face', 'outline', 'toolOutline'] as const) removeHelper(active, key);
+    for (const key of ['points', 'face', 'outline', 'toolOutline', 'snapGuide'] as const) removeHelper(active, key);
     disposeWorkshopModel(active.content);
     while (snapshot.content.children.length) active.content.add(snapshot.content.children[0]);
     setName(snapshot.name); setSelected(snapshot.selected); setSecond(''); setVertexId(0); setFaceId(0); change();
   }
-  function run(action: () => void, key?: string) {
+  function run(action: () => void | boolean, key?: string) {
     const active = runtime.current;
     if (!active || active.transform.dragging || latest.current.saving || latest.current.computing || latest.current.previewing) return;
     const before = captureWorkshopSnapshot(active.content, latest.current.selected, latest.current.name);
-    try { action(); if (active.content.children.reduce((sum, piece) => sum + faceCount(piece as THREE.Mesh), 0) > 200000) throw new Error('El modelo admite hasta 200 000 caras.'); history.current.record(before, key); change(); }
+    try { if (action() === false) { disposeWorkshopModel(before.content); return; } if (active.content.children.reduce((sum, piece) => sum + faceCount(piece as THREE.Mesh), 0) > 200000) throw new Error('El modelo admite hasta 200 000 caras.'); history.current.record(before, key); change(); }
     catch (cause) { restore(before); setError(cause instanceof Error ? cause.message : 'No se pudo hacer el cambio.'); }
   }
   function travelHistory(direction: 'undo' | 'redo') {
@@ -126,7 +151,7 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
       booleanJob.current = null;
       preview.current = { result, base: mesh, cutter, visibility: [mesh.visible, cutter.visible] };
       mesh.visible = cutter.visible = false; active.scene.add(result); active.transform.detach();
-      for (const key of ['points', 'face', 'outline', 'toolOutline'] as const) removeHelper(active, key);
+      for (const key of ['points', 'face', 'outline', 'toolOutline', 'snapGuide'] as const) removeHelper(active, key);
       setPreviewing(true); setComputing(false);
     } catch (cause) {
       if (runtime.current === active && booleanSequence.current === sequence) { booleanJob.current = null; setError(cause instanceof Error ? cause.message : 'No se pudo combinar las piezas.'); setComputing(false); }
@@ -157,6 +182,8 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
     if (element && !element.open) element.showModal();
   }, []);
 
+  useEffect(() => { if (panelContent.current) panelContent.current.scrollTop = 0; }, [panel]);
+
   useEffect(() => {
     const host = mount.current;
     if (!host) return;
@@ -171,12 +198,12 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
         const scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(43, 1, .01, 1000), content = new THREE.Group(), proxy = new THREE.Object3D();
         scene.add(content, proxy, new THREE.HemisphereLight('#ffffff', '#68705e', 2.4));
         const sun = new THREE.DirectionalLight('#fff6e5', 3); sun.position.set(4, 7, 5); sun.castShadow = true; sun.shadow.mapSize.set(1024, 1024); scene.add(sun);
-        const grid = new THREE.GridHelper(10, 40, '#a0ac98', '#d3dbca'); grid.position.y = -.006; scene.add(grid);
+        const grid = new THREE.GridHelper(10, 10, '#a0ac98', '#d3dbca'); grid.position.y = -.006; scene.add(grid);
         const canvas = renderer.domElement; canvas.setAttribute('aria-label', 'Editor de modelo 3D. Selecciona una pieza y arrastra los controles para editarla.'); canvas.tabIndex = 0; host.append(canvas);
         const controls = new OrbitControls(camera, canvas); controls.enableDamping = true; controls.dampingFactor = .08;
         camera.position.set(1.8, 1.2, 1.8); controls.target.set(0, .25, 0); controls.update();
         const transform = new TransformControls(camera, canvas); transform.setSize(window.matchMedia('(pointer: coarse)').matches ? 1.35 : 1.05); transform.setColors('#ce756a', '#819968', '#6d97b4', '#d7ab5b'); scene.add(transform.getHelper());
-        active = { scene, camera, renderer, controls, transform, content, proxy, outline: null, toolOutline: null, points: null, face: null, dragged: false, vertexIndices: [], vertexMesh: null, vertexId: 0, pendingNormals: false };
+        active = { scene, camera, renderer, controls, transform, content, proxy, outline: null, toolOutline: null, snapGuide: null, points: null, face: null, dragged: false, vertexIndices: [], vertexMesh: null, vertexId: 0, pendingNormals: false };
         runtime.current = active;
         const value = active;
         const resize = () => {
@@ -230,7 +257,14 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
             if (value.points) { value.points.geometry.getAttribute('position').setXYZ(value.vertexId, ...local.toArray() as [number, number, number]); value.points.geometry.getAttribute('position').needsUpdate = true; }
           } else {
             const object = value.transform.object;
-            if (object) { for (const axis of AXES) object.position[axis] = THREE.MathUtils.clamp(object.position[axis], -10000, 10000); clampWorkshopScale(object.scale); }
+            if (object) {
+              for (const axis of AXES) object.position[axis] = THREE.MathUtils.clamp(object.position[axis], -10000, 10000); clampWorkshopScale(object.scale);
+              if (object instanceof THREE.Mesh && value.transform.mode === 'translate' && latest.current.snapEnabled) {
+                const axes = AXES.filter(axis => value.transform.axis?.includes(axis.toUpperCase()));
+                const tolerance = THREE.MathUtils.clamp(2 * camera.position.distanceTo(controls.target) * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) / Math.max(1, host.clientHeight) * (window.matchMedia('(pointer: coarse)').matches ? 14 : 8), .002, .06);
+                showSnapGuide(value, object, snapWorkshopPiece(object, content.children.filter((piece): piece is THREE.Mesh => piece instanceof THREE.Mesh), axes, { grid: latest.current.snapGrid ? latest.current.gridStep : null, pieces: latest.current.snapPieces, tolerance }));
+              } else removeHelper(value, 'snapGuide');
+            }
           }
           value.outline?.update();
         };
@@ -238,8 +272,14 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
           controls.enabled = !event.value;
           if (event.value) { value.dragged = false; dragSnapshot.current = captureWorkshopSnapshot(content, latest.current.selected, latest.current.name); }
           if (!event.value) {
+            removeHelper(value, 'snapGuide');
             if (value.pendingNormals && value.vertexMesh) { value.vertexMesh.geometry.computeVertexNormals(); value.vertexMesh.geometry.computeBoundingBox(); value.vertexMesh.geometry.computeBoundingSphere(); const raw = value.vertexIndices[0]; const welded = getEditableVertices(value.vertexMesh.geometry).find(vertex => vertex.indices.includes(raw)); if (welded) setVertexId(welded.id); value.pendingNormals = false; }
-            if (dragSnapshot.current) { if (value.dragged) history.current.record(dragSnapshot.current); else disposeWorkshopModel(dragSnapshot.current.content); dragSnapshot.current = null; }
+            if (dragSnapshot.current) {
+              const object = value.transform.object, before = dragSnapshot.current.content.children.find(piece => piece.uuid === object?.uuid);
+              const moved = object && before && (!object.position.equals(before.position) || !object.quaternion.equals(before.quaternion) || !object.scale.equals(before.scale));
+              if (value.dragged && (value.vertexMesh || moved)) history.current.record(dragSnapshot.current); else disposeWorkshopModel(dragSnapshot.current.content);
+              dragSnapshot.current = null;
+            }
             change();
           }
         };
@@ -273,10 +313,27 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
   useEffect(() => {
     const active = runtime.current;
     if (!active || !ready) return;
+    active.transform.setTranslationSnap(snapEnabled && snapGrid && panel === 'geometry' ? gridStep : null);
+    active.transform.setRotationSnap(snapEnabled ? THREE.MathUtils.degToRad(angleStep) : null);
+    if (!snapEnabled) removeHelper(active, 'snapGuide');
+  }, [ready, snapEnabled, snapGrid, gridStep, angleStep, panel]);
+
+  useEffect(() => {
+    const active = runtime.current;
+    if (!active || !ready || !snapEnabled || !snapGrid) return;
+    const size = Math.min(10, gridStep * 200), grid = new THREE.GridHelper(size, Math.round(size / gridStep), '#bdc9b1', '#dce3d5');
+    grid.position.y = -.004; active.scene.add(grid);
+    return () => { grid.removeFromParent(); grid.geometry.dispose(); (Array.isArray(grid.material) ? grid.material : [grid.material]).forEach(material => material.dispose()); };
+  }, [ready, snapEnabled, snapGrid, gridStep]);
+
+  useEffect(() => {
+    const active = runtime.current;
+    if (!active || !ready) return;
     active.transform.detach(); active.vertexMesh = null; active.vertexIndices = [];
-    for (const key of ['points', 'face', 'outline', 'toolOutline'] as const) removeHelper(active, key);
+    for (const key of ['points', 'face', 'outline', 'toolOutline', 'snapGuide'] as const) removeHelper(active, key);
     if (previewing) return;
     if (panel === 'pieces' && second) { const cutter = active.content.children.find(piece => piece.uuid === second); if (cutter) { active.toolOutline = new THREE.BoxHelper(cutter, '#678cb4'); active.scene.add(active.toolOutline); } }
+    if (panel === 'alignment' && reference) { active.toolOutline = new THREE.BoxHelper(reference, '#678cb4'); active.scene.add(active.toolOutline); }
     const object = active.content.children.find(object => object.uuid === selected);
     if (!(object instanceof THREE.Mesh)) return;
     active.outline = new THREE.BoxHelper(object, '#b88a3d'); active.scene.add(active.outline);
@@ -298,7 +355,7 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
         }
       }
     } else { active.transform.setMode(tool); active.transform.setSpace(tool === 'translate' ? 'world' : 'local'); active.transform.attach(object); }
-  }, [ready, selected, second, panel, tool, geometryTool, vertexId, faceId, revision, saving, computing, previewing]);
+  }, [ready, selected, second, alignmentReference, panel, tool, geometryTool, vertexId, faceId, revision, saving, computing, previewing]);
 
   function addPiece(id: string) {
     run(() => {
@@ -365,6 +422,20 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
   if (mesh && !mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
   const dimensions = mesh ? mesh.geometry.boundingBox!.getSize(new THREE.Vector3()) : new THREE.Vector3();
   const openPanel = (next: Panel) => { if (locked) return; setPanel(next); setPanelOpen(true); };
+  const alignmentPanel = <>
+    <div className="workshop-snap-options">
+      <details className="workshop-transforms"><summary>Opciones de snap</summary>
+        <label className="workshop-toggle"><input type="checkbox" checked={snapEnabled} onChange={event => setSnapEnabled(event.target.checked)} />Snap al mover y girar</label>
+        <div className="workshop-snap-targets"><label className="workshop-toggle"><input type="checkbox" checked={snapGrid} onChange={event => setSnapGrid(event.target.checked)} />Cuadrícula</label><label className="workshop-toggle"><input type="checkbox" checked={snapPieces} onChange={event => setSnapPieces(event.target.checked)} />Entre piezas</label></div>
+        <div className="workshop-snap-steps"><label className="workshop-field"><span>Paso</span><select value={gridStep} onChange={event => setGridStep(Number(event.target.value))}>{[.01, .05, .1, .25].map(step => <option value={step} key={step}>{step * 100} cm</option>)}</select></label><label className="workshop-field"><span>Giro</span><select value={angleStep} onChange={event => setAngleStep(Number(event.target.value))}>{[5, 15, 30, 45, 90].map(step => <option value={step} key={step}>{step}°</option>)}</select></label></div>
+      </details>
+    </div>
+    <div className="workshop-align-targets"><label className="workshop-field"><span>Pieza a mover</span><select value={selected ?? ''} onChange={event => selectPiece(pieces.find(piece => piece.uuid === event.target.value) ?? null)}><option value="" disabled>Seleccionar</option>{pieces.map((piece, index) => <option key={piece.uuid} value={piece.uuid}>{piece.name} · {index + 1}</option>)}</select></label>
+    <label className="workshop-field"><span>Alinear con</span><select value={reference?.uuid ?? ''} onChange={event => setAlignmentReference(event.target.value)}><option value="">Seleccionar pieza</option>{pieces.filter(piece => piece !== mesh).map(piece => <option key={piece.uuid} value={piece.uuid}>{piece.name} · {pieces.indexOf(piece) + 1}</option>)}</select></label></div>
+    <div className="workshop-alignment-axis" role="group" aria-label="Eje de alineación">{([['x', 'Ancho'], ['y', 'Altura'], ['z', 'Fondo']] as const).map(([axis, label]) => <button type="button" key={axis} aria-pressed={alignmentAxis === axis} onClick={() => setAlignmentAxis(axis)}>{label}</button>)}</div>
+    <div className="workshop-align-buttons" role="group" aria-label="Alinear bordes o centro">{ALIGNMENTS.slice(0, 3).map((alignment, index) => <button type="button" key={alignment} disabled={!mesh || !reference} onClick={() => run(() => alignWorkshopPiece(mesh!, reference!, alignmentAxis, alignment))}>{ALIGNMENT_LABELS[alignmentAxis][index]}</button>)}</div>
+    <div className="workshop-align-buttons is-contact" role="group" aria-label="Juntar piezas">{ALIGNMENTS.slice(3).map((alignment, index) => <button type="button" key={alignment} disabled={!mesh || !reference} onClick={() => run(() => alignWorkshopPiece(mesh!, reference!, alignmentAxis, alignment))}>{ALIGNMENT_LABELS[alignmentAxis][index + 3]}</button>)}</div>
+  </>;
   const geometryPanel = mesh ? <>
     <label className="workshop-field"><span>Pieza</span><select value={selected ?? ''} onChange={event => selectPiece(pieces.find(piece => piece.uuid === event.target.value) ?? null)}>{pieces.map((piece, i) => <option key={piece.uuid} value={piece.uuid}>{piece.name} · {i + 1}</option>)}</select></label>
     <div className="workshop-geometry-tabs"><button type="button" aria-pressed={geometryTool === 'vertices'} onClick={() => setGeometryTool('vertices')}>Vértices</button><button type="button" aria-pressed={geometryTool === 'faces'} onClick={() => setGeometryTool('faces')}>Caras</button></div>
@@ -377,7 +448,7 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
     </>}
   </> : <p className="workshop-empty">Selecciona una pieza.</p>;
 
-  return <dialog ref={dialog} className={'model-workshop' + (!pieces.length ? ' is-empty' : '')} aria-labelledby="workshop-title" onCancel={event => { event.preventDefault(); if (!saving) onClose(); }} onKeyDown={event => {
+  return <dialog ref={dialog} className={'model-workshop' + (!pieces.length ? ' is-empty' : '') + (panel === 'alignment' ? ' is-aligning' : '')} aria-labelledby="workshop-title" onCancel={event => { event.preventDefault(); if (!saving) onClose(); }} onKeyDown={event => {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z' && !(event.target as HTMLElement).closest('input,textarea,select,[contenteditable="true"]')) { event.preventDefault(); travelHistory(event.shiftKey ? 'redo' : 'undo'); }
   }}>
     <header className="workshop-header"><h2 id="workshop-title">{item ? 'Editar modelo' : 'Crear modelo'}</h2><button type="button" className="workshop-save primary-button" onClick={() => void save()} disabled={!ready || locked || !pieces.length}>{saving && <LoaderCircle size={17} className="saving-spinner" />}{saving ? 'Guardando' : item ? 'Guardar copia' : 'Guardar modelo'}</button><button type="button" className="icon-button" aria-label="Cerrar editor de modelo" onClick={onClose} disabled={saving}><X size={22} /></button></header>
@@ -389,12 +460,13 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
           <button type="button" aria-label="Deshacer" title="Deshacer (Ctrl+Z)" disabled={!ready || saving || computing || !history.current.canUndo} onClick={() => travelHistory('undo')}><Undo2 size={20} /></button>
           <button type="button" aria-label="Rehacer" title="Rehacer (Ctrl+Mayús+Z)" disabled={!ready || locked || !history.current.canRedo} onClick={() => travelHistory('redo')}><Redo2 size={20} /></button>
           {([['translate', Move, 'Mover'], ['rotate', RotateCw, 'Girar'], ['scale', Scaling, 'Tamaño']] as const).map(([mode, Icon, label]) => <button type="button" key={mode} aria-label={label} title={label} aria-pressed={tool === mode && panel !== 'geometry'} disabled={locked || panel === 'geometry' || !mesh} onClick={() => setTool(mode)}><Icon size={20} /></button>)}
-          <button type="button" onClick={frameModel} disabled={!ready || !pieces.length}>Centrar</button><button type="button" aria-label={panelOpen ? 'Ocultar panel' : 'Mostrar panel'} title={panelOpen ? 'Ocultar panel' : 'Mostrar panel'} aria-expanded={panelOpen} aria-controls="workshop-panel" onClick={() => setPanelOpen(value => !value)}><PanelRight size={20} /></button>
+          <button type="button" className="workshop-snap" aria-label="Snap" title={snapEnabled ? 'Desactivar snap' : 'Activar snap'} aria-pressed={snapEnabled} disabled={!ready || locked} onClick={() => setSnapEnabled(value => !value)}><Magnet size={19} /><span>Snap</span></button>
+          <button type="button" className="workshop-center" aria-label="Centrar" title="Centrar" onClick={frameModel} disabled={!ready || !pieces.length}><Focus size={20} /><span>Centrar</span></button><button type="button" aria-label={panelOpen ? 'Ocultar panel' : 'Mostrar panel'} title={panelOpen ? 'Ocultar panel' : 'Mostrar panel'} aria-expanded={panelOpen} aria-controls="workshop-panel" onClick={() => setPanelOpen(value => !value)}><PanelRight size={20} /></button>
         </div>
       </section>
       <aside id="workshop-panel" className="workshop-panel" hidden={!panelOpen}>
-        <nav className="workshop-tabs" aria-label="Panel del modelo">{([['add', 'Agregar'], ['model', 'Editar'], ['pieces', 'Piezas'], ['geometry', 'Geometría']] as const).map(([tab, label]) => <button key={tab} type="button" disabled={locked} aria-pressed={panel === tab} onClick={() => openPanel(tab)}>{label}</button>)}</nav>
-        <div className="workshop-panel-content"><fieldset disabled={!ready || locked}>
+        <nav className="workshop-tabs" aria-label="Panel del modelo">{([['add', 'Agregar'], ['model', 'Editar'], ['pieces', 'Piezas'], ['alignment', 'Alinear'], ['geometry', 'Geometría']] as const).map(([tab, label]) => <button key={tab} type="button" disabled={locked} aria-pressed={panel === tab} onClick={() => openPanel(tab)}>{label}</button>)}</nav>
+        <div ref={panelContent} className="workshop-panel-content"><fieldset disabled={!ready || locked}>
           {panel === 'add' ? <>
             <nav className="workshop-palette-tabs" aria-label="Tipo de pieza">{([['primitives', 'Formas'], ['prefabs', 'Piezas'], ['furniture', 'Muebles']] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={palette === value} onClick={() => setPalette(value)}>{label}</button>)}</nav>
             {palette === 'furniture' ? <FurnitureCatalog onSelect={addFurniture} /> : <div className="workshop-piece-grid">{WORKSHOP_PIECES.filter(preset => preset.category === palette).map(preset => <button type="button" key={preset.id} aria-label={`Agregar ${preset.label.toLowerCase()}`} onClick={() => addPiece(preset.id)}><PieceThumbnail preset={preset} /><span>{preset.label}</span></button>)}</div>}
@@ -408,7 +480,7 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
               <details className="workshop-transforms"><summary>Posición y giro</summary>{([['position', 'Posición (m)'], ['rotation', 'Giro (°)']] as const).map(([attribute, label]) => <div className="workshop-group" key={attribute}><span>{label}</span><div className="workshop-coordinates">{AXES.map(axis => <NumberControl key={axis} label={axis.toUpperCase()} value={attribute === 'rotation' ? THREE.MathUtils.radToDeg(mesh.rotation[axis]) : mesh.position[axis]} onChange={value => run(() => { if (attribute === 'rotation') mesh.rotation[axis] = THREE.MathUtils.degToRad(value); else mesh.position[axis] = value; }, `${attribute}-${mesh.uuid}-${axis}`)} />)}</div></div>)}</details>
               <div className="workshop-piece-actions"><button type="button" onClick={duplicatePiece}><Copy size={17} />Duplicar</button><button type="button" onClick={deletePiece}><Trash2 size={17} />Eliminar</button></div>
             </> : <p className="workshop-empty">Agrega o selecciona una pieza.</p>}
-          </> : panel === 'pieces' ? <>
+          </> : panel === 'alignment' ? alignmentPanel : panel === 'pieces' ? <>
             <label className="workshop-field"><span>Pieza principal</span><select aria-label="Pieza principal" value={selected ?? ''} onChange={event => selectPiece(pieces.find(piece => piece.uuid === event.target.value) ?? null)}><option value="" disabled>Seleccionar</option>{pieces.map((piece, i) => <option key={piece.uuid} value={piece.uuid}>{piece.name} · {i + 1}</option>)}</select></label>
             {mesh && pieces.length > 1 && <section className="workshop-booleans" aria-label="Combinar piezas"><label className="workshop-field"><span>Segunda pieza</span><select aria-label="Segunda pieza" value={second} onChange={event => setSecond(event.target.value)}><option value="">Seleccionar</option>{pieces.filter(piece => piece !== mesh).map(piece => <option key={piece.uuid} value={piece.uuid}>{piece.name} · {pieces.indexOf(piece) + 1}</option>)}</select></label><div className="workshop-boolean-choices" role="group" aria-label="Operación">{OPERATIONS.map(([value, label]) => <button type="button" key={value} aria-pressed={operation === value} onClick={() => setOperation(value)}><svg viewBox="0 0 48 30" aria-hidden="true"><circle cx="18" cy="15" r="12" fill={value === 'intersect' ? '#edf1e6' : '#96ac81'} /><circle cx="30" cy="15" r="12" fill={value === 'union' ? '#96ac81' : '#edf1e6'} stroke="#637b4e" />{value === 'intersect' && <path d="M24 4.6a12 12 0 0 1 0 20.8 12 12 0 0 1 0-20.8" fill="#96ac81" />}</svg><span>{label}</span></button>)}</div>{operation === 'subtract' && second && <p className="workshop-operation-hint">Se resta {pieces.find(piece => piece.uuid === second)?.name} de {mesh.name}.</p>}<button type="button" className="primary-button" disabled={!second} onClick={() => void previewBoolean()}>Ver resultado</button></section>}
             <div className="workshop-pieces" aria-label="Piezas del modelo">{pieces.map((piece, i) => <button type="button" key={piece.uuid} aria-pressed={selected === piece.uuid} onClick={() => selectPiece(piece)}>{piece.name}<span>{i + 1}</span></button>)}</div>
