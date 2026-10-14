@@ -66,6 +66,7 @@ test('service worker precaches the shell, all lazy and worker chunks, and public
 test('service worker never intercepts API, external, mutations, or unknown paths', async () => {
   const app = await worker();
   for (const path of ['/api', '/api/auth/session', '/api/rooms/room?secret=1', '/api/models/private', 'https://another.test/assets/main.js', '/unknown.js']) assert.equal(app.request(path), undefined);
+  assert.equal(app.request('/embed?room=public-room', 'navigate'), undefined);
   assert.equal(app.request('/assets/main.js', 'cors', 'POST'), undefined);
   assert.equal(app.calls.length, 0);
 });

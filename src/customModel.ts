@@ -9,7 +9,7 @@ import { copyOfflineModel, forgetOfflineModel, listOfflineModels, loadModelBlob,
 import { onOfflinePurge } from './offlineStorage';
 
 export type { ModelAsset } from './modelAssets';
-export const modelAssetUrl = (id: string, roomId?: string) => `/api/models/${encodeURIComponent(id)}${roomId ? '?room=' + encodeURIComponent(roomId) : ''}`;
+export const modelAssetUrl = (id: string, roomId?: string, publicOnly = false) => `/api/models/${encodeURIComponent(id)}${roomId ? '?room=' + encodeURIComponent(roomId) : ''}${publicOnly ? (roomId ? '&' : '?') + 'public=1' : ''}`;
 export async function uploadModel(file: File, roomId: string): Promise<ModelAsset> {
   return uploadOfflineModel(file, roomId);
 }
@@ -95,7 +95,7 @@ function loadTemplate(key: string): Entry {
   cache.set(key, entry);
   entry.promise = (async () => {
     const parsed = new URL(key, 'https://3d-space.invalid');
-    const bytes = await (await loadModelBlob(decodeURIComponent(parsed.pathname.slice('/api/models/'.length)), parsed.searchParams.get('room') ?? undefined)).arrayBuffer();
+    const bytes = await (await loadModelBlob(decodeURIComponent(parsed.pathname.slice('/api/models/'.length)), parsed.searchParams.get('room') ?? undefined, parsed.searchParams.get('public') === '1')).arrayBuffer();
     const manager = new THREE.LoadingManager();
     manager.setURLModifier(url => { if (!url.startsWith('blob:')) throw new Error('El modelo contiene enlaces externos.'); return url; });
     const gltf = await new GLTFLoader(manager).parseAsync(bytes, '');
@@ -187,11 +187,11 @@ export async function loadEditableModel(item: FurnitureItem, roomId?: string): P
 }
 
 export function attachCustomModel(parent: THREE.Group, item: FurnitureItem, quality: Room['renderQuality'], {
-  roomId, onLoaded, onError,
-}: { roomId?: string; onLoaded?: () => void; onError?: (message: string) => void } = {}): () => void {
+  roomId, publicOnly = false, onLoaded, onError,
+}: { roomId?: string; publicOnly?: boolean; onLoaded?: () => void; onError?: (message: string) => void } = {}): () => void {
   if (!item.assetId) return () => {};
   let cancelled = false, instance: THREE.Group | null = null, released = false;
-  const key = modelAssetUrl(item.assetId, roomId), entry = loadTemplate(key);
+  const key = modelAssetUrl(item.assetId, roomId, publicOnly), entry = loadTemplate(key);
   const cleanup = () => {
     cancelled = true;
     if (released) return;

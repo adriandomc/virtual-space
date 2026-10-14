@@ -7,7 +7,7 @@ import { offlineModelMetadata } from './offlineModelValidation';
 export type OfflineAssetRecord = { accountId: string; roomId: string; asset: ModelAsset; blob: Blob; pending: boolean; linkedId?: string };
 const key = (accountId: string, roomId: string, id: string) => `${accountId}:${roomId}:${id}`;
 const changed = () => { if (typeof window !== 'undefined') window.dispatchEvent(new Event('space-offline-assets')); };
-const url = (id: string, roomId?: string) => `/api/models/${encodeURIComponent(id)}${roomId ? '?room=' + encodeURIComponent(roomId) : ''}`;
+const url = (id: string, roomId?: string, publicOnly = false) => `/api/models/${encodeURIComponent(id)}${roomId ? '?room=' + encodeURIComponent(roomId) : ''}${publicOnly ? (roomId ? '&' : '?') + 'public=1' : ''}`;
 async function onlineCache(operation: () => Promise<void>) {
   try { await operation(); }
   catch (error) {
@@ -29,12 +29,12 @@ async function localAsset(id: string, roomId?: string): Promise<OfflineAssetReco
 }
 
 /** HTTP denials must never be hidden by an older local model. */
-async function fetchBlob(id: string, roomId?: string): Promise<Blob> {
+async function fetchBlob(id: string, roomId?: string, publicOnly = false): Promise<Blob> {
   const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 15000);
   try {
-    const response = await fetch(url(id, roomId), { credentials: 'same-origin', cache: 'no-store', signal: controller.signal });
+    const response = await fetch(url(id, roomId, publicOnly), { credentials: publicOnly ? 'omit' : 'same-origin', cache: 'no-store', signal: controller.signal });
     if (!response.ok) {
-      if (roomId && [401, 403, 404].includes(response.status)) {
+      if (!publicOnly && roomId && [401, 403, 404].includes(response.status)) {
         const allowed = access(roomId);
         if (allowed) await onlineCache(() => removeOffline('assets', key(allowed.accountId, roomId, id)));
       }
@@ -48,7 +48,8 @@ async function fetchBlob(id: string, roomId?: string): Promise<Blob> {
 
 const transportFailure = (error: unknown) => isNetworkError(error) || error instanceof TypeError || error instanceof DOMException && ['AbortError', 'TimeoutError'].includes(error.name);
 
-export async function loadModelBlob(id: string, roomId?: string): Promise<Blob> {
+export async function loadModelBlob(id: string, roomId?: string, publicOnly = false): Promise<Blob> {
+  if (publicOnly) return fetchBlob(id, roomId, true);
   const cached = await localAsset(id, roomId);
   if (cached?.pending) return cached.blob;
   try {

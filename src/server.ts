@@ -121,14 +121,16 @@ export function createServer({ dataDir = process.env.DATA_DIR ?? './data', stati
       response.setHeader('Referrer-Policy', 'no-referrer');
       response.setHeader('X-Content-Type-Options', 'nosniff');
       response.setHeader('X-Frame-Options', 'DENY');
+      response.setHeader('Content-Security-Policy', "frame-ancestors 'none'");
       if (!request.url || request.url.length > 4096) throw new HttpError(400, 'La dirección no es válida.');
       let pathname: string;
       try { pathname = decodeURIComponent(request.url.split('?')[0]); }
       catch { throw new HttpError(400, 'La dirección no es válida.'); }
       if (pathname.includes('\0') || pathname.includes('\\')) throw new HttpError(400, 'La dirección no es válida.');
       const method = request.method ?? 'GET';
+      const publicOnly = new URL(request.url, 'http://localhost').searchParams.get('public') === '1';
       response.once('finish', () => {
-        try { if (response.statusCode < 400 && pathname.startsWith('/api/')) auth.touchSuccessfulRequest(request); }
+        try { if (response.statusCode < 400 && pathname.startsWith('/api/') && !publicOnly) auth.touchSuccessfulRequest(request); }
         catch { console.error('Could not record authenticated activity.'); }
       });
       const { ip: clientIP, fromProxy } = identify(request), ip = ipRateIdentity(clientIP);
@@ -165,8 +167,9 @@ export function createServer({ dataDir = process.env.DATA_DIR ?? './data', stati
       const modelApi = pathname.match(/^\/api\/models\/([^/]+)$/);
       if (modelApi) {
         const query = new URL(request.url!, 'http://localhost').searchParams, roomId = query.get('room') ?? undefined;
+        if (publicOnly && method !== 'GET' && method !== 'HEAD') throw new HttpError(403, 'Este enlace solo permite ver.');
         if (method === 'GET' || method === 'HEAD') {
-          const user = auth.session(request);
+          const user = publicOnly ? null : auth.session(request);
           if (query.get('metadata') === '1') { sendJson(response, 200, { model: modelAssets.metadata(modelApi[1], user?.id ?? null, roomId) }); return; }
           const data = modelAssets.read(modelApi[1], user?.id ?? null, roomId);
           response.writeHead(200, { 'Content-Type': 'model/gltf-binary', 'Content-Length': data.length, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
@@ -203,7 +206,8 @@ export function createServer({ dataDir = process.env.DATA_DIR ?? './data', stati
       if (api) {
         const id = api[1];
         if (!UUID.test(id)) throw new HttpError(400, 'La dirección del proyecto no es válida.');
-        const user = auth.session(request);
+        if (publicOnly && method !== 'GET' && method !== 'HEAD') throw new HttpError(403, 'Este enlace solo permite ver.');
+        const user = publicOnly ? null : auth.session(request);
         const row = rowFor(id, user);
         if (api[2] === '/share') {
           if (method !== 'POST') throw new HttpError(405, 'Este método no está permitido.');
@@ -299,6 +303,11 @@ export function createServer({ dataDir = process.env.DATA_DIR ?? './data', stati
         if (!inside(realpathSync(file))) throw new HttpError(403, 'La dirección no está permitida.');
         let data = readFileSync(file);
         const mime = MIME[extname(file).toLowerCase()] ?? 'application/octet-stream';
+        // Only the exact public viewer route can be framed; encoded aliases keep the default protection.
+        if (request.url.split('?')[0] === '/embed' && file === resolve(root, 'index.html') && mime.startsWith('text/html')) {
+          response.removeHeader('X-Frame-Options');
+          response.setHeader('Content-Security-Policy', 'frame-ancestors *');
+        }
         const cacheControl = relative(root, file).startsWith('assets' + sep) ? 'public, max-age=31536000, immutable' : 'no-cache';
         const etag = 'W/"' + createHash('sha256').update(data).digest('hex') + '"';
         if (request.headers['if-none-match'] === etag) {

@@ -1,0 +1,17 @@
+body.embed-page{min-width:0}
+.embed-view{position:relative;width:100%;height:var(--app-height,100dvh);min-height:240px;overflow:hidden;background:#e9ece4}
+.embed-loading,.embed-empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px;text-align:center;font-size:16px;color:#45573c}
+.embed-empty button,.embed-notice button{min-height:44px;padding:8px 16px;border:1px solid #c6d0ba;border-radius:8px;background:#f9fcf4}
+.embed-controls{position:absolute;z-index:5;left:12px;right:12px;bottom:max(12px,env(safe-area-inset-bottom));display:flex;justify-content:center;gap:8px;pointer-events:none}
+.embed-mode,.embed-controls select{pointer-events:auto;background:#fafcf5f2;border:1px solid #c6d0ba;border-radius:10px;box-shadow:0 3px 14px #22321c14;color:#405437;font-size:15px}
+.embed-mode{display:flex;padding:3px}
+.embed-mode button{min-height:44px;padding:8px 16px;border-radius:7px}
+.embed-mode button[aria-pressed=true]{background:#dfe8d3;color:#304926}
+.embed-controls select{min-height:52px;max-width:180px;padding:8px 12px}
+.embed-notice{position:absolute;z-index:6;left:12px;right:12px;top:12px;display:flex;justify-content:center;align-items:center;gap:12px;padding:8px 12px;border-radius:8px;background:#fff9ebed;font-size:14px;color:#70572d}
+.embed-view .walk-hint{top:12px;max-width:calc(100% - 24px);white-space:normal;text-align:center;font-size:13px}
+.embed-view .walk-joystick{bottom:86px}
+.embed-view .walk-interaction{bottom:96px}
+@media(max-width:380px){.embed-controls{left:8px;right:8px;gap:6px}.embed-mode button{padding:8px 11px}.embed-controls select{max-width:144px;padding:8px;font-size:14px}}
+@media(max-width:300px){.embed-controls{flex-wrap:wrap}.embed-controls select{min-height:44px;max-width:100%;width:100%}.embed-view .walk-joystick{bottom:142px}.embed-view .walk-interaction{bottom:150px}}
+@media(max-height:380px){.embed-view .walk-joystick{bottom:78px}.embed-view .joystick-base{width:90px;height:90px}.embed-view .joystick-knob{left:25px;top:25px}.embed-view .walk-hint{display:none}}

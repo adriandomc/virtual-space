@@ -52,6 +52,39 @@ test('cached model bytes recover on transport failure but not on permission deni
   } finally { globalThis.fetch = original; }
 });
 
+test('public model loads omit credentials and never read, write, fall back to, or erase private cache', async () => {
+  await clearOffline(); await allow();
+  const original = globalThis.fetch, get = IDBObjectStore.prototype.get, put = IDBObjectStore.prototype.put;
+  const bytes = fixture();
+  try {
+    globalThis.fetch = async () => { throw new TypeError('Offline'); };
+    const pending = await uploadOfflineModel(new File([bytes], 'Privado.glb'), 'room');
+    const before = await listOffline<OfflineAssetRecord>('assets');
+    IDBObjectStore.prototype.get = function () { throw new Error('Public reads must not use IndexedDB'); };
+    IDBObjectStore.prototype.put = function () { throw new Error('Public writes must not use IndexedDB'); };
+    let requests = 0;
+    globalThis.fetch = async (input, options) => {
+      requests++;
+      assert.equal(input, `/api/models/${pending.id}?room=room&public=1`);
+      assert.equal(options?.credentials, 'omit');
+      assert.equal(options?.cache, 'no-store');
+      return new Response(bytes);
+    };
+    assert.equal((await loadModelBlob(pending.id, 'room', true)).size, bytes.length);
+    assert.equal(requests, 1, 'a pending private asset cannot satisfy a public load');
+    globalThis.fetch = async () => { throw new TypeError('Public offline'); };
+    await assert.rejects(loadModelBlob(pending.id, 'room', true), /Public offline/);
+    globalThis.fetch = async () => new Response('', { status: 403 });
+    await assert.rejects(loadModelBlob(pending.id, 'room', true), /no está disponible/);
+    IDBObjectStore.prototype.get = get; IDBObjectStore.prototype.put = put;
+    const after = await listOffline<OfflineAssetRecord>('assets');
+    assert.equal(after.length, 1);
+    assert.equal(after[0].asset.id, before[0].asset.id);
+    assert.equal(after[0].pending, true);
+    assert.deepEqual(await after[0].blob.arrayBuffer(), await before[0].blob.arrayBuffer());
+  } finally { globalThis.fetch = original; IDBObjectStore.prototype.get = get; IDBObjectStore.prototype.put = put; }
+});
+
 test('cached GLB remains usable during temporary proxy outages without bypassing authorization errors', async () => {
   await clearOffline(); await allow();
   const original = globalThis.fetch, bytes = fixture();

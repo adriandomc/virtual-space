@@ -1,4 +1,4 @@
-export type SitePage = 'landing' | 'login' | 'designs' | 'editor' | 'privacy' | 'terms';
+export type SitePage = 'landing' | 'login' | 'designs' | 'editor' | 'embed' | 'privacy' | 'terms';
 
 export const LOGIN_PATH = '/login';
 export const DESIGNS_PATH = '/designs';
@@ -15,9 +15,19 @@ export function shareAddress(source: URL, id: string) {
   return new URL(editorPath(id), source.origin).href;
 }
 
+export function embedAddress(source: URL, id: string) {
+  return new URL('/embed?' + new URLSearchParams({ room: id }), source.origin).href;
+}
+
+export function embedCode(source: URL, id: string) {
+  const address = embedAddress(source, id).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+  return `<iframe src="${address}" title="Visor 3D" width="100%" height="560" style="border:0" loading="lazy" allowfullscreen referrerpolicy="no-referrer"></iframe>`;
+}
+
 export function siteRoute(url: URL): { page: SitePage; redirect?: string } {
   const path = url.pathname.replace(/\/+$/, '') || '/';
   const id = url.searchParams.get('room');
+  if (path === '/embed') return { page: 'embed' };
   if (path === '/editor') return id ? { page: 'editor' } : { page: 'designs', redirect: DESIGNS_PATH };
   if (path === LOGIN_PATH) return { page: 'login' };
   if (path === DESIGNS_PATH) return { page: 'designs' };

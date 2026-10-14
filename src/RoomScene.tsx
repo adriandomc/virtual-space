@@ -23,6 +23,7 @@ import './scene.css';
 type Props = {
   room: Room;
   roomId?: string;
+  publicView?: boolean;
   onModelError?: (message: string) => void;
   mode: ViewMode;
   selection: Selection | null;
@@ -39,6 +40,7 @@ type WallView = { group: THREE.Group; midpoint: THREE.Vector3; inward: THREE.Vec
 const KEY_DIRECTIONS: Record<string, string> = { KeyW: 'forward', ArrowUp: 'forward', KeyS: 'back', ArrowDown: 'back', KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right', KeyQ: 'lookLeft', KeyE: 'lookRight', KeyR: 'lookUp', KeyF: 'lookDown' };
 type Runtime = {
   roomId?: string;
+  publicView?: boolean;
   onModelError?: (message: string) => void;
   renderer: THREE.WebGPURenderer;
   scene: THREE.Scene;
@@ -326,7 +328,7 @@ function addStoredFurniture(parent: THREE.Group, item: FurnitureItem, quality: R
   group.userData.selection = { kind: 'furniture', id: item.id } satisfies Selection;
   parent.add(group);
   if (item.type === 'custom') {
-    attachCustomModel(group, item, quality, { roomId: runtime?.roomId, onError: runtime?.onModelError, onLoaded: () => {
+    attachCustomModel(group, item, quality, { roomId: runtime?.roomId, publicOnly: runtime?.publicView, onError: runtime?.onModelError, onLoaded: () => {
       if (!runtime || runtime.disposed) return;
       runtime.content.traverse(object => { if (object instanceof THREE.DirectionalLight || object instanceof THREE.PointLight) object.shadow.needsUpdate = true; });
       if (runtime.selectionBox) runtime.selectionBox.update();
@@ -898,6 +900,7 @@ export default function RoomScene(props: Props) {
         const active: Runtime = { renderer, scene, camera, controls, content, walls: [], ceiling: null, yaw: 0, pitch: 0, fittedDistance: 0, objects: new Map(), invalidFurniture: new Set(), selectionBox: null, walkBlocked: false, viewTransition: null, orbitPose: null, animateView: !!current.current.animateView, ceilingOpacity: current.current.mode === 'walk' ? 1 : 0, transform, proxy, manipulating: null, directDragging: false, pendingEdit: false, lastOpeningBuild: 0, environment: null, architecturalEnvironment: null, sky: null, loadingSky: false, disposed: false, areaTextures: null, postProcessing: null, postFailed: false, viewMode: current.current.mode, builtRoom: null, structure: '', outlinedKey: null };
         runtime.current = active;
         active.roomId = current.current.roomId;
+        active.publicView = current.current.publicView;
         active.onModelError = message => current.current.onModelError?.(message);
         buildRoom(active, current.current.room, current.current.showFurniture);
         resetCamera(active, current.current.room, current.current.mode);
@@ -1226,14 +1229,18 @@ export default function RoomScene(props: Props) {
   useEffect(() => {
     const active = runtime.current;
     if (!active || !ready) return;
-    updateRoom(active, effectiveRoom, props.showFurniture);
+    if (active.roomId !== props.roomId || active.publicView !== props.publicView) {
+      active.roomId = props.roomId;
+      active.publicView = props.publicView;
+      buildRoom(active, effectiveRoom, props.showFurniture);
+    } else updateRoom(active, effectiveRoom, props.showFurniture);
     updateSelection(active, current.current);
     if (props.mode === 'walk' && active.viewMode === props.mode && !active.viewTransition) {
       active.camera.position.y = Math.min(1.65, effectiveRoom.height - 0.2);
       if (!furnitureWalkable({ x: active.camera.position.x, z: active.camera.position.z }, effectiveRoom)) resetCamera(active, effectiveRoom, props.mode);
       setWalkBlocked(active.walkBlocked);
     }
-  }, [effectiveRoom, props.showFurniture, ready]);
+  }, [effectiveRoom, props.showFurniture, props.roomId, props.publicView, ready]);
 
   useEffect(() => {
     if (runtime.current && ready) {
