@@ -1,3 +1,4 @@
+import { TERMS_VERSION } from './legalPolicy';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -14,7 +15,7 @@ test('offline writes revalidate account, collaboration and revisions; sketch ret
   const address = server.address(); assert.ok(address && typeof address !== 'string');
   const base = 'http://127.0.0.1:' + address.port;
   const register = async (username: string) => {
-    const response = await fetch(base + '/api/auth/register', { method: 'POST', headers: { Origin: base, 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password: 'Safe-test-password', confirmPassword: 'Safe-test-password', termsVersion: '2026-10-13' }) });
+    const response = await fetch(base + '/api/auth/register', { method: 'POST', headers: { Origin: base, 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password: 'Safe-test-password', confirmPassword: 'Safe-test-password', termsVersion: TERMS_VERSION }) });
     assert.equal(response.status, 201);
     return { cookie: response.headers.get('set-cookie')!.split(';')[0], id: (await response.json()).user.id as string };
   };
@@ -31,6 +32,27 @@ test('offline writes revalidate account, collaboration and revisions; sketch ret
       const result = await send(path, 'PUT', { room: { ...room, name: 'Offline save' }, revision: 1 }, offline);
       assert.equal(result.status, 200); assert.equal((await result.json()).revision, 2);
       assert.equal((await send(path, 'PUT', { room, revision: 1 }, offline)).status, 409);
+    });
+    await t.test('offline creation and deletion require matching account, private eligibility and the exact base revision', async () => {
+      const pendingId = randomUUID(), pendingPath = '/api/rooms/' + pendingId;
+      assert.equal((await send('/api/rooms', 'POST', { id: pendingId, room }, { ...offline, 'X-Account-Id': other.id })).status, 403);
+      assert.equal((await send('/api/rooms', 'POST', { id: pendingId, room }, offline)).status, 201);
+      assert.equal((await send('/api/rooms', 'POST', { id: pendingId, room }, offline)).status, 200);
+      const list = (await (await send('/api/rooms')).json()).rooms;
+      assert.equal(list.find((value: { id: string }) => value.id === pendingId).offlineAllowed, true);
+      assert.equal((await send(pendingPath, 'DELETE', { revision: 1, sketchVersion: 0 }, { ...offline, 'X-Account-Id': other.id })).status, 403);
+      assert.equal((await send(pendingPath, 'DELETE', {}, offline)).status, 400);
+      assert.equal((await send(pendingPath, 'PUT', { room: { ...room, name: 'Remote change' }, revision: 1 })).status, 200);
+      assert.equal((await send(pendingPath, 'DELETE', { revision: 1, sketchVersion: 0 }, offline)).status, 409);
+      await send(pendingPath + '/share', 'POST', { enabled: true });
+      assert.equal((await send(pendingPath, 'DELETE', { revision: 2, sketchVersion: 0 }, offline)).status, 409);
+      await send(pendingPath + '/share', 'POST', { enabled: false });
+      const sketch = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X9S8AAAAASUVORK5CYII=', 'base64');
+      assert.equal((await fetch(base + pendingPath + '/sketch', { method: 'PUT', headers: { ...headers, 'Content-Type': 'image/png' }, body: sketch })).status, 200);
+      assert.equal((await send(pendingPath, 'DELETE', { revision: 2, sketchVersion: 0 }, offline)).status, 409, 'a newer sketch must not be silently deleted');
+      assert.equal((await send(pendingPath, 'DELETE', { revision: 2, sketchVersion: 1 }, offline)).status, 200);
+      assert.equal((await send(pendingPath)).status, 404);
+      assert.equal((await send('/api/rooms', 'POST', { id: pendingId, room }, offline)).status, 409);
     });
     const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X9S8AAAAASUVORK5CYII=', 'base64');
     const sketchId = randomUUID();
@@ -49,6 +71,7 @@ test('offline writes revalidate account, collaboration and revisions; sketch ret
       const invite = await send(path + '/members', 'POST', { username: 'offline_guest', role: 'editor' }); assert.equal(invite.status, 201);
       const memberId = (await invite.json()).members[0].id;
       assert.equal((await (await send(path)).json()).offlineAllowed, false);
+      assert.equal((await (await send('/api/rooms')).json()).rooms.find((value: { id: string }) => value.id === id).offlineAllowed, false);
       assert.equal((await send(path, 'PUT', { room, revision: 2 }, offline)).status, 409);
       assert.equal((await fetch(base + path + '/sketch', { method: 'PUT', headers: { ...sketchHeaders, 'X-Sketch-Version': '2', 'X-Sketch-Request-Id': randomUUID() }, body: png })).status, 409);
       assert.equal((await fetch(base + '/api/models?room=' + id, { method: 'POST', headers: { ...offline, 'Content-Type': 'model/gltf-binary', 'X-Model-Name': 'test.glb' }, body: Buffer.from('not uploaded') })).status, 409);

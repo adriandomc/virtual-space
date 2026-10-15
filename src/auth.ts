@@ -3,7 +3,8 @@ import { BlockList, isIP } from 'node:net';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { DatabaseSync } from 'node:sqlite';
 import { TERMS_VERSION } from './legalPolicy.js';
-import { inactivityDeadline, initializeAccountPolicy, touchAccount } from './retention.js';
+import { initializeDatabase } from './databaseSchema.js';
+import { inactivityDeadline, touchAccount } from './retention.js';
 
 export class HttpError extends Error {
   constructor(public status: number, message: string, public retryAfter?: number) { super(message); }
@@ -93,14 +94,7 @@ function rememberSessionValue(value: unknown) {
 export function createAuth(database: DatabaseSync, { now = Date.now, secureCookie = process.env.NODE_ENV === 'production' }: { now?: () => number; secureCookie?: boolean } = {}) {
   const cookieName = secureCookie ? '__Host-vs_session' : 'vs_session';
   const sessionToken = (request: IncomingMessage) => request.headers.cookie?.split(';').map(value => value.trim()).find(value => value.startsWith(cookieName + '='))?.slice(cookieName.length + 1) ?? '';
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, salt TEXT NOT NULL, password_hash TEXT NOT NULL, created_at INTEGER NOT NULL);
-    CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL);
-    CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id);
-    CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires_at);
-    CREATE TABLE IF NOT EXISTS request_limits (key TEXT PRIMARY KEY, count INTEGER NOT NULL, window_start INTEGER NOT NULL, blocked_until INTEGER NOT NULL DEFAULT 0, strikes INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL);
-  `);
-  initializeAccountPolicy(database, now());
+  initializeDatabase(database);
   const authenticated = new WeakMap<IncomingMessage, User>();
   let activeHashes = 0;
   const hash = (password: string, salt: string): Promise<Buffer> => {

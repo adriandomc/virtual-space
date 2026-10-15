@@ -1,3 +1,4 @@
+import { TERMS_VERSION } from './legalPolicy';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -71,11 +72,11 @@ test('el cliente combina ediciones, confirma guardado, recibe croquis y recupera
   const cookies: Record<string, string> = {};
   const request = (path: string, username: string, method = 'GET', body?: unknown) => fetch(base + path, { method, headers: { Cookie: cookies[username] ?? '', Origin: base, 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
   for (const username of ['owner', 'editor']) {
-    const registration = await request('/api/auth/register', username, 'POST', { username, password: 'Testing-password', confirmPassword: 'Testing-password', termsVersion: '2026-10-13' });
+    const registration = await request('/api/auth/register', username, 'POST', { username, password: 'Testing-password', confirmPassword: 'Testing-password', termsVersion: TERMS_VERSION });
     assert.equal(registration.status, 201); cookies[username] = registration.headers.get('set-cookie')!.split(';')[0];
   }
   const id = randomUUID(), path = '/api/rooms/' + id, room = createDefaultRoom();
-  room.furniture = [{ id: 'ropero', type: 'wardrobe', width: 1, height: 2, depth: 0.6, x: 0, z: 0, rotation: 0 }];
+  room.furniture = [{ id: 'ropero', type: 'wardrobe', variant: 'wardrobe-classic', material: 'wood', color: '#b8a084', width: 1, height: 2, depth: 0.6, x: 0, z: 0, rotation: 0 }];
   await request('/api/rooms', 'owner', 'POST', { id, room });
   const invitation = (await (await request(path + '/members', 'owner', 'POST', { username: 'editor', role: 'editor' })).json()).members[0].id;
   await request('/api/notifications/' + invitation + '/accept', 'editor', 'POST', {});
@@ -125,7 +126,7 @@ test('el cliente combina ediciones, confirma guardado, recibe croquis y recupera
     });
     await t.test('un lote rechazado se descarta por requestId y no entra en una repetición infinita', async () => {
       const previous = owner.observation.room!, beforeSends = owner.observation.sends;
-      owner.project.change({ ...previous, furniture: [...previous.furniture, { id: 'wrong-asset', type: 'custom', assetId: randomUUID(), name: 'Modelo ajeno', width: 1, height: 1, depth: 1, x: 0, z: 0, rotation: 0 }] }, previous);
+      owner.project.change({ ...previous, furniture: [...previous.furniture, { id: 'wrong-asset', type: 'custom', material: null, color: null, assetId: randomUUID(), name: 'Modelo ajeno', width: 1, height: 1, depth: 1, x: 0, z: 0, rotation: 0 }] }, previous);
       await owner.wait(() => owner.observation.errors.length > 0 && !owner.observation.pending);
       assert.equal(owner.project.hasPending, false);
       assert.deepEqual(owner.observation.room, previous);

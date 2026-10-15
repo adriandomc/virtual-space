@@ -4,6 +4,7 @@ import { bounds, FURNITURE_LABELS, fitRoom, furnitureCorners, invalidFurnitureId
 import type { Point, Room, Selection } from './types';
 import { parseNumber } from './fieldDraft';
 import './plan.css';
+import { registerBeforeAppUpdate } from './appOffline';
 
 type Props = {
   room: Room;
@@ -27,6 +28,14 @@ export default function PlanEditor({ room, onChange, selection: selected, onSele
   const [grid, setGrid] = useState(room.editing.snap), [angles, setAngles] = useState(true), [angleStep, setAngleStep] = useState(15);
   const [referenceWidth, setReferenceWidth] = useState('5'), [cornerX, setCornerX] = useState('0'), [cornerZ, setCornerZ] = useState('0');
   const [error, setError] = useState(''), [fixedView, setFixedView] = useState<Viewport | null>(null);
+  useEffect(() => registerBeforeAppUpdate(async () => {
+    if (drawing && points.length || uploading) throw new Error('Termina el croquis antes de cambiar de modo o actualizar.');
+  }), [drawing, points.length, uploading]);
+  useEffect(() => {
+    if (!drawing || !points.length) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn);
+  }, [drawing, points.length]);
   const box = bounds(room.vertices);
   const visibleBox = bounds([...room.vertices, ...room.furniture.flatMap(furnitureCorners), ...room.lights]);
   const invalidFurniture = useMemo(() => invalidFurnitureIds(room), [room]);

@@ -1,3 +1,4 @@
+import { initializeTestDatabase, insertTestUser, insertTestSession, insertTestRoom } from './serverTestFixtures';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync, backup } from 'node:sqlite';
@@ -73,12 +74,12 @@ test('embedded texture dimensions and total rendered triangle instances are boun
 
 function storageFixture() {
   const database = new DatabaseSync(':memory:');
-  database.exec('PRAGMA foreign_keys=ON; CREATE TABLE users(id TEXT PRIMARY KEY); CREATE TABLE rooms(id TEXT PRIMARY KEY, owner_id TEXT REFERENCES users(id) ON DELETE CASCADE, room TEXT, shared INTEGER);');
+  initializeTestDatabase(database);
   const owner = randomUUID(), editor = randomUUID(), outsider = randomUUID(), roomId = randomUUID(), anotherRoom = randomUUID();
-  for (const id of [owner, editor, outsider]) database.prepare('INSERT INTO users VALUES (?)').run(id);
+  for (const id of [owner, editor, outsider]) insertTestUser(database, id);
   const room = createDefaultRoom();
-  database.prepare('INSERT INTO rooms VALUES (?, ?, ?, 0)').run(roomId, owner, JSON.stringify(room));
-  database.prepare('INSERT INTO rooms VALUES (?, ?, ?, 0)').run(anotherRoom, owner, JSON.stringify(room));
+  insertTestRoom(database, roomId, owner, { room: JSON.stringify(room) });
+  insertTestRoom(database, anotherRoom, owner, { room: JSON.stringify(room) });
   const service = createModelAssets(database, {
     now: () => 1800000000000,
     canViewRoom: (id, user) => id === roomId && (user === owner || user === editor || database.prepare('SELECT shared FROM rooms WHERE id=?').get(id)?.shared === 1),
@@ -112,7 +113,7 @@ test('room-owned model assets allow editors, hide unused models from public link
     database.prepare('UPDATE rooms SET shared=1 WHERE id=?').run(roomId);
     assert.throws(() => service.read(asset.id, null, roomId), /no existe/);
     assert.throws(() => service.read(asset.id, outsider, roomId), /no existe/);
-    const custom = { id: 'custom-1', type: 'custom' as const, assetId: asset.id, width: 1, depth: 1, height: 1, x: 0, z: 0, rotation: 0 };
+    const custom = { id: 'custom-1', type: 'custom' as const, material: null, color: null, name: 'Modelo', assetId: asset.id, width: 1, depth: 1, height: 1, x: 0, z: 0, rotation: 0 };
     const changed = { ...room, furniture: [custom] };
     service.validateRoomReferences(changed, editor, roomId);
     assert.throws(() => service.validateRoomReferences(changed, owner, anotherRoom), /no está disponible/);
@@ -166,7 +167,7 @@ test('room GPU texture budget counts shared instances once and bounds different 
       const metadata = JSON.parse(String(database.prepare('SELECT metadata FROM model_assets WHERE id=?').get(asset.id)!.metadata)); metadata.texturePixels = 12 * 1024 * 1024;
       database.prepare('UPDATE model_assets SET metadata=? WHERE id=?').run(JSON.stringify(metadata), asset.id);
     }
-    const custom = { id: 'custom-a', type: 'custom' as const, assetId: first.id, width: 1, depth: 1, height: 1, x: 0, z: 0, rotation: 0 };
+    const custom = { id: 'custom-a', type: 'custom' as const, material: null, color: null, name: 'Modelo', assetId: first.id, width: 1, depth: 1, height: 1, x: 0, z: 0, rotation: 0 };
     assert.doesNotThrow(() => service.validateRoomReferences({ ...room, furniture: [custom, { ...custom, id: 'custom-b' }] }, owner, roomId));
     assert.throws(() => service.validateRoomReferences({ ...room, furniture: [custom, { ...custom, id: 'custom-b', assetId: second.id }] }, owner, roomId), /demasiadas texturas/);
   } finally { database.close(); }

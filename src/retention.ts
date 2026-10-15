@@ -13,20 +13,6 @@ export function inactivityDeadline(time: number) {
   return date.getTime();
 }
 
-export function initializeAccountPolicy(database: DatabaseSync, time: number) {
-  const columns = new Set(database.prepare('PRAGMA table_info(users)').all().map(row => row.name));
-  database.exec('BEGIN IMMEDIATE');
-  try {
-    if (!columns.has('last_active_at')) database.exec('ALTER TABLE users ADD COLUMN last_active_at INTEGER NOT NULL DEFAULT 0');
-    if (!columns.has('inactive_after')) database.exec('ALTER TABLE users ADD COLUMN inactive_after INTEGER NOT NULL DEFAULT 0');
-    if (!columns.has('terms_version')) database.exec('ALTER TABLE users ADD COLUMN terms_version TEXT');
-    if (!columns.has('terms_accepted_at')) database.exec('ALTER TABLE users ADD COLUMN terms_accepted_at INTEGER');
-    // Existing accounts get the full notice period when this policy is first enabled.
-    database.prepare('UPDATE users SET last_active_at = ?, inactive_after = ? WHERE inactive_after = 0').run(time, inactivityDeadline(time));
-    database.exec('CREATE INDEX IF NOT EXISTS users_inactive_after ON users(inactive_after); COMMIT');
-  } catch (error) { database.exec('ROLLBACK'); throw error; }
-}
-
 export function touchAccount(database: DatabaseSync, id: string, time: number) {
   return database.prepare('UPDATE users SET last_active_at = ?, inactive_after = ? WHERE id = ? AND inactive_after > ? AND last_active_at < ?').run(time, inactivityDeadline(time), id, time, time).changes;
 }

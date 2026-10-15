@@ -3,6 +3,7 @@ import { validateRoom } from './model';
 import type { ProjectSnapshot } from './liveProject';
 import type { Room } from './types';
 import { listOffline, readOffline } from './offlineStorage';
+import { offlineForced } from './offlineMode';
 
 export type OfflineProjectRecord = {
   id: string; accountId: string; snapshot: ProjectSnapshot; draft: Room | null;
@@ -11,6 +12,8 @@ export type OfflineProjectRecord = {
   inflight?: { room: Room; revision: number };
   inflightSketch?: { id: string; blob: Blob | null; version: number };
   authorized: boolean; updatedAt: number;
+  localOnly?: boolean; creating?: boolean; deleted?: boolean; prepared?: boolean; error?: string;
+  sketchBlobVersion?: number;
 };
 export type SoloStatus = 'saved' | 'saving' | 'syncing' | 'offline' | 'conflict' | 'error';
 export const offlineProjectKey = (accountId: string, id: string) => `${accountId}:${id}`;
@@ -19,28 +22,44 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 export function validateOfflineProject(value: unknown, accountId: string, id: string): OfflineProjectRecord | null {
   try {
     const record = value as OfflineProjectRecord;
-    if (!record || record.accountId !== accountId || record.id !== id || record.snapshot.id !== id || record.snapshot.accountId !== accountId || !record.snapshot.offlineAllowed || record.snapshot.role !== 'owner' || record.snapshot.shared || !Number.isSafeInteger(record.snapshot.revision) || record.snapshot.revision < 1) return null;
+    if (!record || record.accountId !== accountId || record.id !== id || record.snapshot.id !== id || record.snapshot.accountId !== accountId || !record.snapshot.offlineAllowed || record.snapshot.role !== 'owner' || record.snapshot.shared || !Number.isSafeInteger(record.snapshot.revision) || record.snapshot.revision < (record.localOnly ? 0 : 1)) return null;
     return { ...record, snapshot: { ...record.snapshot, room: validateRoom(record.snapshot.room) }, draft: record.draft ? validateRoom(record.draft) : null };
   } catch { return null; }
 }
 export async function readOfflineProject(id: string): Promise<OfflineProjectRecord | null> {
   const identity = await readOffline<{ id: string; verifiedAt: number }>('meta', 'identity');
-  if (!identity || !Number.isFinite(identity.verifiedAt) || Date.now() - identity.verifiedAt > 30 * 86400000 || identity.verifiedAt > Date.now() + 60000) return null;
-  return validateOfflineProject(await readOffline('projects', offlineProjectKey(identity.id, id)), identity.id, id);
+  if (!identity || !Number.isFinite(identity.verifiedAt) || identity.verifiedAt > Date.now() + 300000) return null;
+  const value = validateOfflineProject(await readOffline('projects', offlineProjectKey(identity.id, id)), identity.id, id);
+  return value ? hydrateOfflineProject(value) : null;
+}
+export async function hydrateOfflineProject(record: OfflineProjectRecord) {
+  const base = await readOffline<{ blob: Blob; version: number }>('blobs', offlineProjectKey(record.accountId, record.id) + ':sketch');
+  if (base && base.version === record.snapshot.sketchVersion) { record.sketchBlob = base.blob; record.sketchBlobVersion = base.version; }
+  for (const property of ['sketchDraft', 'inflightSketch'] as const) {
+    const value = record[property];
+    if (value && value.blob === undefined) {
+      const saved = await readOffline<{ blob: Blob | null }>('blobs', offlineProjectKey(record.accountId, record.id) + ':sketch:' + value.id);
+      if (!saved) throw new Error('Falta un croquis pendiente en este dispositivo.');
+      value.blob = saved.blob;
+    }
+  }
+  return record;
 }
 export async function listOfflineDesigns(accountId: string) {
   const records = await listOffline<OfflineProjectRecord>('projects');
-  return records.map(entry => validateOfflineProject(entry, accountId, entry?.id)).filter((entry): entry is OfflineProjectRecord => Boolean(entry?.authorized)).map(entry => ({
+  return records.map(entry => validateOfflineProject(entry, accountId, entry?.id)).filter((entry): entry is OfflineProjectRecord => Boolean(entry && !entry.deleted && (entry.authorized || entry.draft || entry.sketchDraft || entry.inflight || entry.inflightSketch || entry.localOnly))).map(entry => ({
     id: entry.id, name: (entry.draft ?? entry.snapshot.room).name, setupStep: (entry.draft ?? entry.snapshot.room).setupStep,
-    role: 'owner' as const, canManage: true, canEdit: true, shared: false, updatedAt: new Date(entry.updatedAt).toISOString(), offline: true,
+    role: 'owner' as const, canManage: entry.authorized, canEdit: entry.authorized, shared: false, updatedAt: new Date(entry.updatedAt).toISOString(), offline: true,
   }));
 }
 
 type Dependencies = {
   persist: (record: OfflineProjectRecord) => Promise<void>;
   get: () => Promise<ProjectSnapshot>;
+  create?: (record: OfflineProjectRecord) => Promise<ProjectSnapshot>;
   put: (room: Room, revision: number) => Promise<{ room: Room; revision: number }>;
   assets: (room: Room) => Promise<Room>;
+  finalize?: () => Promise<void>;
   sketch: (value: { id: string; blob: Blob | null }, snapshot: ProjectSnapshot) => Promise<{ hasSketch: boolean; sketchVersion: number }>;
   changed: (record: OfflineProjectRecord, status: SoloStatus, message: string, durable: boolean) => void;
   collaborative: (snapshot: ProjectSnapshot) => void;
@@ -57,14 +76,15 @@ export class SoloProject {
   private status: SoloStatus = 'saved';
   private message = '';
   constructor(public record: OfflineProjectRecord, private deps: Dependencies) { this.report(); }
-  get hasPending() { return Boolean(this.record.draft || this.record.sketchDraft || this.record.inflight || this.record.inflightSketch); }
+  get hasPending() { return Boolean(this.record.localOnly || this.record.draft || this.record.sketchDraft || this.record.inflight || this.record.inflightSketch); }
   get durable() { return this.persistedGeneration === this.generation; }
   get editable() { return !this.stopped && this.record.authorized && this.record.snapshot.offlineAllowed === true && this.status !== 'conflict'; }
   private report() { if (!this.stopped) this.deps.changed(this.record, this.status, this.message, this.durable); }
   private persist() {
-    const generation = this.generation;
-    const copy = structuredClone(this.record);
-    const pending = this.saving.catch(() => {}).then(() => this.deps.persist(copy)).then(() => {
+    const pending = this.saving.catch(() => {}).then(async () => {
+      if (this.durable) return;
+      const generation = this.generation;
+      await this.deps.persist(structuredClone(this.record));
       this.persistedGeneration = generation; this.report();
     });
     this.saving = pending;
@@ -91,21 +111,33 @@ export class SoloProject {
   }
   async cacheSketch(blob: Blob, version: number) {
     if (this.stopped || this.record.sketchDraft || this.record.snapshot.sketchVersion !== version) return;
-    this.record.sketchBlob = blob; this.generation++; await this.persist();
+    this.record.sketchBlob = blob; this.record.sketchBlobVersion = version; this.generation++; await this.persist();
   }
-  offline() { if (this.editable) this.update('offline'); }
+  offline(message = '') { if (this.editable) this.update('offline', message); }
   private conflict(message: string) { this.update('conflict', message); }
   private accept(server: ProjectSnapshot) {
+    if (same(this.record.snapshot, server) && this.record.authorized) return;
+    if (!server.hasSketch || this.record.sketchBlobVersion !== server.sketchVersion) { this.record.sketchBlob = undefined; this.record.sketchBlobVersion = undefined; }
     this.record.snapshot = { ...server, room: validateRoom(server.room) }; this.record.authorized = true;
     this.record.updatedAt = Date.now(); this.generation++;
   }
   async retry() {
     if (this.stopped || this.running) return;
+    if (offlineForced()) { await this.persist(); this.update('offline'); return; }
     if (this.timer) { clearTimeout(this.timer); this.timer = undefined; }
     this.running = true;
     this.update('syncing');
     try {
       await this.persist();
+      if (this.record.localOnly) {
+        if (!this.deps.create) throw new Error('Este diseño todavía no puede sincronizarse.');
+        this.record.creating = true; this.generation++; await this.persist();
+        const created = await this.deps.create(this.record);
+        if (this.stopped) return;
+        if (created.accountId !== this.record.accountId || !created.offlineAllowed) throw new AccountRequestError('Entra con la cuenta de este diseño.', 403);
+        if (created.revision !== 1 || created.sketchVersion !== 0 || !same(created.room, { ...this.record.snapshot.room, furniture: [] })) throw new AccountRequestError('El diseño cambió antes de confirmar su creación. Tu copia se conserva.', 409);
+        this.record.localOnly = false; this.record.creating = undefined; this.accept(created); this.generation++; await this.persist();
+      }
       while (!this.stopped) {
         const server = await this.deps.get();
         if (this.stopped) return;
@@ -128,15 +160,17 @@ export class SoloProject {
         const sentSketch = this.record.inflightSketch;
         if (sentSketch && sentSketch.id === server.sketchMutationId) {
           if (this.record.sketchDraft?.id === sentSketch.id) this.record.sketchDraft = undefined;
-          this.record.inflightSketch = undefined; this.record.sketchBlob = sentSketch.blob ?? undefined;
+          this.record.inflightSketch = undefined; this.record.sketchBlob = sentSketch.blob ?? undefined; this.record.sketchBlobVersion = server.sketchVersion;
           this.accept(server); await this.persist();
         } else if (this.record.sketchDraft && this.record.sketchDraft.id === server.sketchMutationId) {
-          this.record.sketchBlob = this.record.sketchDraft.blob ?? undefined;
+          this.record.sketchBlob = this.record.sketchDraft.blob ?? undefined; this.record.sketchBlobVersion = server.sketchVersion;
           this.record.sketchDraft = undefined; this.accept(server); await this.persist();
         } else if (server.sketchVersion !== knownSketchVersion && this.record.sketchDraft) {
           this.conflict('El croquis cambió en otra sesión. Tu copia se conserva en este dispositivo.'); return;
         }
         this.accept(server); await this.persist();
+        if (this.stopped) return;
+        if (!this.record.draft) await this.deps.assets(this.record.snapshot.room);
         if (this.stopped) return;
         if (this.record.draft) {
           const selected = this.record.draft;
@@ -159,16 +193,19 @@ export class SoloProject {
           if (this.stopped) return;
           if (this.record.sketchDraft?.id === selected.id) this.record.sketchDraft = undefined;
           this.record.inflightSketch = undefined;
-          this.record.sketchBlob = selected.blob ?? undefined;
+          this.record.sketchBlob = selected.blob ?? undefined; this.record.sketchBlobVersion = result.sketchVersion;
           this.accept({ ...server, ...result, sketchMutationId: selected.id }); await this.persist();
           continue;
         }
+        await this.deps.finalize?.();
         this.update('saved'); return;
       }
     } catch (cause) {
       if (this.stopped) return;
       if (isNetworkError(cause)) this.update('offline');
-      else if (cause instanceof AccountRequestError && [401, 403, 404].includes(cause.status)) {
+      else if (cause instanceof AccountRequestError && cause.status === 401) {
+        this.update('offline', 'Tu sesión terminó. Puedes continuar aquí; entra de nuevo para sincronizar.');
+      } else if (cause instanceof AccountRequestError && [403, 404].includes(cause.status)) {
         this.record.authorized = false; this.generation++;
         await this.persist().catch(() => {});
         this.update('error', cause.message);
@@ -181,9 +218,9 @@ export class SoloProject {
     const server = await this.deps.get();
     if (server.accountId !== this.record.accountId) throw new Error('Entra con la cuenta de este diseño.');
     this.record.draft = null; this.record.inflight = undefined; this.record.sketchDraft = undefined; this.record.inflightSketch = undefined;
-    this.record.sketchBlob = undefined; this.accept(server); await this.persist();
-    if (!server.offlineAllowed) { this.record.authorized = false; await this.persist(); this.deps.collaborative(server); }
-    else this.update('saved');
+    this.record.sketchBlob = undefined;
+    if (!server.offlineAllowed) { this.record.authorized = false; this.generation++; await this.persist(); this.deps.collaborative(server); }
+    else { this.accept(server); this.generation++; await this.persist(); this.update('saved'); }
   }
   destroy() { this.stopped = true; if (this.timer) clearTimeout(this.timer); }
   settled() { return this.saving.catch(() => {}); }

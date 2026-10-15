@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Check, LoaderCircle, UserPlus, X } from 'lucide-react';
 import { accountRequest } from './accountApi';
+import { assertRoomReadyToShare } from './offlineService';
 import './collaboration.css';
 
 type Member = { id: string; username: string; role: 'reader' | 'editor'; status: 'pending' | 'accepted' };
@@ -28,6 +29,7 @@ export default function CollaborationPanel({ roomId }: { roomId: string }) {
   async function mutate(path: string, method: string, body?: unknown) {
     setPending(true); setError(''); setNotice('');
     try {
+      await assertRoomReadyToShare(roomId);
       const result = await accountRequest<{ members: Member[] }>(path, { method, headers: { 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
       setMembers(result.members); return true;
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudo cambiar el acceso.'); return false; }

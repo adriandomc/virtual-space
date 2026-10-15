@@ -64,7 +64,7 @@ export default function Landing() {
           <div className="demo-card">
             <div className="demo-viewport">
               <Suspense fallback={<div className="demo-loading"><LoaderCircle size={24} /><span>Cargando…</span></div>}>
-                <RoomScene room={room} mode={step === 2 ? 'walk' : 'orbit'} animateView selection={selection} onSelect={next => { if (editing && next?.kind === 'furniture' && next.id === LANDING_WARDROBE_ID) setSelection(next); }} onChange={setRoom} readOnly={step === 0} transformMode="translate" showFurniture={false} resetKey={0} />
+                <RoomScene room={room} mode={step === 2 ? 'walk' : 'orbit'} animateView selection={selection} onSelect={next => { if (editing && next?.kind === 'furniture' && next.id === LANDING_WARDROBE_ID) setSelection(next); }} onChange={setRoom} readOnly={step === 0} transformMode="translate" resetKey={0} />
               </Suspense>
             </div>
             <aside className={'demo-properties' + (editing ? ' is-visible' : '')} aria-label="Ropero del demo" aria-hidden={!editing} inert={!editing}>

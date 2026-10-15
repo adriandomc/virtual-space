@@ -79,8 +79,6 @@ export function applyErasures(database: DatabaseSync, ledgerPath: string, { now 
   database.exec('BEGIN IMMEDIATE');
   try {
     const ledger = readLedger(ledgerPath);
-    const tables = new Set(database.prepare("SELECT name FROM sqlite_schema WHERE type='table'").all().map(row => row.name));
-    const roomColumns = new Set(database.prepare('PRAGMA table_info(rooms)').all().map(row => row.name));
     for (const entry of ledger.entries) {
       if (!includeExpired && entry.at < now - windowMs) continue;
       if (entry.kind === 'user') {
@@ -88,14 +86,14 @@ export function applyErasures(database: DatabaseSync, ledgerPath: string, { now 
         database.prepare('DELETE FROM request_limits WHERE key = ?').run('create-user:' + createHash('sha256').update(entry.id).digest('hex'));
       }
       else if (entry.kind === 'room') changed += Number(database.prepare('DELETE FROM rooms WHERE id = ?').run(entry.id).changes);
-      else if (entry.kind === 'member') { if (tables.has('room_members')) changed += Number(database.prepare('DELETE FROM room_members WHERE id = ?').run(entry.id).changes); }
+      else if (entry.kind === 'member') changed += Number(database.prepare('DELETE FROM room_members WHERE id = ?').run(entry.id).changes);
       else if (entry.kind === 'asset') {
-        if (tables.has('model_assets')) changed += Number(database.prepare('DELETE FROM model_assets WHERE id = ?').run(entry.id).changes);
+        changed += Number(database.prepare('DELETE FROM model_assets WHERE id = ?').run(entry.id).changes);
         for (const row of database.prepare('SELECT id, room FROM rooms').all()) {
           const room = JSON.parse(String(row.room));
           if (!Array.isArray(room.furniture) || !room.furniture.some((item: { assetId?: string }) => item.assetId === entry.id)) continue;
           room.furniture = room.furniture.filter((item: { assetId?: string }) => item.assetId !== entry.id);
-          database.prepare('UPDATE rooms SET room = ?' + (roomColumns.has('y_state') ? ', y_state = NULL' : '') + ' WHERE id = ?').run(JSON.stringify(room), row.id);
+          database.prepare('UPDATE rooms SET room = ?, y_state = NULL WHERE id = ?').run(JSON.stringify(room), row.id);
         }
       }
       else if (entry.kind === 'share') changed += Number(database.prepare('UPDATE rooms SET shared = 0 WHERE id = ? AND updated_at <= ?').run(entry.id, entry.at).changes);

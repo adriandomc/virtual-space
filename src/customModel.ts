@@ -3,10 +3,11 @@ import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { createFurnitureMaterial } from './materials';
 import type { FurnitureItem, ModelPart, Room } from './types';
 import type { ModelAsset } from './modelAssets';
-import { accountRequest, isNetworkError } from './accountApi';
+import { AccountRequestError, accountRequest, isNetworkError } from './accountApi';
 import { readWorkshopGroup } from './workshopGrouping';
-import { copyOfflineModel, forgetOfflineModel, listOfflineModels, loadModelBlob, readModelMetadata, reconcileOfflineModels, rememberModelMetadata, uploadOfflineModel } from './offlineAssets';
+import { copyOfflineModel, listOfflineModels, loadModelBlob, readModelMetadata, reconcileOfflineModels, rememberModelMetadata, uploadOfflineModel } from './offlineAssets';
 import { onOfflinePurge } from './offlineStorage';
+import { deleteOfflineModel } from './offlineService';
 
 export type { ModelAsset } from './modelAssets';
 export const modelAssetUrl = (id: string, roomId?: string, publicOnly = false) => `/api/models/${encodeURIComponent(id)}${roomId ? '?room=' + encodeURIComponent(roomId) : ''}${publicOnly ? (roomId ? '&' : '?') + 'public=1' : ''}`;
@@ -24,7 +25,7 @@ export async function listModels(roomId?: string, scope: 'room' | 'mine' = 'room
     }
     return models;
   } catch (error) {
-    if (isNetworkError(error) && roomId) return listOfflineModels(roomId, scope);
+    if ((isNetworkError(error) || error instanceof AccountRequestError && error.status === 401) && roomId) return listOfflineModels(roomId, scope);
     throw error;
   }
 }
@@ -34,7 +35,7 @@ export async function copyModel(asset: ModelAsset, roomId: string): Promise<Mode
 export async function modelMetadata(id: string, roomId?: string): Promise<ModelAsset> {
   return readModelMetadata(id, roomId);
 }
-export async function deleteModel(id: string): Promise<void> { await accountRequest(modelAssetUrl(id), { method: 'DELETE' }); await forgetOfflineModel(id); clearCustomModelCache(); }
+export async function deleteModel(id: string): Promise<void> { await deleteOfflineModel(id); clearCustomModelCache(); }
 
 type Template = { scene: THREE.Group; bounds: THREE.Box3; gltf: GLTF };
 type Entry = { promise: Promise<Template>; references: number; touched: number; value?: Template };
@@ -164,7 +165,7 @@ function instantiate(template: Template, item: FurnitureItem, quality: Room['ren
   model.traverse(object => {
     const nodeKey = object.userData.modelNodeKey as string | undefined;
     const part = nodeKey === undefined ? undefined : item.parts?.[nodeKey];
-    if (part) applyCustomPart(object, part, { ...item, color: undefined, material: undefined }, quality);
+    if (part) applyCustomPart(object, part, { ...item, color: null, material: null }, quality);
   });
   return content;
 }

@@ -1,3 +1,4 @@
+import { initializeTestDatabase, insertTestUser, insertTestSession, insertTestRoom } from './serverTestFixtures';
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -25,32 +26,26 @@ function withoutSessions(value: ReturnType<typeof contents>) {
 function fixture() {
   const directory = mkdtempSync(join(tmpdir(), '3d-space-backup-test-'));
   const database = new DatabaseSync(join(directory, 'accounts.sqlite'));
-  database.exec(`
-    PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; PRAGMA foreign_keys=ON; PRAGMA user_version=3;
-    CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT UNIQUE, salt TEXT, password_hash TEXT, created_at INTEGER, last_active_at INTEGER, inactive_after INTEGER);
-    CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id TEXT REFERENCES users(id) ON DELETE CASCADE, expires_at INTEGER);
-    CREATE TABLE rooms (id TEXT PRIMARY KEY, owner_id TEXT REFERENCES users(id) ON DELETE CASCADE, room TEXT, revision INTEGER, shared INTEGER, sketch BLOB, sketch_mime TEXT, sketch_version INTEGER);
-    CREATE TABLE request_limits (key TEXT PRIMARY KEY, count INTEGER, window_start INTEGER, blocked_until INTEGER, strikes INTEGER, updated_at INTEGER);
-    CREATE TABLE "future table" (id INTEGER PRIMARY KEY AUTOINCREMENT, note TEXT, payload BLOB, huge INTEGER);
-    CREATE VIEW room_names AS SELECT id, json_extract(room, '$.name') AS name FROM rooms;
-    INSERT INTO users VALUES ('${ownerId}', 'sample_owner', '${'a'.repeat(32)}', '${'b'.repeat(128)}', ${time}, ${time}, ${time + 90 * BACKUP_INTERVAL});
-    INSERT INTO sessions VALUES ('${'c'.repeat(64)}', '${ownerId}', ${time + 30 * BACKUP_INTERVAL});
-    INSERT INTO request_limits VALUES ('failed-ip:masked', 11, ${time}, ${time + 60_000}, 1, ${time});
-  `);
-  database.prepare('INSERT INTO rooms VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(designId, ownerId, JSON.stringify({ name: 'Diseño íntegro', ceiling: '#ffffff', dimensions: [4, 5, 3] }), 12, 1, Buffer.from([137, 80, 78, 71, 0, 255, 12]), 'image/png', 4);
-  database.prepare('INSERT INTO "future table" (note, payload, huge) VALUES (?, ?, ?)').run('テスト \u0000 texto', Buffer.from([0, 1, 2, 255]), 9_223_372_036_854_775_807n);
+  initializeTestDatabase(database);
+  database.exec('PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0');
+  insertTestUser(database, ownerId, 'sample_owner', time);
+  insertTestSession(database, 'c'.repeat(64), ownerId, time + 30 * BACKUP_INTERVAL, time);
+  database.prepare('INSERT INTO request_limits VALUES (?, ?, ?, ?, ?, ?)').run('failed-ip:masked', 11, time, time + 60_000, 1, time);
+  insertTestRoom(database, designId, ownerId, { revision: 12, shared: 1, updated_at: time, sketch: Buffer.from([137, 80, 78, 71, 0, 255, 12]), sketch_mime: 'image/png', sketch_version: 4, sketch_mutation_id: '33333333-3333-4333-8333-333333333333', y_state: Buffer.from([1, 2, 255]) });
+  database.prepare('INSERT INTO room_members VALUES (?, ?, ?, ?, ?, ?, ?)').run('44444444-4444-4444-8444-444444444444', designId, ownerId, ownerId, 'reader', time, time);
+  database.prepare('INSERT INTO model_assets VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run('55555555-5555-4555-8555-555555555555', ownerId, designId, 'テスト texto', 4, time, JSON.stringify({ width: 1, height: 1, depth: 1, nodes: [] }), Buffer.from([0, 1, 2, 255]));
   const erasureFile = join(directory, 'erasures.json'); writeFileSync(erasureFile, '{"version":1,"entries":[]}');
   return { directory, database, erasureFile, dispose() { try { database.close(); } catch {} rmSync(directory, { recursive: true, force: true }); } };
 }
 
-test('online backup captures WAL, hashes, sessions, complete designs, sketch BLOBs and future tables, then restores exactly', async () => {
+test('online backup captures WAL, hashes, sessions, complete schema, policies, memberships, model/sketch/Yjs BLOBs, then restores exactly', async () => {
   const sample = fixture();
   try {
     assert.ok(existsSync(join(sample.directory, 'accounts.sqlite-wal')));
     const expected = contents(sample.database);
     const result = await runBackup(sample.database, sample.directory, { now: time });
     assert.equal(result.created, true); assert.match(result.path, /accounts-1800000000000-[a-f0-9]{32}\.sqlite$/);
-    assert.equal(result.verified.tables, 6); assert.equal(result.verified.rows, 6); assert.equal(result.verified.blobBytes, 11);
+    assert.equal(result.verified.tables, 6); assert.equal(result.verified.rows, 6); assert.equal(result.verified.blobBytes, 14);
     assert.deepEqual(verifyBackup(result.path), result.verified);
     assert.deepEqual(readdirSync(join(sample.directory, 'backups')), [result.path.split(/[\\/]/).at(-1)]);
     if (process.platform !== 'win32') {
@@ -93,7 +88,7 @@ test('invalid or foreign-key damaged backups never publish and retain recent wor
     const good = await runBackup(sample.database, sample.directory, { now: time });
     const corrupt = join(sample.directory, 'bad.sqlite'); writeFileSync(corrupt, 'not SQLite');
     assert.throws(() => verifyBackup(corrupt));
-    sample.database.exec('PRAGMA foreign_keys=OFF; INSERT INTO sessions VALUES (\'orphan\', \'missing\', 0);');
+    sample.database.exec('PRAGMA foreign_keys=OFF; INSERT INTO sessions VALUES (\'orphan\', \'missing\', 0, 0);');
     await assert.rejects(runBackup(sample.database, sample.directory, { now: time + BACKUP_INTERVAL }), /foreign-key/);
     assert.deepEqual(readdirSync(join(sample.directory, 'backups')), [good.path.split(/[\\/]/).at(-1)]);
     assert.equal(verifyBackup(good.path).digest, good.verified.digest);
@@ -200,7 +195,7 @@ test('restoring a snapshot never reactivates sessions later revoked or rotated i
     const snapshot = await runBackup(sample.database, sample.directory, { now: time });
     const oldSession = sample.database.prepare('SELECT token_hash FROM sessions').get()!.token_hash;
     sample.database.exec('DELETE FROM sessions');
-    sample.database.prepare('INSERT INTO sessions VALUES (?, ?, ?)').run('d'.repeat(64), ownerId, time + 30 * BACKUP_INTERVAL);
+    insertTestSession(sample.database, 'd'.repeat(64), ownerId, time + 30 * BACKUP_INTERVAL, time);
     const restored = restoreBackup(snapshot.path, join(sample.directory, 'no-revived-session'), { now: time + 1, erasureFile: sample.erasureFile });
     assert.equal(restored.recovered.digest, snapshot.verified.digest);
     assert.equal(restored.removed.revokedSessions, 1);

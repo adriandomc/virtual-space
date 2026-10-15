@@ -1,3 +1,4 @@
+import { initializeTestDatabase, insertTestUser, insertTestSession, insertTestRoom } from './serverTestFixtures';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -14,12 +15,13 @@ const retention = BACKUP_RETENTION_DAYS * 24 * 60 * 60_000;
 test('a second SQLite connection cannot leave the main process with a stale erasure ledger', () => {
   const directory = mkdtempSync(join(tmpdir(), '3d-space-erasures-live-')), path = join(directory, 'accounts.sqlite');
   const main = new DatabaseSync(path);
-  main.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; CREATE TABLE users(id TEXT PRIMARY KEY, username TEXT UNIQUE); CREATE TABLE rooms(id TEXT PRIMARY KEY, owner_id TEXT REFERENCES users(id) ON DELETE CASCADE, shared INTEGER); CREATE TABLE sessions(user_id TEXT REFERENCES users(id) ON DELETE CASCADE);');
+  initializeTestDatabase(main);
+  main.exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;');
   const qa = randomUUID(), control = randomUUID(), room = randomUUID();
-  main.prepare('INSERT INTO users VALUES (?, ?)').run(qa, 'qa_live_fixture');
-  main.prepare('INSERT INTO users VALUES (?, ?)').run(control, 'unrelated_control');
-  main.prepare('INSERT INTO rooms VALUES (?, ?, 1)').run(room, control);
-  main.prepare('INSERT INTO sessions VALUES (?)').run(qa);
+  insertTestUser(main, qa, 'qa_live_fixture', time);
+  insertTestUser(main, control, 'unrelated_control', time);
+  insertTestRoom(main, room, control, { shared: 1 });
+  insertTestSession(main, 'session', qa, time + retention);
   const ledger = initializeErasures(directory, main), cachedStatement = main.prepare('SELECT username FROM users WHERE id = ?');
   assert.equal(cachedStatement.get(qa)?.username, 'qa_live_fixture');
   const helper = new DatabaseSync(path);
@@ -42,19 +44,13 @@ test('a second SQLite connection cannot leave the main process with a stale eras
 function fixture() {
   const directory = mkdtempSync(join(tmpdir(), '3d-space-erasures-test-'));
   const database = new DatabaseSync(':memory:');
-  database.exec(`
-    PRAGMA foreign_keys=ON;
-    CREATE TABLE users (id TEXT PRIMARY KEY);
-    CREATE TABLE rooms (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, sketch BLOB, sketch_mime TEXT, sketch_version INTEGER NOT NULL, shared INTEGER NOT NULL, updated_at INTEGER NOT NULL);
-    CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE);
-    CREATE TABLE request_limits (key TEXT PRIMARY KEY);
-  `);
+  initializeTestDatabase(database);
   const ledger = initializeErasures(directory), user = randomUUID(), room = randomUUID();
-  database.prepare('INSERT INTO users VALUES (?)').run(user);
-  const addRoom = (id = room, version = 1, updated = time) => database.prepare('INSERT INTO rooms VALUES (?, ?, ?, ?, ?, ?, ?)').run(id, user, Buffer.from([0, 255, 137, 80]), 'image/png', version, 1, updated);
+  insertTestUser(database, user, undefined, time);
+  const addRoom = (id = room, version = 1, updated = time) => insertTestRoom(database, id, user, { sketch: Buffer.from([0, 255, 137, 80]), sketch_mime: 'image/png', sketch_version: version, shared: 1, updated_at: updated });
   addRoom();
-  database.prepare('INSERT INTO sessions VALUES (?, ?)').run('protected_session', user);
-  database.prepare('INSERT INTO request_limits VALUES (?)').run('create-user:' + createHash('sha256').update(user).digest('hex'));
+  insertTestSession(database, 'protected_session', user, time + retention);
+  database.prepare('INSERT INTO request_limits (key, count, window_start, updated_at) VALUES (?, 1, 0, 0)').run('create-user:' + createHash('sha256').update(user).digest('hex'));
   return { database, directory, ledger, user, room, addRoom, dispose() {
     database.close();
     assert.equal(dirname(resolve(directory)), resolve(tmpdir()));
@@ -72,9 +68,9 @@ test('an erasure persists before commit and stops restored accounts, designs and
     const persisted = JSON.parse(readFileSync(sample.ledger, 'utf8'));
     assert.deepEqual(persisted.entries, [{ kind: 'user', id: sample.user, at: time }]);
     assert.equal(sample.database.prepare('SELECT COUNT(*) AS count FROM rooms').get()!.count, 0);
-    sample.database.prepare('INSERT INTO users VALUES (?)').run(sample.user);
+    insertTestUser(sample.database, sample.user, undefined, time);
     sample.addRoom();
-    sample.database.prepare('INSERT INTO sessions VALUES (?, ?)').run('restored_session', sample.user);
+    insertTestSession(sample.database, 'restored_session', sample.user, time + retention);
     assert.equal(applyErasures(sample.database, sample.ledger, { now: time + 1 }), 1);
     for (const table of ['users', 'rooms', 'sessions', 'request_limits']) assert.equal(sample.database.prepare('SELECT COUNT(*) AS count FROM ' + table).get()!.count, 0);
     assert.equal(sample.database.prepare('PRAGMA foreign_key_check').all().length, 0);

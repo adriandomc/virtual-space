@@ -241,7 +241,6 @@ export function createModelAssets(database: DatabaseSync, { now = Date.now, canV
   canEditRoom: (roomId: string, userId: string) => boolean;
   recordAssetErasure?: (id: string, erase: () => void) => void;
 }) {
-  database.exec('CREATE TABLE IF NOT EXISTS model_assets (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE, name TEXT NOT NULL, size INTEGER NOT NULL, created_at INTEGER NOT NULL, metadata TEXT NOT NULL, data BLOB NOT NULL); CREATE INDEX IF NOT EXISTS model_assets_owner ON model_assets(owner_id); CREATE INDEX IF NOT EXISTS model_assets_room ON model_assets(room_id);');
   const find = database.prepare('SELECT id, owner_id, room_id, name, size, created_at, metadata FROM model_assets WHERE id = ?');
   const describe = (row: AssetRow): ModelAsset => ({ id: row.id, roomId: row.room_id, name: row.name, size: row.size, createdAt: new Date(row.created_at).toISOString(), ...JSON.parse(row.metadata) });
   const roomAssets = (roomId: string): Set<string> => {
@@ -282,6 +281,7 @@ export function createModelAssets(database: DatabaseSync, { now = Date.now, canV
       } catch (error) { database.exec('ROLLBACK'); throw error; }
     },
     list(ownerId: string, roomId?: string, own = false): ModelAsset[] {
+      if (own && !roomId) return (database.prepare('SELECT id, owner_id, room_id, name, size, created_at, metadata FROM model_assets WHERE owner_id = ? ORDER BY created_at DESC, id').all(ownerId) as AssetRow[]).map(describe);
       if (!roomId || !UUID.test(roomId)) throw new HttpError(400, 'Selecciona un diseño para ver sus modelos.');
       if (!canViewRoom(roomId, ownerId)) throw new HttpError(404, 'Este proyecto no existe.');
       if (own) return (database.prepare('SELECT id, owner_id, room_id, name, size, created_at, metadata FROM model_assets WHERE owner_id = ? ORDER BY created_at DESC, id').all(ownerId) as AssetRow[]).map(describe);
@@ -294,9 +294,10 @@ export function createModelAssets(database: DatabaseSync, { now = Date.now, canV
       permitted(id, userId, roomId);
       return Buffer.from((database.prepare('SELECT data FROM model_assets WHERE id = ?').get(id) as { data: Uint8Array }).data);
     },
-    remove(id: string, ownerId: string) {
+    remove(id: string, ownerId: string, roomId?: string) {
       const row = permitted(id, ownerId);
       if (row.owner_id !== ownerId) throw new HttpError(403, 'Solo puedes eliminar tus modelos.');
+      if (roomId && row.room_id !== roomId) throw new HttpError(409, 'El modelo pertenece a otro diseño.');
       const used = database.prepare("SELECT rooms.id FROM rooms, json_each(rooms.room, '$.furniture') item WHERE json_extract(item.value, '$.assetId') = ? LIMIT 1").get(id);
       if (used) throw new HttpError(409, 'El modelo está en un diseño. Retíralo antes de eliminarlo.');
       const erase = () => { database.prepare('DELETE FROM model_assets WHERE id = ?').run(id); };

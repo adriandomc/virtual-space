@@ -45,7 +45,7 @@ export default function Embed() {
   return <main className="embed-view" aria-label="Visor 3D">
     {room ? <>
       <Suspense fallback={<div className="embed-loading" aria-label="Cargando"><LoaderCircle size={24} className="saving-spinner" /></div>}>
-        <RoomScene room={room} roomId={id} publicView mode={mode} animateView selection={null} onSelect={ignore} onChange={ignore} onModelError={setError} readOnly transformMode="translate" showFurniture={room.showFurniture} resetKey={0} />
+        <RoomScene room={room} roomId={id} publicView mode={mode} animateView selection={null} onSelect={ignore} onChange={ignore} onModelError={setError} readOnly transformMode="translate" resetKey={0} />
       </Suspense>
       <div className="embed-controls">
         <div className="embed-mode" role="group" aria-label="Vista"><button type="button" aria-pressed={mode === 'orbit'} onClick={() => setMode('orbit')}>Visor</button><button type="button" aria-pressed={mode === 'walk'} onClick={() => setMode('walk')}>Recorrido</button></div>

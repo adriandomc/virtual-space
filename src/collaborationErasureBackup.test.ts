@@ -1,3 +1,4 @@
+import { initializeTestDatabase, insertTestUser, insertTestSession, insertTestRoom } from './serverTestFixtures';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -8,7 +9,7 @@ import test from 'node:test';
 import * as Y from 'yjs';
 import { restoreBackup, runBackup, verifyBackup } from './backups';
 import { applyErasures, initializeErasures, recordErasure, wasErased } from './erasures';
-import { initializeCollaboration, roomRole } from './collaborationServer';
+import { roomRole } from './collaborationServer';
 import { createDefaultRoom } from './model';
 import { seedYRoom } from './collaborativeRoom';
 import type { Room } from './types';
@@ -17,22 +18,16 @@ const time = Date.parse('2026-10-13T19:00:00Z');
 
 function fixture() {
   const directory = mkdtempSync(join(tmpdir(), '3d-space-collaboration-recovery-')), database = new DatabaseSync(join(directory, 'accounts.sqlite'));
-  database.exec(`PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL;
-    CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT UNIQUE, last_active_at INTEGER, inactive_after INTEGER);
-    CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id TEXT REFERENCES users(id) ON DELETE CASCADE, expires_at INTEGER);
-    CREATE TABLE request_limits (key TEXT PRIMARY KEY, updated_at INTEGER, blocked_until INTEGER);
-    CREATE TABLE rooms (id TEXT PRIMARY KEY, owner_id TEXT REFERENCES users(id) ON DELETE CASCADE, room TEXT, revision INTEGER, shared INTEGER, sketch BLOB, sketch_mime TEXT, sketch_version INTEGER, updated_at INTEGER);
-    CREATE TABLE model_assets (id TEXT PRIMARY KEY, owner_id TEXT REFERENCES users(id) ON DELETE CASCADE, room_id TEXT REFERENCES rooms(id) ON DELETE CASCADE, name TEXT, metadata TEXT, data BLOB);
-  `);
-  initializeCollaboration(database);
+  initializeTestDatabase(database);
+  database.exec('PRAGMA journal_mode=WAL');
   const owner = randomUUID(), editor = randomUUID(), room = randomUUID(), otherRoom = randomUUID(), member = randomUUID(), asset = randomUUID(), retainedAsset = randomUUID();
-  for (const [id, username] of [[owner, 'fixture_owner'], [editor, 'fixture_editor']]) database.prepare('INSERT INTO users VALUES (?, ?, ?, ?)').run(id, username, time, time + 100 * 24 * 60 * 60_000);
-  database.prepare('INSERT INTO sessions VALUES (?, ?, ?)').run('old-session', editor, time + 30 * 24 * 60 * 60_000);
-  const sharedRoom: Room = { ...createDefaultRoom(), furniture: [{ id: randomUUID(), type: 'custom', assetId: asset, name: 'Modelo eliminado', x: 0, z: 0, width: 1, height: 1, depth: 1, rotation: 0 }, { id: randomUUID(), type: 'custom', assetId: retainedAsset, name: 'Modelo conservado', x: 1.5, z: 0, width: .5, height: .5, depth: .5, rotation: 0 }] };
+  for (const [id, username] of [[owner, 'fixture_owner'], [editor, 'fixture_editor']]) insertTestUser(database, id, username, time);
+  insertTestSession(database, 'old-session', editor, time + 30 * 24 * 60 * 60_000);
+  const sharedRoom: Room = { ...createDefaultRoom(), furniture: [{ id: randomUUID(), type: 'custom', material: null, color: null, assetId: asset, name: 'Modelo eliminado', x: 0, z: 0, width: 1, height: 1, depth: 1, rotation: 0 }, { id: randomUUID(), type: 'custom', material: null, color: null, assetId: retainedAsset, name: 'Modelo conservado', x: 1.5, z: 0, width: .5, height: .5, depth: .5, rotation: 0 }] };
   const doc = new Y.Doc(); seedYRoom(doc, sharedRoom); const state = Y.encodeStateAsUpdate(doc); doc.destroy();
-  for (const id of [room, otherRoom]) database.prepare('INSERT INTO rooms VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, owner, JSON.stringify(sharedRoom), 8, 0, Buffer.from([137, 80, 0, 255]), 'image/png', 1, time, state);
+  for (const id of [room, otherRoom]) insertTestRoom(database, id, owner, { room: JSON.stringify(sharedRoom), revision: 8, sketch: Buffer.from([137, 80, 0, 255]), sketch_mime: 'image/png', sketch_version: 1, updated_at: time, y_state: state });
   database.prepare('INSERT INTO room_members VALUES (?, ?, ?, ?, ?, ?, ?)').run(member, room, editor, owner, 'editor', time, time);
-  for (const [id, name] of [[asset, 'erased.glb'], [retainedAsset, 'retained.glb']]) database.prepare('INSERT INTO model_assets VALUES (?, ?, ?, ?, ?, ?)').run(id, owner, room, name, JSON.stringify({ width: 1, height: 1, depth: 1 }), Buffer.from([103, 108, 84, 70, 0, 255]));
+  for (const [id, name] of [[asset, 'erased.glb'], [retainedAsset, 'retained.glb']]) database.prepare('INSERT INTO model_assets (id, owner_id, room_id, name, metadata, data, size, created_at) VALUES (?, ?, ?, ?, ?, ?, 6, 0)').run(id, owner, room, name, JSON.stringify({ width: 1, height: 1, depth: 1 }), Buffer.from([103, 108, 84, 70, 0, 255]));
   const ledger = initializeErasures(directory);
   return { directory, database, owner, editor, room, otherRoom, member, asset, retainedAsset, ledger, dispose() {
     database.close();

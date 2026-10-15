@@ -91,11 +91,11 @@ test('cached GLB remains usable during temporary proxy outages without bypassing
   try {
     globalThis.fetch = async () => new Response(bytes);
     await loadModelBlob('model', 'room');
-    for (const status of [408, 502, 503, 504]) {
+    for (const status of [401, 408, 502, 503, 504]) {
       globalThis.fetch = async () => new Response('Temporary outage', { status });
       assert.equal((await loadModelBlob('model', 'room')).size, bytes.length, String(status));
     }
-    for (const status of [401, 403, 404, 429]) {
+    for (const status of [403, 404, 429]) {
       globalThis.fetch = async () => new Response('Denied', { status });
       await assert.rejects(loadModelBlob('model', 'room'), /no está disponible/, String(status));
     }
@@ -113,7 +113,7 @@ test('offline uploads persist their GLB and reuse the same id when synchronizati
     assert.equal((await loadModelBlob(asset.id, 'room')).size, asset.size);
     assert.equal((await listOfflineModels('room', 'room'))[0].id, asset.id);
     const room = createDefaultRoom();
-    room.furniture = [{ id: 'table', type: 'custom', assetId: asset.id, width: 1, height: 1, depth: 1, x: 0, z: 0, rotation: 0 }];
+    room.furniture = [{ id: 'table', type: 'custom', color: null, material: null, assetId: asset.id, width: 1, height: 1, depth: 1, x: 0, z: 0, rotation: 0 }];
     const requestedIds: string[] = [];
     globalThis.fetch = async (_url, options) => {
       const headers = options?.headers as Record<string, string>;

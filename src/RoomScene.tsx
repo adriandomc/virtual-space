@@ -7,7 +7,7 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 import { RectAreaLightTexturesLib } from 'three/addons/lights/RectAreaLightTexturesLib.js';
 import { DoorClosed, DoorOpen, Lightbulb, LoaderCircle } from 'lucide-react';
-import { bounds, FURNITURE_COLORS, furnitureCorners, furnitureWalkable, interiorPoint, interiorWalkPoint, invalidFurnitureIds, itemWorldPosition, moveSceneItem, pointInPolygon, polygonArea, toggleSceneInteraction } from './model';
+import { bounds, furnitureCorners, furnitureWalkable, interiorPoint, interiorWalkPoint, invalidFurnitureIds, itemWorldPosition, moveSceneItem, pointInPolygon, polygonArea, toggleSceneInteraction } from './model';
 import { createCeilingMaterial, createFabricMaterial, createFloorMaterial, createFurnitureMaterial, createWallMaterial, createWoodMaterial, disposeArchitecturalTextures } from './materials';
 import { createDuvetGeometry, createPillowGeometry } from './beddingGeometry';
 import { buildCatalogGeometry } from './catalogGeometry';
@@ -31,7 +31,6 @@ type Props = {
   onChange: (room: Room) => void;
   readOnly: boolean;
   transformMode: 'translate' | 'rotate';
-  showFurniture: boolean;
   resetKey: number;
   onReady?: (backend: string) => void;
   animateView?: boolean;
@@ -175,15 +174,15 @@ function updateSelection(runtime: Runtime, props: Props) {
   if (import.meta.env.DEV) console.assert(runtime.proxy.parent === runtime.scene && Number.isFinite(runtime.proxy.position.length()), 'Invalid transform proxy');
 }
 
-function structureOf(room: Room, reference: boolean) {
-  const { furniture, lights, editing: _editing, name: _name, showFurniture: _showFurniture, ...shell } = room;
-  return JSON.stringify({ ...shell, reference: reference && !furniture.length, furniture: furniture.map(({ x: _x, z: _z, rotation: _rotation, ...item }) => item), lights: lights.map(({ x: _x, y: _y, z: _z, ...item }) => item) });
+function structureOf(room: Room) {
+  const { furniture, lights, editing: _editing, name: _name, ...shell } = room;
+  return JSON.stringify({ ...shell, furniture: furniture.map(({ x: _x, z: _z, rotation: _rotation, ...item }) => item), lights: lights.map(({ x: _x, y: _y, z: _z, ...item }) => item) });
 }
 
-function updateRoom(runtime: Runtime, room: Room, reference: boolean) {
-  const structure = structureOf(room, reference);
+function updateRoom(runtime: Runtime, room: Room) {
+  const structure = structureOf(room);
   if (runtime.builtRoom === room && runtime.structure === structure) return;
-  if (runtime.structure !== structure) { buildRoom(runtime, room, reference); return; }
+  if (runtime.structure !== structure) { buildRoom(runtime, room); return; }
   let moved = false;
   for (const item of room.furniture) {
     const group = runtime.objects.get(`furniture:${item.id}`);
@@ -276,50 +275,6 @@ function box(group: THREE.Group, size: [number, number, number], at: [number, nu
   return mesh;
 }
 
-function addFurniture(group: THREE.Group, room: Room) {
-  const b = bounds(room.vertices);
-  // shortcut: reference furniture fits axis-aligned rectangular rooms; add placement tools before furnishing other floor plans.
-  if (room.vertices.length !== 4 || room.vertices.some((v, i) => { const next = room.vertices[(i + 1) % 4]; return v.x !== next.x && v.z !== next.z; }) || b.width < 2.5 || b.depth < 2.5) return;
-  const scale = Math.min(1, b.width / 5, b.depth / 4);
-  const furniture = new THREE.Group();
-  furniture.position.set((b.minX + b.maxX) / 2, 0, (b.minZ + b.maxZ) / 2);
-  furniture.scale.setScalar(scale);
-  group.add(furniture);
-  const fabric = new THREE.MeshStandardMaterial({ color: '#dad2c2', roughness: 1 });
-  const cushion = new THREE.MeshStandardMaterial({ color: '#e7dfd1', roughness: 1 });
-  const green = new THREE.MeshStandardMaterial({ color: '#57664c', roughness: 1 });
-  const wood = new THREE.MeshStandardMaterial({ color: '#7d5739', roughness: 0.8 });
-  const dark = new THREE.MeshStandardMaterial({ color: '#34392f', roughness: 0.8 });
-  const rugMaterial = new THREE.MeshStandardMaterial({ color: '#e6dfcf', roughness: 1 });
-  box(furniture, [2.65, 0.025, 2.1], [0, 0.018, 0.35], rugMaterial, true);
-  box(furniture, [2.55, 0.35, 0.94], [-0.3, 0.31, -1.15], fabric, true);
-  box(furniture, [2.55, 0.65, 0.21], [-0.3, 0.64, -1.57], fabric, true);
-  for (const x of [-1.44, 0.84]) box(furniture, [0.27, 0.55, 0.92], [x, 0.59, -1.15], fabric, true);
-  for (const x of [-0.84, 0.22]) box(furniture, [1.03, 0.19, 0.72], [x, 0.53, -1.06], cushion, true);
-  const pillow = box(furniture, [0.44, 0.4, 0.18], [0.47, 0.85, -1.37], green, true);
-  pillow.rotation.z = -0.2;
-  for (const x of [-1.24, 0.64]) for (const z of [-1.44, -0.82]) box(furniture, [0.055, 0.2, 0.055], [x, 0.1, z], dark);
-  const table = new THREE.Mesh(new THREE.CylinderGeometry(0.57, 0.57, 0.07, 48), wood);
-  table.position.set(0.28, 0.42, 0.32);
-  table.castShadow = table.receiveShadow = true;
-  furniture.add(table);
-  for (const angle of [0, Math.PI * 2 / 3, Math.PI * 4 / 3]) box(furniture, [0.055, 0.4, 0.055], [0.28 + Math.cos(angle) * 0.37, 0.2, 0.32 + Math.sin(angle) * 0.37], dark);
-  box(furniture, [0.24, 0.028, 0.32], [0.2, 0.475, 0.35], new THREE.MeshStandardMaterial({ color: '#efe8dd', roughness: 1 }));
-  const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.16, 0.38, 24), new THREE.MeshStandardMaterial({ color: '#d8c9b4', roughness: 1 }));
-  pot.position.set(1.83, 0.19, -1.35);
-  pot.castShadow = pot.receiveShadow = true;
-  furniture.add(pot);
-  for (let i = 0; i < 9; i++) {
-    const angle = i * 2.4;
-    const leaf = new THREE.Mesh(new THREE.SphereGeometry(1, 10, 8), green);
-    leaf.scale.set(0.13, 0.38 + (i % 3) * 0.05, 0.06);
-    leaf.position.set(1.83 + Math.sin(angle) * 0.14, 0.66 + (i % 3) * 0.1, -1.35 + Math.cos(angle) * 0.14);
-    leaf.rotation.set(Math.cos(angle) * 0.55, angle, Math.sin(angle) * 0.5);
-    leaf.castShadow = true;
-    furniture.add(leaf);
-  }
-}
-
 function addStoredFurniture(parent: THREE.Group, item: FurnitureItem, quality: Room['renderQuality'], runtime?: Runtime) {
   const group = new THREE.Group();
   group.userData.architectural = quality === 'hyperrealistic';
@@ -336,10 +291,10 @@ function addStoredFurniture(parent: THREE.Group, item: FurnitureItem, quality: R
     return group;
   }
   const w = item.width, d = item.depth, h = item.height;
-  const body = createFurnitureMaterial(item.color ?? FURNITURE_COLORS[item.type], item.material ?? 'wood', quality);
-  const face = item.color || item.type === 'bed' ? body : createFurnitureMaterial('#d0bea3', item.material ?? 'wood', quality);
+  const body = createFurnitureMaterial(item.color!, item.material!, quality);
+  const face = body;
   const handles = new THREE.MeshStandardMaterial({ color: '#626559', metalness: 0.65, roughness: 0.35 });
-  body.name = face.name = `3D Space:${item.material ?? 'wood'}`;
+  body.name = face.name = `3D Space:${item.material!}`;
   handles.name = '3D Space:metal';
   if (isFurnitureVariant(item.type, item.variant)) {
     buildCatalogGeometry(group, item, { body, face, handles }, quality);
@@ -378,35 +333,6 @@ function addStoredFurniture(parent: THREE.Group, item: FurnitureItem, quality: R
     const columns = w < 1.3 ? 1 : 2;
     for (let i = 0; i < columns; i++) box(group, [w * 0.74 / columns, h * 0.09, d * 0.21], [columns === 1 ? 0 : (i - 0.5) * w * 0.45, h * 0.56, -d * 0.285], ivory, true);
     for (const x of [-w * 0.4, w * 0.4]) for (const z of [-d * 0.4, d * 0.4]) box(group, [w * 0.055, h * 0.16, d * 0.045], [x, h * 0.08, z], body);
-  } else if (item.type === 'wardrobe') {
-    box(group, [w, h, d * 0.84], [0, h / 2, -d * 0.08], body, true);
-    for (const x of [-w * 0.24, w * 0.24]) {
-      box(group, [w * 0.46, h * 0.71, d * 0.12], [x, h * 0.615, d * 0.405], face, true);
-      box(group, [w * 0.018, h * 0.12, d * 0.03], [x < 0 ? -w * 0.055 : w * 0.055, h * 0.58, d * 0.483], handles, true);
-    }
-    for (const y of [h * 0.07, h * 0.2]) {
-      box(group, [w * 0.94, h * 0.11, d * 0.12], [0, y, d * 0.405], face, true);
-      box(group, [w * 0.19, h * 0.014, d * 0.03], [0, y, d * 0.483], handles, true);
-    }
-  } else if (item.type === 'vanity') {
-    box(group, [w, h * 0.045, d], [0, h * 0.475, 0], face, true);
-    for (const x of [-w * 0.43, w * 0.43]) for (const z of [-d * 0.38, d * 0.38]) box(group, [w * 0.055, h * 0.45, d * 0.07], [x, h * 0.225, z], body);
-    box(group, [w * 0.3, h * 0.39, d * 0.82], [-w * 0.31, h * 0.25, -d * 0.075], body, true);
-    for (const y of [h * 0.17, h * 0.34]) {
-      box(group, [w * 0.28, h * 0.15, d * 0.04], [-w * 0.31, y, d * 0.43], face, true);
-      box(group, [w * 0.10, h * 0.009, d * 0.025], [-w * 0.31, y, d * 0.475], handles, true);
-    }
-    box(group, [w * 0.73, h * 0.46, d * 0.075], [0, h * 0.75, -d * 0.425], body, true);
-    const mirror = box(group, [w * 0.65, h * 0.4, d * 0.018], [0, h * 0.75, -d * 0.378], quality === 'hyperrealistic' ? new THREE.MeshPhysicalNodeMaterial({ color: '#e5ecec', metalness: 1, roughness: 0.06 }) : new THREE.MeshBasicMaterial({ color: '#c1d0d0' }), true);
-    mirror.castShadow = false;
-  } else {
-    box(group, [w, h * 0.78, d * 0.84], [0, h * 0.51, -d * 0.08], body, true);
-    box(group, [w, h * 0.07, d], [0, h * 0.965, 0], face, true);
-    for (const y of [h * 0.32, h * 0.69]) {
-      box(group, [w * 0.92, h * 0.32, d * 0.10], [0, y, d * 0.425], face, true);
-      box(group, [w * 0.21, h * 0.02, d * 0.025], [0, y, d * 0.487], handles, true);
-    }
-    for (const x of [-w * 0.37, w * 0.37]) for (const z of [-d * 0.36, d * 0.36]) box(group, [w * 0.07, h * 0.14, d * 0.07], [x, h * 0.07, z], body);
   }
   const usedMaterials = new Set<THREE.Material>();
   group.traverse(object => {
@@ -426,7 +352,7 @@ export function createFurnitureModel(item: FurnitureItem, quality: Room['renderQ
   return addStoredFurniture(new THREE.Group(), { ...item, x: 0, z: 0, rotation: 0 }, quality);
 }
 
-function buildRoom(runtime: Runtime, room: Room, furniture: boolean) {
+function buildRoom(runtime: Runtime, room: Room) {
   disposeContent(runtime.content);
   const group = runtime.content;
   const architectural = room.renderQuality === 'hyperrealistic';
@@ -675,7 +601,7 @@ function buildRoom(runtime: Runtime, room: Room, furniture: boolean) {
       object.userData.placementOverlay = overlay;
       runtime.objects.set(`furniture:${item.id}`, object);
     }
-  } else if (furniture) addFurniture(group, room);
+  }
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(Math.max(30, span * 4), Math.max(30, span * 4)), new THREE.MeshStandardMaterial({ color: '#e9ece4', roughness: 1 }));
   ground.rotation.x = -Math.PI / 2;
   ground.position.set(cx, -0.19, cz);
@@ -689,7 +615,7 @@ function buildRoom(runtime: Runtime, room: Room, furniture: boolean) {
   grid.userData.exterior = architectural;
   group.add(grid);
   runtime.builtRoom = room;
-  runtime.structure = structureOf(room, furniture);
+  runtime.structure = structureOf(room);
   updateFurniturePlacement(runtime, room);
   runtime.renderer.setPixelRatio(renderPixelRatio(window.devicePixelRatio, room.renderQuality, highResolution));
   if ((detailed || room.furniture.some(item => item.material === 'metal')) && !runtime.environment) {
@@ -845,7 +771,7 @@ export default function RoomScene(props: Props) {
     if (!active || active.viewTransition || state.mode !== 'walk' || !canInteract(state.room, target) || !target) return;
     const next = toggleSceneInteraction(state.room, target);
     current.current = { ...state, room: next };
-    updateRoom(active, next, state.showFurniture);
+    updateRoom(active, next);
     updateSelection(active, current.current);
     changeWalkTarget(target);
     if (state.readOnly) setPreview(next);
@@ -902,7 +828,7 @@ export default function RoomScene(props: Props) {
         active.roomId = current.current.roomId;
         active.publicView = current.current.publicView;
         active.onModelError = message => current.current.onModelError?.(message);
-        buildRoom(active, current.current.room, current.current.showFurniture);
+        buildRoom(active, current.current.room);
         resetCamera(active, current.current.room, current.current.mode);
         updateSelection(active, current.current);
         setWalkBlocked(active.walkBlocked);
@@ -924,7 +850,7 @@ export default function RoomScene(props: Props) {
             if (object.shadow.mapSize.x !== size) { object.shadow.mapSize.set(size, size); object.shadow.needsUpdate = true; shadowProfileChanged = true; }
           });
           // Recreate shadow nodes when switching profiles so GPU bindings do not retain the old maps.
-          if (shadowProfileChanged) { buildRoom(active, current.current.room, current.current.showFurniture); updateSelection(active, current.current); }
+          if (shadowProfileChanged) { buildRoom(active, current.current.room); updateSelection(active, current.current); }
           const aspect = width / height;
           if (Math.abs(camera.aspect - aspect) > 0.001) {
             camera.aspect = aspect;
@@ -987,7 +913,7 @@ export default function RoomScene(props: Props) {
             const accepted = itemWorldPosition(next, selected);
             if (accepted) proxy.position.set(accepted.x, accepted.y, accepted.z);
             if (selected.kind === 'furniture') { const item = next.furniture.find(item => item.id === selected.id); if (item) proxy.rotation.y = THREE.MathUtils.degToRad(item.rotation); }
-            updateRoom(active, next, state.showFurniture);
+            updateRoom(active, next);
             updateSelection(active, current.current);
             if (next !== state.room) state.onChange(next);
             setNotice('');
@@ -1232,15 +1158,15 @@ export default function RoomScene(props: Props) {
     if (active.roomId !== props.roomId || active.publicView !== props.publicView) {
       active.roomId = props.roomId;
       active.publicView = props.publicView;
-      buildRoom(active, effectiveRoom, props.showFurniture);
-    } else updateRoom(active, effectiveRoom, props.showFurniture);
+      buildRoom(active, effectiveRoom);
+    } else updateRoom(active, effectiveRoom);
     updateSelection(active, current.current);
     if (props.mode === 'walk' && active.viewMode === props.mode && !active.viewTransition) {
       active.camera.position.y = Math.min(1.65, effectiveRoom.height - 0.2);
       if (!furnitureWalkable({ x: active.camera.position.x, z: active.camera.position.z }, effectiveRoom)) resetCamera(active, effectiveRoom, props.mode);
       setWalkBlocked(active.walkBlocked);
     }
-  }, [effectiveRoom, props.showFurniture, props.roomId, props.publicView, ready]);
+  }, [effectiveRoom, props.roomId, props.publicView, ready]);
 
   useEffect(() => {
     if (runtime.current && ready) {

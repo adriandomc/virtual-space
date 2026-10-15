@@ -5,8 +5,27 @@ import { addCustomFurniture, addFurniture, createDefaultRoom, fitRoom, validateR
 import { FURNITURE_CATALOG } from './furnitureCatalog';
 import type { FurnitureItem } from './types';
 
-const custom = (): FurnitureItem => ({ id: randomUUID(), type: 'custom', name: 'Modelo propio', assetId: randomUUID(), x: 0, z: 0, width: 1, height: 1, depth: .5, rotation: 0 });
+const custom = (): FurnitureItem => ({ id: randomUUID(), type: 'custom', material: null, color: null, name: 'Modelo propio', assetId: randomUUID(), x: 0, z: 0, width: 1, height: 1, depth: .5, rotation: 0 });
 const roomWith = (item: unknown) => ({ ...createDefaultRoom(), furniture: [item] });
+
+test('current furniture requires its category and explicit material source', () => {
+  for (const type of ['bed', 'wardrobe', 'vanity', 'nightstand'] as const) {
+    const item = addFurniture(createDefaultRoom(), type).furniture[0];
+    for (const field of [type === 'bed' ? 'bedSize' : 'variant', 'material', 'color']) {
+      const incomplete: Record<string, unknown> = { ...item }; delete incomplete[field];
+      assert.throws(() => validateRoom(roomWith(incomplete)), field);
+    }
+    assert.throws(() => validateRoom(roomWith({ ...item, material: null })));
+    assert.throws(() => validateRoom(roomWith({ ...item, color: null })));
+  }
+  const original = custom();
+  assert.equal(validateRoom(roomWith(original)).furniture[0].material, null);
+  assert.equal(validateRoom(roomWith(original)).furniture[0].color, null);
+  for (const field of ['material', 'color']) {
+    const incomplete: Record<string, unknown> = { ...original }; delete incomplete[field];
+    assert.throws(() => validateRoom(roomWith(incomplete)));
+  }
+});
 
 test('all catalog variants persist their identity and dimensions and reject cross-category variants', () => {
   for (const preset of FURNITURE_CATALOG) {
@@ -19,7 +38,7 @@ test('all catalog variants persist their identity and dimensions and reject cros
     assert.throws(() => validateRoom(roomWith({ ...item, type: wrong })));
   }
   const plain = addFurniture(createDefaultRoom(), 'wardrobe').furniture[0];
-  assert.equal(plain.variant, undefined);
+  assert.equal(plain.variant, 'wardrobe-classic');
   for (const variant of [null, [], {}, 1, 'constructor', 'missing', '']) assert.throws(() => validateRoom(roomWith({ ...plain, variant })));
   assert.throws(() => addFurniture(createDefaultRoom(), 'custom'));
   assert.throws(() => addFurniture(createDefaultRoom(), 'wardrobe', 'double', 'vanity-round'));

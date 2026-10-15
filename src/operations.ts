@@ -1,10 +1,12 @@
-import { existsSync, lstatSync, readdirSync, unlinkSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, parse, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { recordErasure, validateErasureFile } from './erasures.js';
 import { usernameValue } from './auth.js';
+import { DATABASE_VERSION, initializeDatabase } from './databaseSchema.js';
+import { initializeErasures } from './erasures.js';
 
 function offlineDirectory(value: string) {
   if (!isAbsolute(value)) throw new Error('Provide an absolute service data directory.');
@@ -53,7 +55,7 @@ export function closeService(dataDir: string, confirmation: string) {
       backups.push(join(backupDir, name));
     }
   }
-  const owned = ['erasures.json', 'maintenance-status.json', '.maintenance-status.tmp', ...readdirSync(directory).filter(name => /^\.erasures-[0-9a-f-]{36}\.tmp$/.test(name))].map(name => join(directory, name));
+  const owned = ['erasures.json', 'maintenance-status.json', '.maintenance-status.tmp', 'prelaunch-reset.json', ...readdirSync(directory).filter(name => /^\.erasures-[0-9a-f-]{36}\.tmp$/.test(name))].map(name => join(directory, name));
   for (const path of owned) if (existsSync(path) && (!lstatSync(path).isFile() || lstatSync(path).isSymbolicLink())) throw new Error('Invalid service metadata file.');
   const databasePath = join(directory, 'accounts.sqlite'), database = new DatabaseSync(databasePath);
   try {
@@ -64,14 +66,37 @@ export function closeService(dataDir: string, confirmation: string) {
   return { closed: true, removedBackups: backups.length };
 }
 
+/** Deliberate launch-only operation; no application startup path calls this. */
+export function resetPrelaunch(dataDir: string, confirmation: string, now = Date.now()) {
+  const directory = offlineDirectory(dataDir);
+  if (confirmation !== '--confirm=reset-3d-space-test-data') throw new Error('Explicit prelaunch reset confirmation is required.');
+  if (!Number.isSafeInteger(now) || now < 0) throw new Error('Invalid reset timestamp.');
+  const marker = join(directory, 'prelaunch-reset.json');
+  if (existsSync(marker)) throw new Error('The one-time prelaunch reset has already completed.');
+  for (const name of readdirSync(directory)) {
+    if (!['accounts.sqlite', 'backups', 'erasures.json', 'maintenance-status.json', '.maintenance-status.tmp'].includes(name) && !/^\.erasures-[0-9a-f-]{36}\.tmp$/.test(name)) throw new Error('Unrecognized service files: review the directory before reset.');
+  }
+  const source = new DatabaseSync(join(directory, 'accounts.sqlite'), { readOnly: true });
+  try {
+    const objects = source.prepare("SELECT type, name FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*'").all();
+    if (objects.some(row => row.type !== 'table' && row.type !== 'index' || row.type === 'table' && !['users', 'sessions', 'request_limits', 'rooms', 'room_members', 'model_assets'].includes(String(row.name))) || !['salt', 'password_hash', 'username'].every(name => source.prepare('PRAGMA table_info(users)').all().some(row => row.name === name)) || !['room', 'owner_id', 'revision'].every(name => source.prepare('PRAGMA table_info(rooms)').all().some(row => row.name === name))) throw new Error('This is not a recognized 3D Space test database.');
+  } finally { source.close(); }
+  const removed = closeService(directory, '--confirm=erase-all');
+  const database = new DatabaseSync(join(directory, 'accounts.sqlite'));
+  try { initializeDatabase(database); initializeErasures(directory, database); }
+  finally { database.close(); }
+  writeFileSync(marker, JSON.stringify({ version: DATABASE_VERSION, resetAt: now }), { flag: 'wx', mode: 0o600, flush: true });
+  return { reset: true, version: DATABASE_VERSION, removedBackups: removed.removedBackups };
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   process.umask(0o077);
   try {
     const [command, dataDir, usernameOrConfirmation, confirmation] = process.argv.slice(2);
     const result = command === 'cancel-account' && dataDir && usernameOrConfirmation && confirmation
       ? cancelAccount(dataDir, usernameOrConfirmation, confirmation)
-      : command === 'close-service' && dataDir && usernameOrConfirmation && !confirmation
-        ? closeService(dataDir, usernameOrConfirmation)
+      : dataDir && usernameOrConfirmation && !confirmation && (command === 'close-service' || command === 'reset-prelaunch')
+        ? command === 'close-service' ? closeService(dataDir, usernameOrConfirmation) : resetPrelaunch(dataDir, usernameOrConfirmation)
         : (() => { throw new Error('Invalid operator command.'); })();
     console.log(JSON.stringify({ ok: true, ...result }));
   } catch { console.error('Operation refused or incomplete. Verify the offline data directory, confirmation, and files.'); process.exitCode = 1; }

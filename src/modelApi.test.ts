@@ -1,3 +1,4 @@
+import { TERMS_VERSION } from './legalPolicy';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomUUID } from 'node:crypto';
@@ -41,7 +42,7 @@ test('GLB upload HTTP permissions, collaboration updates, erasure and restart re
   const close = () => new Promise<void>((accept, reject) => server.close(error => error ? reject(error) : accept()));
   try {
     for (const username of ['owner', 'editor', 'reader', 'outsider']) {
-      const response = await request('/api/auth/register', undefined, 'POST', { username, password: 'Testing-pass-123', confirmPassword: 'Testing-pass-123', termsVersion: '2026-10-13' });
+      const response = await request('/api/auth/register', undefined, 'POST', { username, password: 'Testing-pass-123', confirmPassword: 'Testing-pass-123', termsVersion: TERMS_VERSION });
       assert.equal(response.status, 201); cookies[username] = response.headers.get('set-cookie')!.split(';')[0]; userIds[username] = (await response.json()).user.id;
     }
     const roomId = randomUUID(), secondRoom = randomUUID(), room = createDefaultRoom(), path = '/api/rooms/' + roomId;
@@ -67,7 +68,7 @@ test('GLB upload HTTP permissions, collaboration updates, erasure and restart re
     assert.equal((await request('/api/models/' + asset.id, 'editor', 'DELETE')).status, 404);
     await request(path + '/share', 'owner', 'POST', { enabled: true });
     assert.equal((await request('/api/models/' + asset.id + '?room=' + roomId)).status, 404, 'unplaced uploads are not exposed by public links');
-    const custom = { id: 'model-1', type: 'custom', assetId: asset.id, name: asset.name, width: 1, depth: 1, height: 1, x: 0, z: 0, rotation: 0 };
+    const custom = { id: 'model-1', type: 'custom', material: null, color: null, assetId: asset.id, name: asset.name, width: 1, depth: 1, height: 1, x: 0, z: 0, rotation: 0 };
     assert.equal((await request('/api/rooms/' + secondRoom, 'owner', 'PUT', { revision: 1, room: { ...room, furniture: [custom] } })).status, 400);
     assert.equal((await request(path, 'editor', 'PUT', { revision: 1, room: { ...room, furniture: [custom] } })).status, 200);
     const bytes = await request('/api/models/' + asset.id + '?room=' + roomId); assert.equal(bytes.status, 200); assert.equal(bytes.headers.get('cache-control'), 'no-store'); assert.deepEqual(Buffer.from(await bytes.arrayBuffer()), modelData());
@@ -77,6 +78,13 @@ test('GLB upload HTTP permissions, collaboration updates, erasure and restart re
     const mine = (await (await request('/api/models?room=' + roomId + '&scope=mine', 'owner')).json()).models;
     assert.deepEqual(new Set(mine.map((value: { id: string }) => value.id)), new Set([asset.id, wrongAsset.id]));
     assert.equal(mine.find((value: { id: string }) => value.id === wrongAsset.id).roomId, secondRoom);
+    const accountLibrary = (await (await request('/api/models?scope=mine', 'owner')).json()).models;
+    assert.deepEqual(new Set(accountLibrary.map((value: { id: string }) => value.id)), new Set([asset.id, wrongAsset.id]));
+    assert.equal(accountLibrary.find((value: { id: string }) => value.id === wrongAsset.id).roomId, secondRoom);
+    assert.deepEqual((await (await request('/api/models?scope=mine', 'outsider')).json()).models, []);
+    assert.equal((await request('/api/models?scope=mine')).status, 401);
+    assert.equal((await request('/api/models?scope=unknown', 'owner')).status, 400);
+    assert.equal((await request('/api/models?scope=mine&room=' + secondRoom, 'outsider')).status, 404);
     socket = new WebSocket(base.replace('http:', 'ws:') + path + '/live', { headers: { Origin: base, Cookie: cookies.editor } });
     socket.on('error', () => {});
     const sync = await nextMessage(socket, 'sync'), doc = new Y.Doc();
@@ -118,5 +126,15 @@ test('GLB upload HTTP permissions, collaboration updates, erasure and restart re
     await request('/api/rooms/' + sourceRoom, 'owner', 'DELETE');
     assert.equal((await request('/api/models/' + reusable.id, 'owner')).status, 404);
     assert.deepEqual(Buffer.from(await (await request('/api/models/' + reused.id, 'owner')).arrayBuffer()), modelData());
+    const offlineDelete = (context: string, revision: number, accountId = userIds.owner) => fetch(base + '/api/models/' + reused.id + '?room=' + context, { method: 'DELETE', headers: { Origin: base, Cookie: cookies.owner, 'Content-Type': 'application/json', 'X-Offline-Write': '1', 'X-Account-Id': accountId }, body: JSON.stringify({ revision }) });
+    assert.equal((await offlineDelete(destinationRoom, 1, userIds.editor)).status, 403);
+    assert.equal((await offlineDelete(secondRoom, 1)).status, 409, 'an unrelated eligible room cannot authorize model deletion');
+    assert.equal((await offlineDelete(destinationRoom, 2)).status, 409, 'stale revisions cannot delete assets');
+    const reusedItem = { ...custom, assetId: reused.id };
+    assert.equal((await request('/api/rooms/' + destinationRoom, 'owner', 'PUT', { revision: 1, room: { ...room, furniture: [reusedItem] } })).status, 200);
+    assert.equal((await offlineDelete(destinationRoom, 2)).status, 409, 'referenced models cannot be deleted');
+    assert.equal((await request('/api/rooms/' + destinationRoom, 'owner', 'PUT', { revision: 2, room })).status, 200);
+    assert.equal((await offlineDelete(destinationRoom, 3)).status, 200);
+    assert.equal((await request('/api/models/' + reused.id, 'owner')).status, 404);
   } finally { socket?.terminate(); await close(); rmSync(dataDir, { recursive: true, force: true }); }
 });

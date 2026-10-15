@@ -1,3 +1,4 @@
+import { TERMS_VERSION } from './legalPolicy';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -20,12 +21,12 @@ test('persisten superposiciones y muebles fuera sin aceptar coordenadas o medida
   const dataDir = mkdtempSync(join(tmpdir(), 'virtual-space-placement-'));
   assert.ok(resolve(dataDir).startsWith(resolve(tmpdir()) + sep));
   let server = createServer({ dataDir }), base = await listen(server);
-  const register = await fetch(base + '/api/auth/register', { method: 'POST', headers: { Origin: base, 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'placement_owner', password: 'test-password', confirmPassword: 'test-password', termsVersion: '2026-10-13' }) });
+  const register = await fetch(base + '/api/auth/register', { method: 'POST', headers: { Origin: base, 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'placement_owner', password: 'test-password', confirmPassword: 'test-password', termsVersion: TERMS_VERSION }) });
   assert.equal(register.status, 201);
   const cookie = register.headers.get('set-cookie')!.split(';')[0];
   const send = (path: string, method = 'GET', body?: unknown) => fetch(base + path, { method, headers: { Origin: base, Cookie: cookie, 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
   const id = randomUUID(), path = '/api/rooms/' + id;
-  const item: FurnitureItem = { id: 'moving', type: 'nightstand', x: -1, z: 0, width: 0.5, depth: 0.5, height: 0.55, rotation: 0, material: 'metal', color: '#aabbcc' };
+  const item: FurnitureItem = { id: 'moving', type: 'nightstand', variant: 'nightstand-classic', x: -1, z: 0, width: 0.5, depth: 0.5, height: 0.55, rotation: 0, material: 'metal', color: '#aabbcc' };
   const room = { ...addOpening({ ...createDefaultRoom(), openings: [] }, 'door', 0, { width: 0.87, height: 2.17, doorStyle: 'left' }), furniture: [item, { ...item, id: 'fixed', x: 0 }] };
   try {
     assert.equal((await send('/api/rooms', 'POST', { id, room })).status, 201);
@@ -58,12 +59,13 @@ test('guarda puertas y focos al interactuar y conserva los estados después de r
   const dataDir = mkdtempSync(join(tmpdir(), 'virtual-space-interactions-'));
   assert.ok(resolve(dataDir).startsWith(resolve(tmpdir()) + sep));
   let server = createServer({ dataDir }), base = await listen(server);
-  const register = await fetch(base + '/api/auth/register', { method: 'POST', headers: { Origin: base, 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'interaction_owner', password: 'test-password', confirmPassword: 'test-password', termsVersion: '2026-10-13' }) });
+  const register = await fetch(base + '/api/auth/register', { method: 'POST', headers: { Origin: base, 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'interaction_owner', password: 'test-password', confirmPassword: 'test-password', termsVersion: TERMS_VERSION }) });
   assert.equal(register.status, 201);
   const cookie = register.headers.get('set-cookie')!.split(';')[0];
   const send = (path: string, method = 'GET', body?: unknown) => fetch(base + path, { method, headers: { Origin: base, Cookie: cookie, 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
   const id = randomUUID(), path = '/api/rooms/' + id;
-  const room = addOpening({ ...createDefaultRoom(), openings: [] }, 'door', 0, { width: 0.9, height: 2.1, doorStyle: 'left' });
+  const emptyRoom = createDefaultRoom();
+  const room = addOpening({ ...emptyRoom, lights: emptyRoom.lights.map(light => ({ ...light, enabled: false })) }, 'door', 0, { width: 0.9, height: 2.1, doorStyle: 'left' });
   const door = { kind: 'opening' as const, id: room.openings[0].id }, light = { kind: 'light' as const, id: room.lights[0].id };
   try {
     assert.equal((await send('/api/rooms', 'POST', { id, room })).status, 201);

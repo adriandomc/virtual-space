@@ -1,12 +1,12 @@
-export type OfflineStore = 'projects' | 'assets' | 'meta';
+export type OfflineStore = 'projects' | 'assets' | 'blobs' | 'meta';
 export type OfflineAccess = { accountId: string; allowed: boolean };
 
-const stores: OfflineStore[] = ['projects', 'assets', 'meta'];
+const stores: OfflineStore[] = ['projects', 'assets', 'blobs', 'meta'];
 const access = new Map<string, OfflineAccess>();
 const purgeListeners = new Set<() => void>();
 let database: Promise<IDBDatabase> | undefined;
 let accountId: string | undefined;
-const channel = typeof window !== 'undefined' && typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('3d-space-offline') : undefined;
+const channel = typeof window !== 'undefined' && typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('3d-space-v2') : undefined;
 function setAccount(id: string | undefined) {
   if (accountId === id) return;
   accountId = id;
@@ -45,7 +45,7 @@ function open(): Promise<IDBDatabase> {
   if (database) return database;
   database = new Promise<IDBDatabase>((resolve, reject) => {
     if (typeof indexedDB === 'undefined') { reject(storageError(undefined)); return; }
-    const request = indexedDB.open('3d-space-offline', 1);
+    const request = indexedDB.open('3d-space-v2', 1);
     request.onupgradeneeded = () => {
       for (const store of stores) if (!request.result.objectStoreNames.contains(store)) request.result.createObjectStore(store);
     };
@@ -79,27 +79,121 @@ async function run<T>(names: OfflineStore[], mode: IDBTransactionMode, operation
 export async function readOffline<T>(store: OfflineStore, key: string): Promise<T | undefined> {
   const value = await run<T | undefined>([store], 'readonly', tx => tx.objectStore(store).get(key));
   if (store === 'meta' && key === 'identity') identity(value);
-  return value;
+  return hydrate<T>(store, value);
+}
+async function hydrate<T>(store: OfflineStore, value: unknown): Promise<T | undefined> {
+  if (!value || typeof value !== 'object') return value as T | undefined;
+  const record = value as Record<string, unknown>;
+  if (store === 'blobs' && record.bytes instanceof ArrayBuffer && typeof record.type === 'string') {
+    const { bytes, type, ...metadata } = record;
+    return { ...metadata, blob: new Blob([bytes], { type }) } as T;
+  }
+  if (store === 'assets' && typeof record.blobKey === 'string') {
+    const binary = await readOffline<{ blob: Blob }>('blobs', record.blobKey);
+    if (!binary?.blob) throw storageError(new Error('Faltan los archivos del modelo.'));
+    return { ...record, blob: binary.blob } as T;
+  }
+  return value as T;
 }
 export async function writeOffline<T>(store: OfflineStore, key: string, value: T): Promise<void> {
   const owner = value && typeof value === 'object' && 'accountId' in value ? value.accountId : undefined;
   if (store !== 'meta' && typeof owner === 'string') {
-    await run([store, 'meta'], 'readwrite', (tx, fail) => {
-      const current = tx.objectStore('meta').get('identity');
-      current.onsuccess = () => {
-        if (current.result?.id !== owner || accountId !== owner) tx.abort();
-        else try { tx.objectStore(store).put(value, key); } catch (error) { fail(error); }
-      };
-    });
+    await atomicOffline(owner, [{ store, key, value }]);
   } else await run([store], 'readwrite', tx => tx.objectStore(store).put(value, key));
   if (store === 'meta' && key === 'identity') { identity(value); channel?.postMessage({ kind: 'identity', id: accountId }); }
 }
 export async function removeOffline(store: OfflineStore, key: string): Promise<void> {
   if (store === 'meta' && key === 'identity') { setAccount(undefined); channel?.postMessage({ kind: 'identity' }); }
-  await run([store], 'readwrite', tx => tx.objectStore(store).delete(key));
+  await run(store === 'assets' ? ['assets', 'blobs'] : [store], 'readwrite', tx => {
+    tx.objectStore(store).delete(key);
+    if (store === 'assets') tx.objectStore('blobs').delete('asset:' + key);
+  });
 }
-export function listOffline<T>(store: OfflineStore): Promise<T[]> {
+export async function listOffline<T>(store: OfflineStore): Promise<T[]> {
+  const values = await run<unknown[]>([store], 'readonly', tx => tx.objectStore(store).getAll());
+  return Promise.all(values.map(value => hydrate<T>(store, value) as Promise<T>));
+}
+export function listOfflineMetadata<T>(store: OfflineStore): Promise<T[]> {
   return run([store], 'readonly', tx => tx.objectStore(store).getAll());
+}
+export type OfflineWrite = { store: OfflineStore; key: string; value?: unknown; remove?: boolean; protectPending?: boolean; guardKey?: string };
+async function encodeWrites(writes: OfflineWrite[]): Promise<OfflineWrite[]> {
+  const encoded: OfflineWrite[] = [];
+  for (const write of writes) {
+    const value = write.value && typeof write.value === 'object' ? write.value as Record<string, unknown> : null;
+    if (write.store === 'assets' && write.remove) encoded.push({ store: 'blobs', key: 'asset:' + write.key, remove: true });
+    if (write.store === 'assets' && value?.blob instanceof Blob) {
+      const { blob, ...metadata } = value, blobKey = 'asset:' + write.key;
+      encoded.push({ store: 'blobs', key: blobKey, guardKey: write.protectPending ? write.key : undefined, value: { accountId: value.accountId, roomId: value.roomId, key: blobKey, bytes: await blob.arrayBuffer(), type: blob.type } });
+      encoded.push({ ...write, value: { ...metadata, blobKey } });
+    } else if (write.store === 'blobs' && value?.blob instanceof Blob) {
+      const { blob, ...metadata } = value;
+      encoded.push({ ...write, value: { ...metadata, bytes: await blob.arrayBuffer(), type: blob.type } });
+    } else encoded.push(write);
+  }
+  return encoded;
+}
+export async function cacheOfflineAsset<T extends { accountId: string }>(key: string, value: T): Promise<void> {
+  await atomicOffline(value.accountId, [{ store: 'assets', key, value, protectPending: true }]);
+}
+export async function updateOffline<T>(store: OfflineStore, key: string, accountId: string, update: (current: T | undefined) => T | undefined): Promise<void> {
+  await run([store, 'meta'], 'readwrite', (tx, fail) => {
+    const identity = tx.objectStore('meta').get('identity');
+    identity.onsuccess = () => {
+      if (identity.result?.id !== accountId) { fail(new Error('La cuenta activa cambió.')); return; }
+      const current = tx.objectStore(store).get(key);
+      current.onsuccess = () => {
+        try {
+          const next = update(current.result);
+          if (next && typeof next === 'object' && 'blob' in next && next.blob instanceof Blob) throw new Error('Los archivos se guardan por separado.');
+          if (next !== undefined) tx.objectStore(store).put(next, key);
+        }
+        catch (cause) { fail(cause); }
+      };
+    };
+  });
+}
+export async function atomicOffline(accountId: string, writes: OfflineWrite[]): Promise<void> {
+  writes = await encodeWrites(writes);
+  await run([...new Set<OfflineStore>(['meta', ...writes.map(write => write.store)])], 'readwrite', (tx, fail) => {
+    const current = tx.objectStore('meta').get('identity');
+    current.onsuccess = () => {
+      if (current.result?.id !== accountId) { fail(new Error('La cuenta activa cambió.')); return; }
+      const guards = writes.filter(write => write.protectPending);
+      const blocked = new Set<string>();
+      const apply = () => { try { for (const write of writes) {
+        if (blocked.has(write.guardKey ?? (write.protectPending ? write.key : ''))) continue;
+        const store = tx.objectStore(write.store);
+        if (write.remove) store.delete(write.key); else store.put(write.value, write.key);
+      } } catch (cause) { fail(cause); } };
+      if (!guards.length) { apply(); return; }
+      let remaining = guards.length;
+      for (const guard of guards) {
+        const request = tx.objectStore('assets').get(guard.key);
+        request.onsuccess = () => {
+          if (request.result?.pending || request.result?.deleted) blocked.add(guard.key);
+          if (!--remaining) apply();
+        };
+      }
+    };
+  });
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event('space-offline-data'));
+}
+export async function clearOfflineAccount(accountId: string): Promise<void> {
+  const active = (await readOffline<{ id: string }>('meta', 'identity'))?.id === accountId;
+  await run(stores, 'readwrite', tx => {
+    for (const name of stores) {
+      const cursor = tx.objectStore(name).openCursor();
+      cursor.onsuccess = () => {
+        const entry = cursor.result;
+        if (!entry) return;
+        if (entry.value?.accountId === accountId || name === 'meta' && entry.key === 'identity' && entry.value?.id === accountId) entry.delete();
+        entry.continue();
+      };
+    }
+  });
+  if (!active) return;
+  setAccount(undefined); channel?.postMessage({ kind: 'identity' });
 }
 export async function clearOffline(): Promise<void> {
   setAccount(undefined);

@@ -1,0 +1,21 @@
+.offline-settings-button { position: relative; flex-shrink: 0; }
+.setup-header-actions { display: flex; align-items: center; gap: 10px; }
+.offline-mode-dot { position: absolute; right: 4px; bottom: 4px; width: 8px; height: 8px; border-radius: 50%; background: #a3bc79; border: 1px solid currentColor; }
+.offline-settings { width: min(460px, calc(100vw - 24px)); max-height: calc(var(--app-height, 100dvh) - 32px); padding: 20px; overflow-y: auto; color: var(--text, #263326); background: var(--panel, #fafbf6); border: 1px solid #d9dfd1; border-radius: 16px; }
+.offline-settings::backdrop { background: #18211880; }
+.offline-settings .dialog-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.offline-settings h2 { margin: 0; font-size: 21px; }
+.offline-settings section + section { border-top: 1px solid #d9dfd1; padding-top: 16px; margin-top: 20px; }
+.offline-settings h3 { display: flex; align-items: center; gap: 8px; font-size: 17px; margin: 12px 0; }
+.offline-settings p { font-size: 15px; line-height: 1.5; margin: 12px 0; }
+.offline-settings .outline-button { min-height: 44px; justify-content: center; margin-top: 8px; }
+.offline-setting-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-top: 8px; font-size: 16px; }
+.offline-settings .offline-setting-note { color: #626d5e; font-size: 14px; }
+.offline-details { display: grid; gap: 10px; font-size: 14px; margin: 18px 0; }
+.offline-details > div { display: flex; justify-content: space-between; gap: 16px; }
+.offline-details dt { color: #626d5e; }
+.offline-details dd { text-align: right; margin: 0; }
+.offline-progress { display: grid; gap: 6px; font-size: 13px; margin-top: 12px; }
+.offline-progress progress { width: 100%; accent-color: #536c42; }
+.app-update-overlay { position: fixed; inset: 0; z-index: 10000; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 16px; background: #f4f6eff5; padding: 24px; text-align: center; }
+@media (max-width: 600px) { .offline-settings { padding: 16px; } .account-header > div { gap: 6px; } }

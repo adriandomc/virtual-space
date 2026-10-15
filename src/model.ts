@@ -16,15 +16,12 @@ export const FURNITURE_COLORS: Record<FurnitureItem['type'], string> = { bed: '#
 
 export function createDefaultRoom(): Room {
   return {
-    version: 1, name: 'Mi habitación',
+    version: 2, name: 'Mi habitación',
     vertices: [{ x: -2.5, z: -2 }, { x: 2.5, z: -2 }, { x: 2.5, z: 2 }, { x: -2.5, z: 2 }],
-    wallColors: ['#9cae98', '#eee9df', '#eee9df', '#eee9df'],
-    height: 2.8, thickness: 0.15, floorColor: '#b49b7d', ceilingColor: '#f2f0e9', floorFinish: 'wood', renderQuality: 'standard', editing: { snap: true, step: 0.1, bounds: true }, showFurniture: true, furniture: [],
-    openings: [
-      { id: 'door-1', type: 'door', wall: 3, offset: 0.35, width: 0.9, height: 2.1, sill: 0 },
-      { id: 'window-1', type: 'window', wall: 1, offset: 1.1, width: 1.8, height: 1.3, sill: 0.85 },
-    ],
-    lights: [{ id: 'light-1', name: 'Luz principal', x: 0, y: 2.5, z: 0, lumens: 800, temperature: 2700, enabled: false }],
+    wallColors: ['#f5f5f2', '#f5f5f2', '#f5f5f2', '#f5f5f2'],
+    height: 2.8, thickness: 0.15, floorColor: '#edede8', ceilingColor: '#ffffff', floorFinish: 'concrete', renderQuality: 'standard', editing: { snap: true, step: 0.1, bounds: true }, furniture: [],
+    openings: [],
+    lights: [{ id: 'light-1', name: 'Luz principal', x: 0, y: 2.5, z: 0, lumens: 800, temperature: 2700, enabled: true }],
     sun: { enabled: true, hour: 15, azimuth: 54, intensity: 3 },
   };
 }
@@ -226,15 +223,15 @@ function readFurniture(value: unknown, height: number, index = 0): FurnitureItem
   const minSize = type === 'custom' ? 0.01 : 0.1;
   let bedSize: BedSize | undefined;
   if (type === 'bed') {
-    const size = p.bedSize === undefined ? 'double' : p.bedSize;
+    const size = p.bedSize;
     if (typeof size !== 'string' || !Object.hasOwn(BED_SIZES, size)) throw new Error('El tamaño de cama debe ser individual, matrimonial, queen o king.');
     bedSize = size as BedSize;
   } else if (p.bedSize !== undefined) throw new Error('El tamaño de cama solo corresponde a las camas.');
   const material = p.material;
-  if (material !== undefined && material !== 'wood' && material !== 'plastic' && material !== 'metal') throw new Error('El material de mueble debe ser madera, plástico o metal.');
+  if (!(type === 'custom' && material === null) && material !== 'wood' && material !== 'plastic' && material !== 'metal') throw new Error('El material de mueble debe ser madera, plástico o metal.');
   const id = text(p.id, 'Identificador de mueble');
   if (id.length > 64) throw new Error('El identificador de mueble admite hasta 64 caracteres.');
-  if (p.variant !== undefined && !isFurnitureVariant(type, p.variant)) throw new Error('Selecciona un modelo válido de esta categoría.');
+  if (type === 'wardrobe' || type === 'vanity' || type === 'nightstand') {    if (!isFurnitureVariant(type, p.variant)) throw new Error('Selecciona un modelo válido de esta categoría.');  } else if (p.variant !== undefined) throw new Error('Este elemento no admite variantes de catálogo.');
   let asset: Pick<FurnitureItem, 'assetId' | 'name' | 'parts'> = {};
   if (type === 'custom') {
     if (typeof p.assetId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(p.assetId)) throw new Error('El modelo necesita un archivo válido.');
@@ -260,7 +257,7 @@ function readFurniture(value: unknown, height: number, index = 0): FurnitureItem
     }
     asset = { assetId: p.assetId, name, ...(p.parts === undefined ? {} : { parts }) };
   } else if (p.assetId !== undefined || p.parts !== undefined || p.name !== undefined) throw new Error('El archivo y sus piezas sólo corresponden a modelos propios.');
-  return { id, type, ...asset, ...(p.variant === undefined ? {} : { variant: String(p.variant) }), ...(bedSize ? { bedSize } : {}), ...(material === undefined ? {} : { material }), ...(p.color === undefined ? {} : { color: color(p.color, `Color de mueble ${index + 1}`) }), x: number(p.x, -50, 50, `Mueble ${index + 1}, X`), z: number(p.z, -50, 50, `Mueble ${index + 1}, Z`), width: number(p.width, minSize, 10, `Ancho de mueble ${index + 1}`), depth: number(p.depth, minSize, 10, `Fondo de mueble ${index + 1}`), height: number(p.height, minSize, height, `Altura de mueble ${index + 1}`), rotation: number(p.rotation, 0, 360, `Giro de mueble ${index + 1}`) };
+  return { id, type, ...asset, ...(p.variant === undefined ? {} : { variant: String(p.variant) }), ...(bedSize ? { bedSize } : {}), material, color: type === 'custom' && p.color === null ? null : color(p.color, `Color de mueble ${index + 1}`), x: number(p.x, -50, 50, `Mueble ${index + 1}, X`), z: number(p.z, -50, 50, `Mueble ${index + 1}, Z`), width: number(p.width, minSize, 10, `Ancho de mueble ${index + 1}`), depth: number(p.depth, minSize, 10, `Fondo de mueble ${index + 1}`), height: number(p.height, minSize, height, `Altura de mueble ${index + 1}`), rotation: number(p.rotation, 0, 360, `Giro de mueble ${index + 1}`) };
 }
 
 function placeFurniture(room: Room, rawItem: FurnitureItem, avoid: FurnitureItem[]): FurnitureItem {
@@ -291,7 +288,8 @@ const overlapping = (a: Opening, b: Opening) => a.wall === b.wall && a.offset < 
 
 export function validateRoom(value: unknown): Room {
   const raw = record(value, 'El proyecto');
-  if (raw.version !== 1) throw new Error('La versión del proyecto no es compatible.');
+  if (raw.version !== 2) throw new Error('La versión del proyecto no es compatible.');
+  if ('showFurniture' in raw) throw new Error('El proyecto contiene campos de una versión anterior.');
   if (raw.setupStep !== undefined && raw.setupStep !== 0 && raw.setupStep !== 1 && raw.setupStep !== 2) throw new Error('El paso de preparación no es válido.');
   const vertices = array(raw.vertices, 3, 24, 'El contorno').map((value, i) => {
     const p = record(value, `Punto ${i + 1}`);
@@ -310,20 +308,22 @@ export function validateRoom(value: unknown): Room {
     }
   }
   const height = number(raw.height, 1.8, 8, 'La altura');
-  const editingRaw = raw.editing === undefined ? { snap: true, step: 0.1, bounds: true } : record(raw.editing, 'El ajuste del editor');
+  const editingRaw = record(raw.editing, 'El ajuste del editor');
   const editing = { snap: boolean(editingRaw.snap, 'El ajuste a cuadrícula'), step: number(editingRaw.step, 0.01, 1, 'El paso de cuadrícula'), bounds: boolean(editingRaw.bounds, 'Los límites del cuarto') };
-  const floorFinish = raw.floorFinish === undefined ? 'wood' : raw.floorFinish;
+  const floorFinish = raw.floorFinish;
   if (!['wood', 'tile-grid', 'tile-brick', 'tile-checker', 'marble', 'concrete'].includes(floorFinish as string)) throw new Error('Selecciona un acabado de piso válido.');
-  const renderQuality = raw.renderQuality === undefined ? 'standard' : raw.renderQuality;
+  const renderQuality = raw.renderQuality;
   if (renderQuality !== 'standard' && renderQuality !== 'realistic' && renderQuality !== 'hyperrealistic') throw new Error('Selecciona una calidad visual válida.');
   const wallColors = array(raw.wallColors, vertices.length, vertices.length, 'Los colores de pared').map((c, i) => color(c, `Color de pared ${i + 1}`));
   const openings = array(raw.openings, 0, 48, 'Las puertas y ventanas').map((value, i): Opening => {
     const p = record(value, `Abertura ${i + 1}`);
     if (p.type !== 'door' && p.type !== 'window') throw new Error('El tipo de abertura debe ser puerta o ventana.');
     const doorStyle = p.doorStyle;
-    if (doorStyle !== undefined && (p.type !== 'door' || doorStyle !== 'right' && doorStyle !== 'left' && doorStyle !== 'frame')) throw new Error('La apertura de puerta debe ser derecha, izquierda o sólo marco.');
-    if (p.open !== undefined && p.type !== 'door') throw new Error('El estado de puerta sólo corresponde a las puertas.');
-    const open = p.open === undefined ? undefined : boolean(p.open, 'El estado de puerta');
+    if (p.type === 'door') {
+      if (doorStyle !== 'right' && doorStyle !== 'left' && doorStyle !== 'frame') throw new Error('La apertura de puerta debe ser derecha, izquierda o sólo marco.');
+      if (doorStyle === 'frame' && 'open' in p) throw new Error('Un marco no admite estado de puerta.');
+      if (doorStyle !== 'frame') boolean(p.open, 'El estado de puerta');
+    } else if ('doorStyle' in p || 'open' in p) throw new Error('El estilo y estado de puerta sólo corresponde a las puertas.');
     const wall = number(p.wall, 0, vertices.length - 1, `Pared de abertura ${i + 1}`);
     if (!Number.isInteger(wall)) throw new Error('El índice de pared debe ser entero.');
     const length = Math.hypot(vertices[wall].x - vertices[(wall + 1) % vertices.length].x, vertices[wall].z - vertices[(wall + 1) % vertices.length].z);
@@ -331,7 +331,7 @@ export function validateRoom(value: unknown): Room {
     const openingHeight = number(p.height, 0.3, height, `Altura de abertura ${i + 1}`);
     const sill = number(p.sill, 0, height - openingHeight, `Antepecho de abertura ${i + 1}`);
     if (p.type === 'door' && sill !== 0) throw new Error('Las puertas deben comenzar en el piso.');
-    return { id: text(p.id, 'Identificador de abertura'), type: p.type, ...(doorStyle === undefined ? {} : { doorStyle }), ...(open === undefined ? {} : { open }), wall, width, height: openingHeight, sill, offset: number(p.offset, 0, length - width, `Posición de abertura ${i + 1}`) };
+    return { id: text(p.id, 'Identificador de abertura'), type: p.type, ...(doorStyle === undefined ? {} : { doorStyle: doorStyle as Opening['doorStyle'] }), ...(p.type === 'door' && doorStyle !== 'frame' ? { open: p.open as boolean } : {}), wall, width, height: openingHeight, sill, offset: number(p.offset, 0, length - width, `Posición de abertura ${i + 1}`) };
   });
   for (let i = 0; i < openings.length; i++) for (let j = i + 1; j < openings.length; j++) {
     if (openings[i].id === openings[j].id) throw new Error('Las aberturas necesitan identificadores únicos.');
@@ -344,12 +344,12 @@ export function validateRoom(value: unknown): Room {
     return { ...position, id: text(p.id, 'Identificador de luz'), name: text(p.name, 'Nombre de luz'), y: number(p.y, 0.1, height, `Altura de luz ${i + 1}`), lumens: number(p.lumens, 0, 20000, `Lúmenes de luz ${i + 1}`), temperature: number(p.temperature, 1000, 12000, `Temperatura de luz ${i + 1}`), enabled: boolean(p.enabled, 'Interruptor de luz') };
   });
   if (new Set(lights.map(p => p.id)).size !== lights.length) throw new Error('Las luces necesitan identificadores únicos.');
-  const furniture = array(raw.furniture === undefined ? [] : raw.furniture, 0, 64, 'Los muebles').map((value, i) => readFurniture(value, height, i));
+  const furniture = array(raw.furniture, 0, 64, 'Los muebles').map((value, i) => readFurniture(value, height, i));
   if (new Set(furniture.map(p => p.id)).size !== furniture.length) throw new Error('Los muebles necesitan identificadores únicos.');
   const sun = record(raw.sun, 'El sol');
   return {
-    version: 1, ...(raw.setupStep === undefined ? {} : { setupStep: raw.setupStep }), name: text(raw.name, 'El nombre'), vertices, wallColors, height,
-    thickness: number(raw.thickness, 0.05, 0.6, 'El espesor'), floorColor: color(raw.floorColor, 'El color de piso'), ceilingColor: color(raw.ceilingColor === undefined ? '#f2f0e9' : raw.ceilingColor, 'El color de techo'), floorFinish: floorFinish as FloorFinish, renderQuality, editing, showFurniture: raw.showFurniture === undefined ? true : boolean(raw.showFurniture, 'Los muebles'), furniture, openings, lights,
+    version: 2, ...(raw.setupStep === undefined ? {} : { setupStep: raw.setupStep }), name: text(raw.name, 'El nombre'), vertices, wallColors, height,
+    thickness: number(raw.thickness, 0.05, 0.6, 'El espesor'), floorColor: color(raw.floorColor, 'El color de piso'), ceilingColor: color(raw.ceilingColor, 'El color de techo'), floorFinish: floorFinish as FloorFinish, renderQuality, editing, furniture, openings, lights,
     sun: { enabled: boolean(sun.enabled, 'El sol'), hour: number(sun.hour, 0, 24, 'La hora'), azimuth: number(sun.azimuth, 0, 360, 'La orientación solar'), intensity: number(sun.intensity, 0, 10, 'La intensidad solar') },
   };
 }
@@ -384,8 +384,8 @@ export function fitRoom(room: Room): Room {
     packed.push(...placed);
   }
   const interior = interiorPoint(room.vertices);
-  const furniture = (room.furniture ?? []).map(item => readFurniture(item, room.height));
-  return validateRoom({ ...room, furniture, openings: room.openings.map(p => packed.find(item => item.id === p.id)!), lights: room.lights.map(light => ({ ...light, ...(room.editing?.bounds === false || pointInPolygon(light, room.vertices) ? {} : interior), y: clamp(light.y, 0.1, room.height) })) });
+  const furniture = room.furniture.map(item => readFurniture(item, room.height));
+  return validateRoom({ ...room, furniture, openings: room.openings.map(p => packed.find(item => item.id === p.id)!), lights: room.lights.map(light => ({ ...light, ...(room.editing.bounds === false || pointInPolygon(light, room.vertices) ? {} : interior), y: clamp(light.y, 0.1, room.height) })) });
 }
 
 export function resizeRoom(room: Room, width: number, depth: number): Room {
@@ -396,10 +396,12 @@ export function resizeRoom(room: Room, width: number, depth: number): Room {
   return fitRoom({ ...room, vertices, openings: room.openings.map(p => ({ ...p, offset: p.offset * wallLength({ ...room, vertices }, p.wall) / wallLength(room, p.wall) })), lights: room.lights.map(p => ({ ...p, ...scale(p) })) });
 }
 
-export function addOpening(room: Room, type: 'door' | 'window', wall: number, options?: { width: number; height: number; sill?: number; doorStyle?: 'right' | 'left' | 'frame' }): Room {
+export function addOpening(room: Room, type: 'door' | 'window', wall: number, options: { width: number; height: number; sill?: number; doorStyle?: 'right' | 'left' | 'frame' }): Room {
   if (!Number.isInteger(wall) || wall < 0 || wall >= room.vertices.length) throw new Error('Selecciona una pared válida.');
-  const height = options ? number(options.height, 0.3, room.height, 'La altura de abertura') : Math.min(type === 'door' ? 2.1 : 1.3, room.height - 0.1);
-  const sill = options ? number(options.sill ?? 0, 0, room.height - height, 'La altura desde piso') : type === 'door' ? 0 : Math.min(0.85, room.height - height - 0.05);
+  const height = number(options?.height, 0.3, room.height, 'La altura de abertura');
+  const sill = number(options.sill ?? 0, 0, room.height - height, 'La altura desde piso');
+  const doorStyle = type === 'door' ? options.doorStyle ?? 'right' : undefined;
+  if (type === 'window' && options.doorStyle !== undefined) throw new Error('El estilo de puerta sólo corresponde a las puertas.');
   if (type === 'door' && sill !== 0) throw new Error('Las puertas deben comenzar en el piso.');
   const items = room.openings.filter(p => p.wall === wall && p.sill < sill + height - EPS && sill < p.sill + p.height - EPS).sort((a, b) => a.offset - b.offset);
   const gaps: { start: number; width: number }[] = [];
@@ -407,10 +409,10 @@ export function addOpening(room: Room, type: 'door' | 'window', wall: number, op
   for (const item of items) { gaps.push({ start: end, width: item.offset - end }); end = Math.max(end, item.offset + item.width); }
   gaps.push({ start: end, width: wallLength(room, wall) - end });
   const gap = gaps.sort((a, b) => b.width - a.width)[0];
-  const width = options ? number(options.width, 0.3, wallLength(room, wall), 'El ancho de abertura') : Math.min(type === 'door' ? 0.9 : 1.5, gap.width - 0.1);
+  const width = number(options.width, 0.3, wallLength(room, wall), 'El ancho de abertura');
   if (width < 0.3) throw new Error('No queda espacio suficiente en esta pared para otra abertura.');
   if (width > gap.width + EPS) throw new Error('No queda espacio suficiente en esta pared para otra abertura.');
-  return validateRoom({ ...room, openings: [...room.openings, { id: itemId(), type, ...(options?.doorStyle === undefined ? {} : { doorStyle: options.doorStyle }), ...(type === 'door' && options?.doorStyle !== 'frame' ? { open: false } : {}), wall, offset: gap.start + (gap.width - width) / 2, width, height, sill }] });
+  return validateRoom({ ...room, openings: [...room.openings, { id: itemId(), type, ...(doorStyle === undefined ? {} : { doorStyle }), ...(type === 'door' && doorStyle !== 'frame' ? { open: false } : {}), wall, offset: gap.start + (gap.width - width) / 2, width, height, sill }] });
 }
 
 export function toggleSceneInteraction(room: Room, selection: Selection): Room {
@@ -421,7 +423,7 @@ export function toggleSceneInteraction(room: Room, selection: Selection): Room {
   if (selection.kind !== 'opening') return room;
   const item = room.openings.find(p => p.id === selection.id);
   if (!item || item.type !== 'door' || item.doorStyle === 'frame') return room;
-  return validateRoom({ ...room, openings: room.openings.map(p => p.id === item.id ? { ...p, open: !(p.open ?? true) } : p) });
+  return validateRoom({ ...room, openings: room.openings.map(p => p.id === item.id ? { ...p, open: !p.open } : p) });
 }
 
 export function addLight(room: Room): Room {
@@ -434,20 +436,17 @@ export function addFurniture(room: Room, type: FurnitureItem['type'], bedSize: B
   if (type === 'custom') throw new Error('Selecciona o sube un modelo.');
   if (variant !== undefined && !isFurnitureVariant(type, variant)) throw new Error('Selecciona un modelo válido de esta categoría.');
   if (!Object.hasOwn(BED_SIZES, bedSize)) throw new Error('Selecciona un tamaño de cama válido.');
-  const dimensions = variant ? getFurniturePreset(type, variant)! : type === 'bed' ? { ...BED_SIZES[bedSize], height: 1.1 } : {
-    wardrobe: { width: 1.4, depth: 0.6, height: 2 },
-    vanity: { width: 1, depth: 0.45, height: 1.5 },
-    nightstand: { width: 0.5, depth: 0.45, height: 0.55 },
-  }[type];
+  const preset = type === 'bed' ? undefined : getFurniturePreset(type, variant ?? `${type}-classic`)!;
+  const dimensions = type === 'bed' ? { ...BED_SIZES[bedSize], height: 1.1 } : preset!;
   const point = interiorPoint(room.vertices);
-  const item = placeFurniture(room, { id: itemId(), type, ...(variant ? { variant } : {}), ...(type === 'bed' ? { bedSize } : {}), ...point, width: dimensions.width, depth: dimensions.depth, height: Math.min(dimensions.height, room.height), rotation: 0 }, room.furniture ?? []);
-  return validateRoom({ ...room, furniture: [...(room.furniture ?? []), item] });
+  const item = placeFurniture(room, { id: itemId(), type, ...(preset ? { variant: preset.id } : {}), ...(type === 'bed' ? { bedSize } : {}), material: 'wood', color: FURNITURE_COLORS[type], ...point, width: dimensions.width, depth: dimensions.depth, height: Math.min(dimensions.height, room.height), rotation: 0 }, room.furniture);
+  return validateRoom({ ...room, furniture: [...(room.furniture), item] });
 }
 
 export function addCustomFurniture(room: Room, asset: { id: string; name: string; width: number; depth: number; height: number }): Room {
   number(asset.width, 0.01, 10000, 'El ancho del modelo'); number(asset.depth, 0.01, 10000, 'El fondo del modelo'); number(asset.height, 0.01, 10000, 'La altura del modelo');
   const factor = Math.min(1, 10 / asset.width, 10 / asset.depth, room.height / asset.height);
-  const item = placeFurniture(room, { id: itemId(), type: 'custom', assetId: asset.id, name: asset.name, ...interiorPoint(room.vertices), width: Math.max(0.01, asset.width * factor), depth: Math.max(0.01, asset.depth * factor), height: Math.max(0.01, asset.height * factor), rotation: 0 }, room.furniture);
+  const item = placeFurniture(room, { id: itemId(), type: 'custom', assetId: asset.id, name: asset.name, material: null, color: null, ...interiorPoint(room.vertices), width: Math.max(0.01, asset.width * factor), depth: Math.max(0.01, asset.depth * factor), height: Math.max(0.01, asset.height * factor), rotation: 0 }, room.furniture);
   return validateRoom({ ...room, furniture: [...room.furniture, item] });
 }
 
@@ -498,7 +497,7 @@ function boundedMove(previous: Point, target: Point, pathIsClear: (point: Point)
 
 export function moveSceneItem(room: Room, selection: Selection, target: Point & { y?: number; rotation?: number }): Room {
   if (![target.x, target.z, ...(target.y === undefined ? [] : [target.y]), ...(target.rotation === undefined ? [] : [target.rotation])].every(Number.isFinite)) throw new Error('La posición y el giro deben ser números finitos.');
-  const editing = room.editing ?? { snap: true, step: 0.1, bounds: true };
+  const editing = room.editing;
   const snap = (value: number) => editing.snap ? Number((Math.round(value / editing.step) * editing.step).toFixed(6)) : value;
   const coordinate = (value: number) => clamp(snap(value), -50, 50);
   const position = { x: coordinate(target.x), z: coordinate(target.z) };

@@ -1,3 +1,4 @@
+import { TERMS_VERSION } from './legalPolicy';
 import assert from 'node:assert/strict';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { isIP } from 'node:net';
@@ -11,7 +12,7 @@ const response = () => {
   return { value: { setHeader(name: string, value: string) { if (name === 'Set-Cookie') cookie = value; } } as unknown as ServerResponse, cookie: () => cookie };
 };
 const status = (code: number) => (error: unknown) => error instanceof HttpError && error.status === code;
-const credentials = { username: 'Test_User', password: '  contraseña 🔑  ', confirmPassword: '  contraseña 🔑  ', termsVersion: '2026-10-13' };
+const credentials = { username: 'Test_User', password: '  contraseña 🔑  ', confirmPassword: '  contraseña 🔑  ', termsVersion: TERMS_VERSION };
 
 test('solo confía en la cadena de proxies desde la derecha y descarta IPs falsificadas', () => {
   const trust = proxyTrust('10.0.0.0/8,127.0.0.1/32,::1/128');

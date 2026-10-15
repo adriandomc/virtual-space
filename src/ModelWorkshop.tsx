@@ -20,6 +20,7 @@ import type { WorkshopBooleanOperation } from './workshopBoolean';
 import { alignWorkshopPiece, snapWorkshopPiece, type WorkshopAxis, type WorkshopAlignment } from './workshopAlignment';
 import { applySelectionTransform, captureSelectionTransform, createSelectionProxy, duplicateWorkshopPieces, groupWorkshopPieces, ungroupWorkshopPieces, workshopGroup, workshopSelectionUnit, type WorkshopSelectionTransform } from './workshopGrouping';
 import './modelWorkshop.css';
+import { registerBeforeAppUpdate } from './appOffline';
 
 type Props = { item?: FurnitureItem; roomId: string; onSaved: (asset: ModelAsset) => boolean | void; onClose: () => void };
 type Panel = 'add' | 'model' | 'pieces' | 'alignment' | 'geometry';
@@ -92,8 +93,14 @@ function showSnapGuide(active: Runtime, piece: THREE.Mesh, matches: ReturnType<t
 }
 
 export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props) {
+  useEffect(() => registerBeforeAppUpdate(async () => { throw new Error('Guarda o cierra el modelo antes de actualizar la aplicación.'); }), []);
   const dialog = useRef<HTMLDialogElement>(null), mount = useRef<HTMLDivElement>(null), panelContent = useRef<HTMLDivElement>(null), runtime = useRef<Runtime | null>(null);
   const [ready, setReady] = useState(false), [error, setError] = useState(''), [saving, setSaving] = useState(false), [revision, setRevision] = useState(0);
+  useEffect(() => {
+    if (!revision) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn);
+  }, [revision]);
   const [selected, setSelected] = useState<string | null>(null), [panel, setPanel] = useState<Panel>(item ? 'model' : 'add'), [tool, setTool] = useState<Tool>('translate'), [geometryTool, setGeometryTool] = useState<GeometryTool>('vertices');
   const [selectedIds, setSelectedIds] = useState<string[]>([]), [multiSelect, setMultiSelect] = useState(false);
   const [palette, setPalette] = useState<'primitives' | 'prefabs' | 'furniture'>('prefabs'), [second, setSecond] = useState(''), [operation, setOperation] = useState<WorkshopBooleanOperation>('union');
@@ -415,7 +422,7 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
     const active = runtime.current;
     if (!active) return;
     run(() => {
-      const original = createFurnitureModel({ id: crypto.randomUUID(), type: preset.type, variant: preset.id, width: preset.width, height: preset.height, depth: preset.depth, x: 0, z: 0, rotation: 0 });
+      const original = createFurnitureModel({ id: crypto.randomUUID(), type: preset.type, variant: preset.id, material: 'wood', color: '#b8a084', width: preset.width, height: preset.height, depth: preset.depth, x: 0, z: 0, rotation: 0 });
       const model = cloneWorkshopModel(original); releaseSource(original);
       if (active.content.children.length + model.children.length > 511) { disposeWorkshopModel(model); throw new Error('El modelo admite hasta 511 piezas.'); }
       const first = model.children[0] as THREE.Mesh;

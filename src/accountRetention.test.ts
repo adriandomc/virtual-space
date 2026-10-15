@@ -164,24 +164,6 @@ test('startup completes durable erasures after an interrupted database commit an
   } finally { await sample.dispose(); }
 });
 
-test('an existing pre-policy database gains a full grace period without a restart extending it', async () => {
-  const id = randomUUID(), old = Date.parse('2022-01-01T00:00:00Z');
-  const sample = await fixture(dataDir => {
-    const database = new DatabaseSync(join(dataDir, 'accounts.sqlite'));
-    try {
-      database.exec('CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, salt TEXT NOT NULL, password_hash TEXT NOT NULL, created_at INTEGER NOT NULL)');
-      database.prepare('INSERT INTO users VALUES (?, ?, ?, ?, ?)').run(id, 'legacy_owner', 'a'.repeat(32), 'b'.repeat(128), old);
-    } finally { database.close(); }
-  });
-  try {
-    const before = sample.read('SELECT created_at, last_active_at, inactive_after FROM users WHERE id = ?', id)[0];
-    assert.equal(before.created_at, old); assert.equal(before.last_active_at, started); assert.equal(before.inactive_after, inactivityDeadline(started));
-    sample.time(started + 30 * day);
-    await sample.restart();
-    assert.deepEqual(sample.read('SELECT created_at, last_active_at, inactive_after FROM users WHERE id = ?', id)[0], before);
-  } finally { await sample.dispose(); }
-});
-
 test('a crash followed by downtime longer than backup retention still completes recorded live-data erasures', async () => {
   const sample = await fixture();
   try {

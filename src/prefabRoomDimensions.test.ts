@@ -1,3 +1,4 @@
+import { TERMS_VERSION } from './legalPolicy';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomUUID } from 'node:crypto';
@@ -73,7 +74,7 @@ test('la API persiste dimensiones delgadas y rechaza cambios inválidos sin alte
   let cookie = '';
   const request = (path: string, method = 'GET', body?: unknown) => fetch(base + path, { method, headers: { Origin: base, 'Content-Type': 'application/json', Cookie: cookie }, body: body === undefined ? undefined : JSON.stringify(body) });
   try {
-    const registered = await request('/api/auth/register', 'POST', { username: 'prefab_owner', password: 'Testing-pass-123', confirmPassword: 'Testing-pass-123', termsVersion: '2026-10-13' });
+    const registered = await request('/api/auth/register', 'POST', { username: 'prefab_owner', password: 'Testing-pass-123', confirmPassword: 'Testing-pass-123', termsVersion: TERMS_VERSION });
     assert.equal(registered.status, 201); cookie = registered.headers.get('set-cookie')!.split(';')[0];
     const id = randomUUID(), initial = createDefaultRoom(), path = '/api/rooms/' + id;
     assert.equal((await request('/api/rooms', 'POST', { id, room: initial })).status, 201);

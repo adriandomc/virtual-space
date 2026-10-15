@@ -1,10 +1,11 @@
+import { TERMS_VERSION } from './legalPolicy';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import test from 'node:test';
-import { createDefaultRoom } from './model';
+import { addOpening, createDefaultRoom } from './model';
 import { createServer } from './server';
 
 test('rechaza borradores incompletos sin modificar el diseño guardado y admite ceros válidos', async () => {
@@ -17,7 +18,7 @@ test('rechaza borradores incompletos sin modificar el diseño guardado y admite 
     const base = 'http://127.0.0.1:' + address.port;
     const registered = await fetch(base + '/api/auth/register', {
       method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base },
-      body: JSON.stringify({ username: 'field_test', password: 'test-password', confirmPassword: 'test-password', termsVersion: '2026-10-13' }),
+      body: JSON.stringify({ username: 'field_test', password: 'test-password', confirmPassword: 'test-password', termsVersion: TERMS_VERSION }),
     });
     assert.equal(registered.status, 201);
     const cookie = registered.headers.get('set-cookie')!.split(';')[0];
@@ -26,7 +27,7 @@ test('rechaza borradores incompletos sin modificar el diseño guardado y admite 
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const id = randomUUID(), path = '/api/rooms/' + id;
-    const room = { ...createDefaultRoom(), name: 'Mi diseño' };
+    const room = { ...addOpening(createDefaultRoom(), 'door', 0, { width: 0.9, height: 2.1, sill: 0, doorStyle: 'right' }), name: 'Mi diseño' };
     const created = await send('/api/rooms', 'POST', { id, room });
     assert.equal(created.status, 201);
     assert.equal((await created.json()).revision, 1);

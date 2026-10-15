@@ -5,6 +5,7 @@ import { dirname, join, parse, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { applyErasures, validateErasureFile } from './erasures.js';
 import { deleteInactiveAccounts } from './retention.js';
+import { assertCurrentDatabase } from './databaseSchema.js';
 import { BACKUP_RETENTION_DAYS } from './legalPolicy.js';
 
 export const BACKUP_INTERVAL = 24 * 60 * 60_000;
@@ -54,6 +55,7 @@ function quote(value: string) { return '"' + value.replaceAll('"', '""') + '"'; 
 function inspectDatabase(path: string): BackupVerification {
   const database = new DatabaseSync(path, { readOnly: true });
   try {
+    assertCurrentDatabase(database);
     const integrity = database.prepare('PRAGMA integrity_check').all();
     if (integrity.length !== 1 || integrity[0].integrity_check !== 'ok') throw new Error('Backup integrity verification failed.');
     if (database.prepare('PRAGMA foreign_key_check').all().length) throw new Error('Backup foreign-key verification failed.');
