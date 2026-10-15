@@ -76,10 +76,15 @@ test('another device revision blocks uploads and retains a downloadable draft', 
 });
 
 test('authoritative access rejection never falls back to cached permission', async () => {
-  for (const status of [401, 403, 404]) {
+  for (const status of [403, 404]) {
     const f = fixture(); await f.project.initialize(true); f.project.change({ ...f.server.room, name: 'Privado' }); f.state.denied = status;
     await f.project.retry(); assert.equal(f.project.record.authorized, false); assert.equal(f.project.editable, false); assert.equal(f.state.persisted!.draft!.name, 'Privado'); assert.equal(f.state.puts, 0); f.project.destroy();
   }
+});
+test('expired sessions preserve editable local work and require authentication only for synchronization', async () => {
+  const f = fixture(); await f.project.initialize(true); f.project.change({ ...f.server.room, name: 'Privado' }); f.state.denied = 401;
+  await f.project.retry(); assert.equal(f.project.record.authorized, true); assert.equal(f.project.editable, true); assert.equal(f.state.status, 'offline'); assert.equal(f.state.puts, 0);
+  f.project.change({ ...f.server.room, name: 'Continúo aquí' }); await f.project.settled(); assert.equal(f.state.persisted?.draft?.name, 'Continúo aquí'); f.project.destroy();
 });
 
 test('pending invites and public sharing prevent offline mutations before even uploading assets', async () => {

@@ -12,7 +12,9 @@
     "maintenance": "node server-dist/maintenance.js",
     "operations": "node server-dist/operations.js",
     "preview": "vite preview --host 0.0.0.0",
-    "test": "tsx --test src/*.test.ts"
+    "test": "tsx --test src/*.test.ts",
+    "test:e2e": "npm run build && playwright test --project=chromium",
+    "test:e2e:webkit": "npm run build && playwright test --project=webkit"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",
@@ -25,6 +27,7 @@
     "yjs": "^13.6.33"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.1",
     "@types/node": "^22.0.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",

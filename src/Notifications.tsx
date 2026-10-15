@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Bell, Check, LoaderCircle, X } from 'lucide-react';
 import { accountRequest } from './accountApi';
 import { editorPath } from './routes';
+import { offlineForced, subscribeOfflineMode } from './offlineMode';
 import './collaboration.css';
 
 type Notice = { id: string; roomId: string; roomName: string; role: 'reader' | 'editor'; fromUsername: string; createdAt: number };
@@ -14,12 +15,14 @@ export default function Notifications({ onAccepted, onOpen }: { onAccepted?: () 
   useEffect(() => {
     let active = true;
     const load = () => { void accountRequest<{ notifications: Notice[] }>('/api/notifications').then(result => { if (active) { setItems(result.notifications); setError(''); } }).catch(cause => { if (active) setError(cause.message); }); };
+    if (offlineForced()) return;
     load();
     const stream = new EventSource('/api/notifications/events');
     stream.onmessage = event => { try { const data = JSON.parse(event.data); if (active && Array.isArray(data.notifications)) { setItems(data.notifications); setError(''); } } catch { load(); } };
     const timer = setInterval(() => { if (document.visibilityState === 'visible' && stream.readyState !== EventSource.OPEN) load(); }, 15000);
+    const unsubscribe = subscribeOfflineMode(() => { if (offlineForced()) { active = false; stream.close(); clearInterval(timer); window.removeEventListener('focus', load); setOpen(false); } });
     window.addEventListener('focus', load);
-    return () => { active = false; stream.close(); clearInterval(timer); window.removeEventListener('focus', load); };
+    return () => { active = false; unsubscribe(); stream.close(); clearInterval(timer); window.removeEventListener('focus', load); };
   }, []);
   useEffect(() => {
     if (!open) return;

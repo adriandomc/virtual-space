@@ -19,7 +19,7 @@ test('each category contains at least ten distinct validated models', () => {
   assert.equal(isFurnitureVariant('wardrobe', 'vanity-round'), false);
   assert.equal(isFurnitureVariant('bed', 'wardrobe-classic'), false);
   for (const value of [null, {}, [], 1, '__proto__', 'missing']) assert.equal(isFurnitureVariant('wardrobe', value), false);
-  assert.equal(getFurniturePreset('wardrobe')?.id, 'wardrobe-classic');
+  assert.equal(getFurniturePreset('wardrobe'), undefined);
   assert.equal(getFurniturePreset('custom'), undefined);
 });
 

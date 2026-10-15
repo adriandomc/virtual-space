@@ -8,15 +8,13 @@ La portada `/` muestra tres demos interactivos: vista del cuarto, edición de un
 
 El acceso sólo necesita usuario y contraseña. El usuario se normaliza en minúsculas, admite de 3 a 32 letras ASCII, números o guiones bajos. La contraseña admite de 8 a 128 caracteres y se confirma al registrarse. No hay correo ni recuperación automática de contraseñas. El registro exige aceptar las condiciones de uso mediante una casilla inicialmente desmarcada: el servidor comprueba `termsVersion` y guarda la versión y fecha aceptadas. El servicio alojado será siempre gratuito mientras esté disponible, sin pagos ni suscripciones.
 
-**Mis diseños** permite crear, abrir y eliminar diseños propios y abrir los diseños a los que te hayan invitado. Las modificaciones y el croquis se guardan automáticamente en el servidor. Espera a que el estado indique que se guardó antes de cerrar la página. El propietario administra los permisos y elimina el diseño; los editores también pueden modificarlo y los lectores pueden consultarlo.
+**Mis diseños** permite crear, abrir y eliminar diseños propios y abrir los diseños a los que te hayan invitado. Las modificaciones y el croquis se guardan automáticamente; el estado distingue el guardado en este dispositivo de la sincronización con el servidor. Espera a que termine el guardado antes de cerrar la página. El propietario administra los permisos y elimina el diseño; los editores también pueden modificarlo y los lectores pueden consultarlo.
 
 **Compartir → Personas** invita a un usuario existente como lector o editor. La invitación llega a su campana de notificaciones y requiere aceptación. El propietario puede cambiar el rol o retirar el acceso; los cambios se aplican a las conexiones abiertas. El enlace público de lectura es independiente y no concede edición.
 
 Los cambios de editores se combinan con Yjs por WebSocket y se guardan en SQLite antes de confirmar el guardado. En diseños con colaboración o enlace público, la edición se pausa al perder conexión y los cambios pendientes se reenvían al reconectar. Cambios incompatibles con las nuevas dimensiones se rechazan conservando una versión válida. Las notificaciones usan SSE, con consulta periódica de respaldo si el canal falla. Ambos canales comparten el puerto HTTP de la aplicación; el proxy de Coolify debe permitir WebSocket y mantener las conexiones SSE.
 
-Los diseños privados del propietario, sin invitados ni enlace público, admiten trabajo sin conexión después de abrirlos en ese dispositivo. Una copia temporal en IndexedDB conserva el cuarto, el croquis y los modelos cargados; el servidor sigue siendo la fuente principal. La versión de producción guarda también la aplicación para poder recargarla sin conexión. Se requiere un navegador con Web Locks y HTTPS (o localhost); otra pestaña del mismo diseño queda en lectura para evitar escrituras simultáneas. Crear diseños, iniciar sesión y cambiar permisos requieren conexión.
-
-Al reconectar se comprueban cuenta, permisos y versión antes de subir el borrador. Si otra sesión cambió el diseño o activó colaboración, no se sobrescribe: puedes descargar la copia con sus modelos y croquis, importarla en otro diseño o elegir explícitamente la versión del servidor. Cerrar sesión elimina las copias locales; borrar los datos del navegador puede perder cambios aún no enviados. El uso offline no renueva el plazo de inactividad de la cuenta.
+Desde **Ajustes → Sin conexión** se prepara la aplicación, los diseños privados propios y la biblioteca de modelos para ese dispositivo. El modo se puede mantener activado aunque exista internet: no consulta ni envía datos, abre la biblioteca local y permite crear diseños y modelos nuevos. El apartado «Uso sin conexión» explica la preparación, la sincronización y sus límites.
 
 **Agregar** incluye 10 roperos, 10 tocadores y 10 burós con formas distintas. **Modelos propios** permite crear un modelo o subir un GLB estático con texturas PNG/JPEG incorporadas, de hasta 20 MB. No se admiten archivos externos, animaciones ni extensiones o compresores glTF. Se comprueban geometría, índices, transformaciones, jerarquía y memoria de texturas antes de almacenarlo. Los modelos pertenecen al diseño donde se suben: un editor puede aportarlos, pero el propietario conserva su gestión. Los modelos no referenciados no se exponen por el enlace público. Se limita cada modelo a 200.000 triángulos y 512 nodos; cada diseño, a un millón de triángulos, 30 modelos distintos, 100 MB y 16 millones de píxeles de textura decodificada. La biblioteca de modelos de cada propietario admite hasta 100 MB en total.
 
@@ -32,13 +30,30 @@ Los diseños son privados inicialmente. **Compartir → Crear enlace** habilita 
 
 **Compartir → Insertar** ofrece un enlace `/embed?room=<identificador>` y el código de un iframe para pegarlo en otra web. Solo muestra el visor, el cambio a recorrido y los modos Estándar, Realista e Hiperrealista. Puertas y luces se prueban temporalmente, sin guardar cambios. Requiere el enlace público activado; los diseños privados no se muestran aunque el visitante tenga una sesión iniciada. La vista consulta los cambios guardados cada 15 segundos mientras esté visible. Desactivar el enlace bloquea las nuevas lecturas; una página abierta lo detecta en su siguiente consulta. Solo `/embed` permite ser insertado; el acceso, el editor y las demás páginas mantienen su protección contra iframes. La web receptora debe permitir ese origen en su propia política de contenido y conservar permisos de scripts si utiliza un iframe con sandbox.
 
-Las cuentas, sesiones, diseños, croquis y contadores de seguridad se guardan en `/data/accounts.sqlite`. La base anterior `rooms.sqlite` no se lee ni se migra; se inicia el sistema de cuentas desde cero. Las contraseñas se guardan con scrypt y sal aleatoria; los tokens de sesión sólo se guardan como hashes. El token de sesión vence como máximo a los 30 días y se revoca al cerrar sesión. La cookie es de sesión por defecto; sólo se conserva durante 30 días si el usuario marca **Recordar sesión 30 días (usa cookies)** al entrar o registrarse. Esta opción está desmarcada inicialmente y se valida también en el servidor.
+Las cuentas, sesiones, diseños, croquis y contadores de seguridad se guardan en `/data/accounts.sqlite`. Un único esquema versionado inicializa la base de forma atómica; el arranque rechaza bases incompatibles sin borrarlas ni convertirlas. Las contraseñas se guardan con scrypt y sal aleatoria; los tokens de sesión sólo se guardan como hashes. El token de sesión vence como máximo a los 30 días y se revoca al cerrar sesión. La cookie es de sesión por defecto; sólo se conserva durante 30 días si el usuario marca **Recordar sesión 30 días (usa cookies)** al entrar o registrarse. Esta opción está desmarcada inicialmente y se valida también en el servidor.
 
 Los límites persisten tras reinicios: 5 intentos de acceso por usuario/IP en 15 minutos, 30 intentos totales por IP en ese intervalo y bloqueo progresivo tras 10 fallos, de 15 minutos hasta 24 horas. Se agrupan direcciones IPv6 por `/64`. El registro se limita a 5 cuentas por IP/hora; también hay límites de peticiones, creación de diseños y cargas. La derivación de contraseñas limita su concurrencia para mantener controlado el uso de memoria. Los límites de una IP no bloquean globalmente una cuenta.
 
-Los datos confirmados se conservan en el servidor. La exportación JSON habitual permite conservar los parámetros del cuarto; no incluye el archivo original del croquis. La descarga de recuperación de un borrador offline incluye también su croquis y los modelos necesarios, y se abre desde **Archivo → Importar**. El respaldo diario de SQLite incluye todas las cuentas, diseños, croquis, sesiones y contadores. Los procedimientos de comprobación y recuperación se describen abajo.
+**Archivo → Descargar copia** y la recuperación de borradores usan el mismo paquete autocontenido `3d-space-project`, versión **2**: incluye el documento `Room.version: 2`, el croquis y todos los GLB referenciados. **Archivo → Abrir proyecto** valida el paquete y sus recursos antes de aplicarlo en una transacción local completa. Los identificadores de modelos se renuevan para conservar copias independientes. Sólo se admite ese formato completo; un archivo de parámetros suelto no se interpreta como un diseño válido. El respaldo diario de SQLite incluye las cuentas, diseños, croquis, modelos, permisos, sesiones y contadores. Los procedimientos de comprobación y recuperación se describen abajo.
 
-Cada cuenta se conserva durante al menos **3 meses naturales** desde su última actividad autenticada correcta. Se calcula en UTC y, si el mes de destino no tiene ese día, se usa su último día; no se sustituyen tres meses por 90 días. Entrar o realizar una petición autenticada correcta a la API renueva el plazo. Los intentos fallidos y las visitas públicas a diseños compartidos no lo renuevan. Las cuentas anteriores a esta política reciben el plazo completo desde su primera activación. La limpieza horaria elimina las cuentas vencidas con sus diseños, croquis y sesiones; también se ejecuta al arrancar tras una interrupción. No hay avisos por correo ni recuperación de cuentas eliminadas.
+Cada cuenta se conserva durante al menos **3 meses naturales** desde su última actividad autenticada correcta. Se calcula en UTC y, si el mes de destino no tiene ese día, se usa su último día; no se sustituyen tres meses por 90 días. Entrar o realizar una petición autenticada correcta a la API renueva el plazo. Los intentos fallidos, las visitas públicas a diseños compartidos y el trabajo local sin sincronizar no lo renuevan. La limpieza horaria elimina las cuentas vencidas con sus diseños, croquis y sesiones; también se ejecuta al arrancar tras una interrupción. No hay avisos por correo ni recuperación de cuentas eliminadas.
+
+## Uso sin conexión
+
+La versión de producción guarda la aplicación y sus recursos en un service worker. Puede instalarse como PWA cuando el navegador lo permita y abrirse desde `/designs` sin servidor. Requiere HTTPS o localhost, IndexedDB y Web Locks. Otra pestaña del mismo diseño queda en lectura para evitar escritores simultáneos. El servidor de desarrollo de Vite no registra el service worker; prueba la disponibilidad completa con una compilación de producción.
+
+1. Entra en tu cuenta con conexión y abre **Ajustes → Sin conexión** desde la biblioteca o el editor.
+2. Prepara los diseños. Se descargan todos los diseños de tu propiedad sin colaboradores, invitaciones pendientes ni enlace público, sus croquis y modelos y la biblioteca **Mis modelos**. No hace falta visitar el visor ni mostrar cada mueble. El estado sólo confirma disponibilidad cuando todos los recursos del diseño están guardados. Una preparación interrumpida conserva las copias completas existentes y permite reintentar.
+3. Activa el modo sin conexión. La elección corresponde a esa cuenta y ese navegador, se comparte entre sus pestañas y persiste al reabrir. Permite crear, importar, editar, modelar y eliminar localmente. No activa colaboración, notificaciones ni sincronización al recuperar internet o enfocar la ventana. Los diseños compartidos ofrecen crear una copia personal independiente mientras exista conexión; no se cambian el original ni sus permisos.
+4. Desactiva el modo para sincronizar todos los pendientes, también los diseños cerrados y los modelos todavía no insertados. Se comprueban cuenta, permisos y versiones; las confirmaciones perdidas se reconcilian sin duplicar. Un proyecto nuevo crea primero su registro, después sus modelos y finalmente guarda el diseño y el croquis. El trabajo local se conserva si algún paso falla.
+
+En modo normal, una interrupción de red también permite continuar en los diseños privados disponibles. Un conflicto, un cambio de permisos o la colaboración activada desde otra sesión no sobrescribe otra versión: puedes conservar el servidor, descargar tu paquete completo o recuperar el trabajo como una copia independiente.
+
+Los ajustes muestran el progreso, espacio aproximado, pendientes, instalación y actualizaciones. La aplicación solicita almacenamiento persistente; el navegador puede denegarlo, imponer cuotas o borrar sus datos. Las actualizaciones esperan la confirmación de guardado local de las pestañas abiertas. No se trata de un respaldo externo: conserva exportaciones de lo que necesites.
+
+La sesión del servidor puede vencer sin bloquear el uso y la exportación del trabajo local. Para sincronizar hay que volver a entrar en la misma cuenta; un nombre de usuario reutilizado no hereda los borradores de otra cuenta. Iniciar o cerrar sesión y modificar cuentas o permisos requieren conexión. Cerrar sesión comprueba pendientes antes de limpiar únicamente los datos de esa cuenta; sincroniza o descarga una copia antes de descartarlos. Borrar manualmente los datos del navegador puede perder cambios todavía no enviados.
+
+La sincronización necesita la aplicación abierta y continúa al reabrirla. El trabajo local no renueva los tres meses de actividad en el servidor. El visor público y el iframe muestran la versión del servidor, nunca borradores privados de este dispositivo. Retirar un acceso no puede borrar archivos ya descargados ni dispositivos que sigan desconectados.
 
 ## Privacidad
 
@@ -63,7 +78,7 @@ La configuración publicada corresponde a `3d.adriandomc.com`. Si despliegas otr
 - Añade puertas y ventanas desde **Agregar**. Escribe su altura antes de crearlas: no viene preseleccionada y debe caber en el cuarto junto con el antepecho. Las puertas permiten apertura **Derecha**, **Izquierda** o **Sólo marco**, sin hoja. Las puertas nuevas con hoja empiezan cerradas. Arrastra las aberturas hacia otra pared para trasladarlas y ajusta sus medidas en Propiedades. Los huecos se conservan al cambiar dimensiones; si no caben sin superponerse, el cambio se rechaza.
 - Selecciona pared, piso o techo en **Materiales**. Escribe o pega un código hexadecimal de tres o seis dígitos, con o sin `#`; puedes copiarlo y reutilizar los colores aplicados al cuarto. El piso admite madera, loseta, loseta trabada, damero, mármol y concreto.
 - Añade focos, cambia posición, lúmenes y temperatura de color y utiliza su interruptor. Ajusta también la hora, orientación e intensidad del sol.
-- Añade camas individuales, matrimoniales, queen o king, roperos, tocadores y burós. Selecciona un mueble para cambiar sus dimensiones, posición, giro, color y material (madera, plástico o metal), o eliminarlo. El acabado de la estructura responde al modo Estándar, Realista o Hiperrealista; el colchón, la ropa de cama, el espejo y los tiradores conservan sus materiales propios. La planta y el visor muestran los mismos muebles guardados; el enlace de consulta conserva su distribución y acabados. Los proyectos anteriores mantienen sus colores originales hasta editarlos.
+- Añade camas individuales, matrimoniales, queen o king, roperos, tocadores y burós. Selecciona un mueble para cambiar sus dimensiones, posición, giro, color y material (madera, plástico o metal), o eliminarlo. El acabado de la estructura responde al modo Estándar, Realista o Hiperrealista; el colchón, la ropa de cama, el espejo y los tiradores conservan sus materiales propios. La planta y el visor muestran exclusivamente los muebles guardados; borrar el último no genera decoración. Cada mueble del catálogo conserva su variante y acabado; un modelo importado puede mantener explícitamente los materiales y colores originales.
 - Alterna entre vista exterior, planta y recorrido interior. En escritorio usa WASD o las flechas para caminar, Q/E para girar y R/F para mirar arriba o abajo. En pantallas táctiles mueve el joystick y arrastra para mirar.
 - En el recorrido, toca una puerta para abrirla o cerrarla y un foco para encenderlo o apagarlo. También puedes usar el botón que aparece junto al elemento visible, o mirarlo y pulsar Enter o Espacio. Arrastrar para mirar no activa los elementos. La hoja, las sombras y la entrada de luz responden al estado de la puerta. El propietario guarda estos cambios con su diseño; en un enlace de lectura, las interacciones son temporales y no modifican el diseño guardado.
 
@@ -106,6 +121,16 @@ npm start
 
 `build` comprueba TypeScript y genera `dist/` para el cliente y `server-dist/` para el servidor. `start` sirve la aplicación y su API desde el puerto **8080**, configurable mediante `PORT`. El servidor necesita permiso de escritura en `DATA_DIR`.
 
+Para probar la PWA sobre una compilación de producción:
+
+```sh
+npx playwright install chromium webkit
+npm run test:e2e
+npm run test:e2e:webkit
+```
+
+Estas pruebas abren contextos de navegador nuevos y un servidor aislado en `127.0.0.1:5188`, con una base temporal propia; no utilizan `data/` ni producción. Comprueban preparación, arranque sin red, modelos y croquis, creación local, ausencia de tráfico en modo forzado y sincronización al salir. Cada ejecución cierra la base y elimina su directorio temporal. Las capturas y trazas de fallo quedan en `test-results/`. Para usar una instalación local de Chrome puede definirse `PLAYWRIGHT_CHANNEL=chrome`.
+
 ## Docker local
 
 Con Docker activo, desde esta carpeta:
@@ -134,6 +159,19 @@ En producción las cookies de sesión son `__Host-`, `Secure`, `HttpOnly`, `Same
 `TRUSTED_PROXIES` admite una lista de IPs o CIDRs separados por comas. Ajusta ese valor a la red real del proxy de Coolify —Caddy en esta instalación— para identificar al visitante mediante `X-Forwarded-For`: se recorre la cadena desde la derecha hasta el primer salto no confiable. De forma predeterminada sólo se confían loopback y redes privadas IPv4 habituales de Docker; cabeceras enviadas directamente desde una IP pública se ignoran. Evita publicar el puerto interno `8080` fuera del proxy o confiar indiscriminadamente en las cabeceras recibidas. Con un CDN delante, verifica también la confianza y el tratamiento de sus direcciones en el proxy.
 
 Configura el DNS del dominio hacia el servidor y habilita TLS en Coolify. **HTTPS es necesario para las sesiones y para WebGPU en producción**; los navegadores y GPU compatibles determinan si se usa WebGPU o la alternativa WebGL.
+
+### Reinicio único antes del lanzamiento
+
+El reinicio autorizado de los datos de prueba es una operación manual y destructiva, separada del arranque y de los despliegues normales. Con la aplicación detenida y sin conexiones SQLite, utiliza la imagen exacta de esta versión y el volumen confirmado de 3D Space en un contenedor auxiliar sin red:
+
+```sh
+docker run --rm --network none \
+  --mount "type=volume,source=${DATA_VOLUME},target=/data" \
+  "$APP_IMAGE" \
+  node server-dist/operations.js reset-prelaunch /data --confirm=reset-3d-space-test-data
+```
+
+La operación comprueba que el directorio contiene únicamente datos reconocidos del servicio, elimina cuentas, diseños, modelos, sesiones y respaldos de prueba, crea el esquema actual vacío y registra `prelaunch-reset.json`. Ese marcador impide repetirla. Un archivo inesperado, enlace simbólico o SQLite todavía abierto hace que se rechace; revisa el motivo sin forzar un borrado general. Después despliega una sola instancia y verifica registro, creación, preparación offline y un respaldo nuevo. Los dispositivos reciben el almacenamiento local nuevo al cargar la aplicación actual; no se importan copias de prueba.
 
 ## Respaldos y comprobación de recuperación
 

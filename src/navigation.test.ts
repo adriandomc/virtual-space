@@ -30,17 +30,16 @@ test('indirect daylight requires openings, follows the day, and saturates for la
   assert.equal(daylightFactor(0.8, 10, 20), 0.8);
 });
 
-test('daylight enters windows, open and legacy doors, and empty frames, but not closed door leaves', () => {
+test('daylight enters windows, open doors, and empty frames, but not closed door leaves', () => {
   const room = createDefaultRoom();
   const door = { id: 'closed', type: 'door' as const, wall: 0, offset: 0, width: 1, height: 2, sill: 0 };
   room.openings = [
     { ...door, id: 'window', type: 'window', width: 1.5, height: 1 },
     { ...door, open: false, doorStyle: 'right' },
     { ...door, id: 'open', open: true, doorStyle: 'left' },
-    { ...door, id: 'legacy' },
-    { ...door, id: 'frame', doorStyle: 'frame', open: false },
+    { ...door, id: 'frame', doorStyle: 'frame' },
   ];
-  assert.equal(daylightOpeningArea(room), 7.5);
+  assert.equal(daylightOpeningArea(room), 5.5);
   assert.equal(daylightOpeningArea({ ...room, openings: [room.openings[1]] }), 0);
   assert.equal(daylightOpeningArea({ ...room, openings: [{ ...room.openings[1], open: true }] }), 2);
   assert.equal(daylightOpeningArea({ ...room, openings: [] }), 0);

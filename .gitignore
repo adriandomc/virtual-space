@@ -12,3 +12,5 @@ erasures.json
 .erasures-*.tmp
 maintenance-status.json
 .maintenance-status.tmp
+test-results/
+playwright-report/

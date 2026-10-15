@@ -10,7 +10,7 @@ import { readYRoom, seedYRoom, writeYRoom } from './collaborativeRoom.js';
 import type { Room } from './types.js';
 
 export type RoomRole = 'owner' | 'editor' | 'reader' | 'public';
-export type RoomRow = { id: string; owner_id: string; room: string; revision: number; has_sketch: number; sketch_version: number; shared: number; updated_at: number };
+export type RoomRow = { id: string; owner_id: string; room: string; revision: number; has_sketch: number; sketch_version: number; sketch_mutation_id: string | null; shared: number; updated_at: number };
 type MemberRow = { id: string; room_id: string; user_id: string; role: 'editor' | 'reader'; accepted_at: number | null; created_at: number };
 type LiveClient = { socket: WebSocket; request: IncomingMessage; id: string; userId: string | null; ip: string; role: RoomRole; lastPong: number };
 type NotificationStream = { request: IncomingMessage; response: ServerResponse; userId: string; ip: string };
@@ -29,23 +29,6 @@ type Dependencies = {
 };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_UPDATE = 512 * 1024, MAX_STATE = 4 * 1024 * 1024;
-
-export function initializeCollaboration(database: DatabaseSync) {
-  if (!database.prepare('PRAGMA table_info(rooms)').all().some(row => row.name === 'y_state')) database.exec('ALTER TABLE rooms ADD COLUMN y_state BLOB');
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS room_members (
-      id TEXT PRIMARY KEY,
-      room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
-      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      inviter_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      role TEXT NOT NULL CHECK(role IN ('reader', 'editor')),
-      accepted_at INTEGER,
-      created_at INTEGER NOT NULL,
-      UNIQUE(room_id, user_id)
-    );
-    CREATE INDEX IF NOT EXISTS room_members_user ON room_members(user_id, accepted_at);
-  `);
-}
 
 export function roomRole(database: DatabaseSync, row: RoomRow, user: User | null): RoomRole | null {
   if (row.owner_id === user?.id) return 'owner';

@@ -2,8 +2,6 @@ node_modules
 dist
 server-dist
 data
-server-dist
-data
 .git
 .github
 .env
@@ -17,3 +15,6 @@ erasures.json
 .erasures-*.tmp
 maintenance-status.json
 .maintenance-status.tmp
+test-results
+playwright-report
+e2e

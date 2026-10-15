@@ -1,3 +1,4 @@
+import { TERMS_VERSION } from './legalPolicy';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -63,11 +64,11 @@ test('invitaciones, permisos y colaboración durable sin sobrescribir cambios aj
   const cookies: Record<string, string> = {};
   const request = (path: string, user?: string, method = 'GET', body?: unknown) => fetch(base + path, { method, headers: { 'Content-Type': 'application/json', Origin: base, ...(user ? { Cookie: cookies[user] } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
   for (const username of ['owner', 'editor', 'reader', 'other']) {
-    const response = await request('/api/auth/register', undefined, 'POST', { username, password: 'Testing-password', confirmPassword: 'Testing-password', termsVersion: '2026-10-13' });
+    const response = await request('/api/auth/register', undefined, 'POST', { username, password: 'Testing-password', confirmPassword: 'Testing-password', termsVersion: TERMS_VERSION });
     assert.equal(response.status, 201); cookies[username] = response.headers.get('set-cookie')!.split(';')[0];
   }
   const id = randomUUID(), path = '/api/rooms/' + id, room = createDefaultRoom();
-  room.furniture = [{ id: 'wardrobe', type: 'wardrobe', width: 1, depth: 0.6, height: 2, x: 0, z: 0, rotation: 0 }];
+  room.furniture = [{ id: 'wardrobe', type: 'wardrobe', variant: 'wardrobe-classic', material: 'wood', color: '#b8a084', width: 1, depth: 0.6, height: 2, x: 0, z: 0, rotation: 0 }];
   assert.equal((await request('/api/rooms', 'owner', 'POST', { id, room })).status, 201);
   let editorMemberId = '', readerMemberId = '';
   let ownerLive: ReturnType<typeof live>, editorLive: ReturnType<typeof live>, readerLive: ReturnType<typeof live>;
@@ -214,7 +215,7 @@ test('invitaciones, permisos y colaboración durable sin sobrescribir cambios aj
 test('el canal limita conexiones, tamaño de mensajes y frecuencia sin alterar el diseño', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'virtual-space-collaboration-limits-'));
   const server = createServer({ dataDir: join(directory, 'data'), maintenance: false }), base = await listen(server);
-  const registration = await fetch(base + '/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ username: 'owner', password: 'Testing-password', confirmPassword: 'Testing-password', termsVersion: '2026-10-13' }) });
+  const registration = await fetch(base + '/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ username: 'owner', password: 'Testing-password', confirmPassword: 'Testing-password', termsVersion: TERMS_VERSION }) });
   const cookie = registration.headers.get('set-cookie')!.split(';')[0], headers = { 'Content-Type': 'application/json', Origin: base, Cookie: cookie };
   const id = randomUUID(), room = createDefaultRoom(), sockets: WebSocket[] = [];
   await fetch(base + '/api/rooms', { method: 'POST', headers, body: JSON.stringify({ id, room }) });
@@ -248,7 +249,7 @@ test('las notificaciones llegan por SSE, son privadas y terminan al cerrar sesi�
   const cookies: Record<string, string> = {};
   const request = (path: string, user?: string, method = 'GET', body?: unknown, origin = base) => fetch(base + path, { method, headers: { ...(user ? { Cookie: cookies[user] } : {}), Origin: origin, 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
   for (const username of ['owner', 'guest', 'other']) {
-    const response = await request('/api/auth/register', undefined, 'POST', { username, password: 'Testing-password', confirmPassword: 'Testing-password', termsVersion: '2026-10-13' });
+    const response = await request('/api/auth/register', undefined, 'POST', { username, password: 'Testing-password', confirmPassword: 'Testing-password', termsVersion: TERMS_VERSION });
     assert.equal(response.status, 201); cookies[username] = response.headers.get('set-cookie')!.split(';')[0];
   }
   const id = randomUUID(), path = '/api/rooms/' + id;

@@ -15,7 +15,6 @@ function sample() {
   const database = new DatabaseSync(join(directory, 'accounts.sqlite'));
   database.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;');
   createAuth(database);
-  database.exec('CREATE TABLE rooms (id TEXT PRIMARY KEY, owner_id TEXT REFERENCES users(id) ON DELETE CASCADE, room TEXT, sketch BLOB, sketch_mime TEXT, sketch_version INTEGER, shared INTEGER, updated_at INTEGER)');
   const ledger = initializeErasures(directory);
   return { directory, database, ledger, dispose() { database.close(); rmSync(directory, { recursive: true, force: true }); } };
 }

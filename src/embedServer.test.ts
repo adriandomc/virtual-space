@@ -1,3 +1,4 @@
+import { TERMS_VERSION } from './legalPolicy';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -29,7 +30,7 @@ test('embedded viewer is the only frameable document and public reads never use 
   await new Promise<void>(accept => server.listen(0, '127.0.0.1', accept));
   const address = server.address(); assert.ok(address && typeof address !== 'string');
   const base = 'http://127.0.0.1:' + address.port, id = randomUUID(), room = createDefaultRoom(), roomPath = '/api/rooms/' + id;
-  const registration = await fetch(base + '/api/auth/register', { method: 'POST', headers: { Origin: base, 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'embed_owner', password: 'Safe-test-password', confirmPassword: 'Safe-test-password', termsVersion: '2026-10-13' }) });
+  const registration = await fetch(base + '/api/auth/register', { method: 'POST', headers: { Origin: base, 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'embed_owner', password: 'Safe-test-password', confirmPassword: 'Safe-test-password', termsVersion: TERMS_VERSION }) });
   assert.equal(registration.status, 201);
   const cookie = registration.headers.get('set-cookie')!.split(';')[0];
   const headers = { Cookie: cookie, Origin: base, 'Content-Type': 'application/json' };
@@ -69,7 +70,7 @@ test('embedded viewer is the only frameable document and public reads never use 
       assert.equal((await send(assetPath + '&metadata=1')).status, 404);
       assert.equal((await send('/api/models/' + assetId)).status, 200);
     });
-    const updated = await send(roomPath, 'PUT', { revision: 1, room: { ...room, furniture: [{ id: 'model', type: 'custom', assetId, name: 'Visible', width: 1, depth: 1, height: 1, x: 0, z: 0, rotation: 0 }] } });
+    const updated = await send(roomPath, 'PUT', { revision: 1, room: { ...room, furniture: [{ id: 'model', type: 'custom', material: null, color: null, assetId, name: 'Visible', width: 1, depth: 1, height: 1, x: 0, z: 0, rotation: 0 }] } });
     assert.equal(updated.status, 200, await updated.text());
     assert.equal((await fetch(base + roomPath + '/sketch', { method: 'PUT', headers: { ...headers, 'Content-Type': 'image/png' }, body: png })).status, 200);
     assert.equal((await send(roomPath + '/sketch?public=1')).status, 404);

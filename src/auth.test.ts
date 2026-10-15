@@ -1,6 +1,7 @@
+import { TERMS_VERSION } from './legalPolicy';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { request as rawRequest, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,12 +16,11 @@ const listen = async (server: Server) => {
   return 'http://127.0.0.1:' + address.port;
 };
 const close = (server: Server) => new Promise<void>((accept, reject) => server.close(error => error ? reject(error) : accept()));
-const credentials = { username: 'Owner', password: 'test-password', confirmPassword: 'test-password', termsVersion: '2026-10-13' };
+const credentials = { username: 'Owner', password: 'test-password', confirmPassword: 'test-password', termsVersion: TERMS_VERSION };
 const cookieFor = (response: Response) => response.headers.get('set-cookie')!.split(';')[0];
 
 test('cuentas sin correo, sesiones del servidor y aislamiento de diseños', async () => {
   const dataDir = mkdtempSync(join(tmpdir(), 'virtual-space-accounts-'));
-  writeFileSync(join(dataDir, 'rooms.sqlite'), 'legacy untouched');
   let clock = 1_800_000_000_000;
   let server = createServer({ dataDir, now: () => clock, secureCookie: true });
   let base = await listen(server);
@@ -48,7 +48,6 @@ test('cuentas sin correo, sesiones del servidor y aislamiento de diseños', asyn
     assert.match(String(stored[0].password_hash), /^[a-f0-9]{128}$/);
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM sessions WHERE token_hash = ?').get(originalCookie.split('=')[1])!.count, 0);
     database.close();
-    assert.equal(readFileSync(join(dataDir, 'rooms.sqlite'), 'utf8'), 'legacy untouched');
 
     const id = randomUUID(), room = { ...createDefaultRoom(), name: 'Mi diseño' }, path = '/api/rooms/' + id;
     const created = await send('/api/rooms', 'POST', { id, room }, originalCookie);
@@ -56,7 +55,7 @@ test('cuentas sin correo, sesiones del servidor y aislamiento de diseños', asyn
     assert.equal((await send(path)).status, 404); assert.equal((await send(path, 'GET', undefined, otherCookie)).status, 404);
     assert.equal((await send(path + '/sketch')).status, 404);
     const library = await (await send('/api/rooms', 'GET', undefined, originalCookie)).json();
-    assert.deepEqual(library.rooms, [{ id, name: 'Mi diseño', role: 'owner', canManage: true, canEdit: true, shared: false, updatedAt: new Date(clock).toISOString() }]);
+    assert.deepEqual(library.rooms, [{ id, name: 'Mi diseño', role: 'owner', canManage: true, canEdit: true, shared: false, offlineAllowed: true, updatedAt: new Date(clock).toISOString() }]);
     assert.deepEqual((await (await send('/api/rooms', 'GET', undefined, otherCookie)).json()).rooms, []);
     assert.equal((await send(path + '/share', 'POST', { enabled: true }, otherCookie)).status, 404);
     assert.equal((await send(path + '/share', 'POST', { enabled: 'true' }, originalCookie)).status, 400);

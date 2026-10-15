@@ -5,8 +5,12 @@ import { shareAddress } from './routes';
 import { accountRequest, AccountRequestError, isNetworkError } from './accountApi';
 import { LiveProject, type ProjectRole, type ProjectSnapshot } from './liveProject';
 import { SoloProject, offlineProjectKey, readOfflineProject, validateOfflineProject, type OfflineProjectRecord, type SoloStatus } from './offlineProject';
-import { readOffline, writeOffline, listOffline, setOfflineAccess } from './offlineStorage';
-import { flushOfflineAssets, type OfflineAssetRecord } from './offlineAssets';
+import { readOffline, writeOffline, setOfflineAccess } from './offlineStorage';
+import { bootstrapOfflineMode, offlineForced, offlineFetch, subscribeOfflineMode } from './offlineMode';
+import { hydrateOfflineProject } from './offlineProject';
+import { assertRoomReadyToShare, exportOfflineProject, importOfflineProject, roomHasOfflineChanges, persistOfflineProject, soloNetworkDependencies } from './offlineService';
+import { serializeProjectBackup, type ProjectBackup } from './projectBackup';
+import { registerBeforeAppUpdate } from './appOffline';
 
 type Status = 'loading' | 'saving' | 'saved' | 'error' | 'offline' | 'conflict' | 'syncing';
 const sketchAddress = (id: string, hasSketch: boolean, version: number) => hasSketch ? '/api/rooms/' + id + '/sketch?v=' + version : null;
@@ -24,6 +28,7 @@ export default function useProject() {
   const [sketchUrl, setSketchUrl] = useState<string | null>(null);
   const [offlineAllowed, setOfflineAllowed] = useState(false);
   const [pendingOffline, setPendingOffline] = useState(false);
+  const [pendingAssets, setPendingAssets] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const id = new URL(window.location.href).searchParams.get('room') ?? '';
   const client = useRef<LiveProject | null>(null);
@@ -45,9 +50,14 @@ export default function useProject() {
   }, []);
 
   useEffect(() => {
+    const unregister = registerBeforeAppUpdate(async () => {
+      if (solo.current) { await solo.current.settled(); if (!solo.current.durable) throw new Error('Guarda los cambios en este dispositivo antes de actualizar.'); }
+      else if (client.current?.hasPending || sketchSaving.current) throw new Error('Espera a que terminen de guardarse los cambios antes de actualizar.');
+    });
     let active = true;
     let unlock: (() => void) | undefined;
     let sketchBlob: Blob | null | undefined;
+    let requestedSketchVersion = -1;
     mounted.current = true; setStatus('loading'); setReady(false); setError(''); setCanEdit(false);
     setOfflineAllowed(false); setPendingOffline(false);
     const get = () => accountRequest<ProjectSnapshot>('/api/rooms/' + encodeURIComponent(id));
@@ -57,7 +67,7 @@ export default function useProject() {
         localSketch.current = blob ? URL.createObjectURL(blob) : null;
         sketchBlob = blob;
       }
-      setSketchUrl(blob !== undefined ? localSketch.current : sketchAddress(id, snapshot.hasSketch, snapshot.sketchVersion));
+      setSketchUrl(blob !== undefined ? localSketch.current : offlineForced() ? null : sketchAddress(id, snapshot.hasSketch, snapshot.sketchVersion));
     };
     const metadata = (snapshot: Omit<ProjectSnapshot, 'room'>) => {
       if (!active) return;
@@ -112,20 +122,7 @@ export default function useProject() {
         return;
       }
       const value = new SoloProject(record, {
-        get, persist: async next => {
-          const identity = await readOffline<{ id: string }>('meta', 'identity');
-          if (identity?.id !== next.accountId) throw new AccountRequestError('La cuenta activa cambió.', 403);
-          await writeOffline('projects', offlineProjectKey(next.accountId, id), next);
-        },
-        assets: next => flushOfflineAssets(id, next),
-        put: (next, revision) => accountRequest('/api/rooms/' + encodeURIComponent(id), {
-          method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Offline-Write': '1', 'X-Account-Id': record.accountId }, body: JSON.stringify({ room: next, revision }),
-        }),
-        sketch: (draft, snapshot) => accountRequest('/api/rooms/' + encodeURIComponent(id) + '/sketch', {
-          method: draft.blob ? 'PUT' : 'DELETE',
-          headers: { ...(draft.blob ? { 'Content-Type': draft.blob.type } : {}), 'X-Offline-Write': '1', 'X-Account-Id': record.accountId, 'X-Sketch-Request-Id': draft.id, 'X-Sketch-Version': String(snapshot.sketchVersion), 'X-Room-Revision': String(snapshot.revision) },
-          body: draft.blob ?? undefined,
-        }),
+        ...soloNetworkDependencies(record),
         collaborative: live,
         changed: (next, nextStatus: SoloStatus, message, durable) => {
           if (!active) return;
@@ -133,10 +130,20 @@ export default function useProject() {
           setRoomState(next.draft ?? next.snapshot.room); setRole(next.snapshot.role); setCanManage(next.snapshot.canManage);
           setShared(next.snapshot.shared); setOfflineAllowed(allowed); setCanEdit(allowed && nextStatus !== 'conflict');
           setOfflineAccess(id, { accountId: next.accountId, allowed: allowed && nextStatus !== 'conflict' });
-          setPendingOffline(Boolean(next.draft || next.sketchDraft || next.inflight || next.inflightSketch));
+          setPendingOffline(Boolean(next.localOnly || next.draft || next.sketchDraft || next.inflight || next.inflightSketch));
           connection.current = nextStatus !== 'offline' && next.authorized; setConnected(connection.current);
           setStatus(!durable && (nextStatus === 'saved' || nextStatus === 'offline') ? 'saving' : nextStatus); setError(message); setReady(true);
           showSketch(next.sketchDraft ? next.sketchDraft.blob : next.sketchBlob, next.snapshot);
+          const version = next.snapshot.sketchVersion;
+          if (!offlineForced() && nextStatus === 'saved' && next.snapshot.hasSketch && !next.sketchBlob && !next.sketchDraft && requestedSketchVersion !== version) {
+            requestedSketchVersion = version;
+            queueMicrotask(() => {
+              if (!active || solo.current !== value || offlineForced()) return;
+              void offlineFetch(sketchAddress(id, true, version)!, { credentials: 'same-origin' }).then(async response => {
+                if (response.ok && response.headers.get('ETag') === '"' + id + '-' + version + '"') await value.cacheSketch(await response.blob(), version);
+              }).catch(() => {}).finally(() => { requestedSketchVersion = -1; });
+            });
+          }
         },
       });
       solo.current = value;
@@ -145,23 +152,32 @@ export default function useProject() {
         if (!offline && !value.hasPending) { live(record.snapshot); return; }
         throw cause;
       }
-      if (!offline && record.snapshot.hasSketch && !record.sketchBlob && !record.sketchDraft) {
-        void fetch(sketchAddress(id, true, record.snapshot.sketchVersion)!, { credentials: 'same-origin', signal: AbortSignal.timeout(15000) })
-          .then(async response => { if (response.ok) await value.cacheSketch(await response.blob(), record.snapshot.sketchVersion); }).catch(() => {});
-      }
     };
     void (async () => {
       try {
+        await bootstrapOfflineMode();
+        if (offlineForced()) {
+          const cached = await readOfflineProject(id);
+          if (!cached || cached.deleted) throw new Error('Este diseño no está preparado en este dispositivo.');
+          if (!cached.authorized) throw new Error('El acceso a este diseño cambió. Descarga tu copia o abre una copia independiente.');
+          await startSolo(cached, true); return;
+        }
+        const local = await readOfflineProject(id).catch(() => null);
+        if (local?.localOnly && !local.deleted) { await startSolo(local, false); return; }
         const snapshot = await get();
         if (!active) return;
         if (!snapshot.accountId) { live(snapshot); return; }
-        const cached = validateOfflineProject(await readOffline('projects', offlineProjectKey(snapshot.accountId, id)), snapshot.accountId, id);
+        const stored = validateOfflineProject(await readOffline('projects', offlineProjectKey(snapshot.accountId, id)), snapshot.accountId, id);
+        const cached = stored ? await hydrateOfflineProject(stored) : null;
         if (!snapshot.offlineAllowed && !cached?.draft && !cached?.inflight && !cached?.sketchDraft && !cached?.inflightSketch) {
-          if (cached) { cached.authorized = false; await writeOffline('projects', offlineProjectKey(cached.accountId, id), cached); }
+          if (cached) { cached.authorized = false; await persistOfflineProject(cached); }
           live(snapshot); return;
         }
         const record: OfflineProjectRecord = cached ?? { id, accountId: snapshot.accountId, snapshot, draft: null, authorized: true, updatedAt: Date.now() };
-        if (!cached?.draft && !cached?.inflight && !cached?.sketchDraft && !cached?.inflightSketch) { record.snapshot = snapshot; record.authorized = true; }
+        if (!cached?.draft && !cached?.inflight && !cached?.sketchDraft && !cached?.inflightSketch) {
+          if (record.snapshot.sketchVersion !== snapshot.sketchVersion || !snapshot.hasSketch) { record.sketchBlob = undefined; record.sketchBlobVersion = undefined; }
+          record.snapshot = snapshot; record.authorized = true;
+        }
         await startSolo(record, false);
       } catch (cause) {
         if (!active) return;
@@ -170,15 +186,23 @@ export default function useProject() {
             const record = await readOfflineProject(id);
             if (record?.authorized) { await startSolo(record, true); return; }
           } catch { /* Keep the network error when no local copy can be opened. */ }
-        } else if (cause instanceof AccountRequestError && [401, 403, 404].includes(cause.status)) {
+        } else if (cause instanceof AccountRequestError && cause.status === 401) {
+          const cached = await readOfflineProject(id).catch(() => null);
+          if (cached?.authorized && !cached.deleted) { await startSolo(cached, true); solo.current?.offline('Tu sesión terminó. Puedes continuar aquí; entra de nuevo para sincronizar.'); return; }
+        } else if (cause instanceof AccountRequestError && [403, 404].includes(cause.status)) {
           setOfflineAccess(id, null);
           const cached = await readOfflineProject(id).catch(() => null);
-          if (cached) { cached.authorized = false; await writeOffline('projects', offlineProjectKey(cached.accountId, id), cached).catch(() => {}); }
+          if (cached) { cached.authorized = false; await persistOfflineProject(cached).catch(() => {}); }
         }
         failure(cause);
       }
     })();
-    const reconnect = () => { if (solo.current) void solo.current.retry(); };
+    const reconnect = () => { if (!offlineForced() && solo.current) void solo.current.retry(); };
+    const unsubscribeMode = subscribeOfflineMode(() => {
+      client.current?.destroy(); client.current = null;
+      const previous = solo.current; previous?.destroy(); solo.current = null;
+      void (previous?.settled() ?? Promise.resolve()).finally(() => { unlock?.(); unlock = undefined; if (active) setAttempt(value => value + 1); });
+    });
     const disconnect = () => solo.current?.offline();
     const identityChanged = () => {
       if (!solo.current) return;
@@ -194,7 +218,7 @@ export default function useProject() {
       const previous = solo.current; previous?.destroy(); solo.current = null;
       if (previous) void previous.settled().finally(() => unlock?.()); else unlock?.();
       setOfflineAccess(id, null); if (localSketch.current) URL.revokeObjectURL(localSketch.current); localSketch.current = null;
-      clearInterval(refresh); window.removeEventListener('online', reconnect); window.removeEventListener('focus', reconnect); window.removeEventListener('offline', disconnect);
+      unregister(); unsubscribeMode(); clearInterval(refresh); window.removeEventListener('online', reconnect); window.removeEventListener('focus', reconnect); window.removeEventListener('offline', disconnect);
       window.removeEventListener('space-offline-identity', identityChanged);
     };
   }, [id, attempt, failure]);
@@ -224,37 +248,41 @@ export default function useProject() {
     finally { sketchSaving.current = false; finishStatus(); }
   }, [id, canEdit, failure, finishStatus]);
   const setSharing = useCallback(async (enabled: boolean) => {
+    if (offlineForced()) throw new Error('Desactiva el modo sin conexión para compartir.');
     if (!canManage) throw new Error('Solo el propietario puede cambiar los permisos.');
-    if (solo.current?.hasPending) throw new Error('Espera a que se guarden los cambios antes de compartir.');
+    if (solo.current?.hasPending) throw new Error('Espera a que se sincronicen los cambios y modelos antes de compartir.');
+    await assertRoomReadyToShare(id);
     const result = await accountRequest<{ shared: boolean }>('/api/rooms/' + id + '/share', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled }) });
     if (mounted.current) { setShared(result.shared); if (solo.current) void solo.current.retry(); }
   }, [id, canManage]);
+  useEffect(() => {
+    let active = true, generation = 0;
+    const refresh = () => {
+      const current = ++generation;
+      void roomHasOfflineChanges(id).then(pending => { if (active && current === generation) setPendingAssets(pending); }).catch(() => { if (active && current === generation) setPendingAssets(true); });
+    };
+    refresh();
+    window.addEventListener('space-offline-assets', refresh); window.addEventListener('space-offline-data', refresh); window.addEventListener('space-offline-identity', refresh);
+    return () => { active = false; window.removeEventListener('space-offline-assets', refresh); window.removeEventListener('space-offline-data', refresh); window.removeEventListener('space-offline-identity', refresh); };
+  }, [id]);
   const retry = useCallback(() => {
     lastError.current = ''; setError('');
     if (solo.current) void solo.current.retry(); else if (client.current) client.current.retry(); else setAttempt(value => value + 1);
   }, []);
   const discardOffline = useCallback(async () => { if (solo.current) await solo.current.discard(); else setAttempt(value => value + 1); }, []);
   const downloadOfflineBackup = useCallback(async () => {
-    const record = solo.current?.record ?? await readOfflineProject(id);
-    const identity = await readOffline<{ id: string }>('meta', 'identity');
-    if (!record || identity?.id !== record.accountId) throw new Error('Entra con la cuenta de este diseño para descargar su copia.');
-    const encode = async (blob: Blob) => {
-      const bytes = new Uint8Array(await blob.arrayBuffer()); let result = '';
-      for (let index = 0; index < bytes.length; index += 8192) result += String.fromCharCode(...bytes.subarray(index, index + 8192));
-      return { type: blob.type, base64: btoa(result) };
-    };
-    const assets = (await listOffline<OfflineAssetRecord>('assets')).filter(asset => asset.accountId === record.accountId && asset.roomId === id);
-    const exportedRoom = record.draft ?? record.snapshot.room;
-    const required = new Set(exportedRoom.furniture.filter(item => item.type === 'custom').map(item => item.assetId));
-    if ([...required].some(assetId => !assets.some(asset => asset.asset.id === assetId))) throw new Error('Faltan modelos en la copia de este dispositivo. Conéctate y abre el diseño completo antes de descargarlo.');
-    if (record.snapshot.hasSketch && !record.sketchDraft && !record.sketchBlob) throw new Error('Falta el croquis en este dispositivo. Conéctate antes de descargar la copia.');
-    const data = { format: '3d-space-offline', version: 1, room: exportedRoom,
-      sketch: record.sketchDraft ? (record.sketchDraft.blob ? await encode(record.sketchDraft.blob) : null) : record.sketchBlob ? await encode(record.sketchBlob) : null,
-      assets: await Promise.all(assets.filter(asset => required.has(asset.asset.id)).map(async asset => ({ asset: asset.asset, data: await encode(asset.blob) }))),
-    };
-    const url = URL.createObjectURL(new Blob([JSON.stringify(data)], { type: 'application/json' }));
+    if (solo.current) await solo.current.settled();
+    const data = await serializeProjectBackup(await exportOfflineProject(id));
+    const url = URL.createObjectURL(new Blob([data], { type: 'application/json' }));
     const anchor = document.createElement('a'); anchor.href = url; anchor.download = '3d-space-' + id + '.json'; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   }, [id]);
+  const importProject = useCallback(async (backup: ProjectBackup) => {
+    if (!solo.current || !canEdit) throw new Error('Abre un diseño privado para importar la copia.');
+    const previous = solo.current; previous.destroy(); solo.current = null;
+    await previous.settled();
+    try { await importOfflineProject(id, backup); }
+    finally { setAttempt(value => value + 1); }
+  }, [id, canEdit]);
 
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
@@ -263,5 +291,5 @@ export default function useProject() {
     window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn);
   }, []);
 
-  return { room, setRoom, ready, status, error, readOnly: !canEdit, canManage, role, connected, roomId: id, shareUrl: shareAddress(new URL(window.location.href), id), shared, setSharing, uploadSketch, sketchUrl, retry, offlineAllowed, pendingOffline, discardOffline, downloadOfflineBackup };
+  return { room, setRoom, ready, status, error, readOnly: !canEdit, canManage, role, connected, roomId: id, shareUrl: shareAddress(new URL(window.location.href), id), shared, setSharing, uploadSketch, sketchUrl, retry, offlineAllowed, pendingOffline: pendingOffline || pendingAssets, discardOffline, downloadOfflineBackup, importProject };
 }

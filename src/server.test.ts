@@ -1,3 +1,4 @@
+import { TERMS_VERSION } from './legalPolicy';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -28,16 +29,16 @@ test('el servidor persiste proyectos y croquis con permisos, revisiones y rutas 
   let server = createServer({ dataDir, staticDir });
   let base = await listen(server);
   const id = randomUUID(), room = createDefaultRoom();
-  const register = await fetch(base + '/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ username: 'Owner', password: 'test-password', confirmPassword: 'test-password', termsVersion: '2026-10-13' }) });
+  const register = await fetch(base + '/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ username: 'Owner', password: 'test-password', confirmPassword: 'test-password', termsVersion: TERMS_VERSION }) });
   assert.equal(register.status, 201);
   const cookie = register.headers.get('set-cookie')!.split(';')[0];
-  const otherRegister = await fetch(base + '/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ username: 'Other', password: 'test-password', confirmPassword: 'test-password', termsVersion: '2026-10-13' }) });
+  const otherRegister = await fetch(base + '/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ username: 'Other', password: 'test-password', confirmPassword: 'test-password', termsVersion: TERMS_VERSION }) });
   const otherCookie = otherRegister.headers.get('set-cookie')!.split(';')[0];
   const furniture = [
     { id: 'bed-queen', type: 'bed', bedSize: 'queen', material: 'wood', color: '#6b4935', x: -1.3, z: -0.7, width: 1.5, depth: 1.9, height: 0.55, rotation: 0 },
-    { id: 'wardrobe', type: 'wardrobe', material: 'metal', color: '#a2b1bb', x: 1.65, z: -1.1, width: 0.6, depth: 1.2, height: 2.1, rotation: 90 },
-    { id: 'vanity', type: 'vanity', material: 'plastic', color: '#c8b7cb', x: 1.3, z: 0.8, width: 1.1, depth: 0.55, height: 1.3, rotation: 0 },
-    { id: 'nightstand', type: 'nightstand', x: 0, z: -1.1, width: 0.5, depth: 0.5, height: 0.6, rotation: 0 },
+    { id: 'wardrobe', type: 'wardrobe', variant: 'wardrobe-classic', material: 'metal', color: '#a2b1bb', x: 1.65, z: -1.1, width: 0.6, depth: 1.2, height: 2.1, rotation: 90 },
+    { id: 'vanity', type: 'vanity', variant: 'vanity-classic', material: 'plastic', color: '#c8b7cb', x: 1.3, z: 0.8, width: 1.1, depth: 0.55, height: 1.3, rotation: 0 },
+    { id: 'nightstand', type: 'nightstand', variant: 'nightstand-classic', material: 'wood', color: '#b8a084', x: 0, z: -1.1, width: 0.5, depth: 0.5, height: 0.6, rotation: 0 },
   ];
   const freeProjectId = randomUUID();
   const freeRoom = { ...room, editing: { snap: false, step: 0.2, bounds: false }, furniture: [{ ...furniture[0], x: 8, z: -4 }], lights: [{ ...room.lights[0], x: -6, z: 6 }] };
@@ -73,7 +74,7 @@ test('el servidor persiste proyectos y croquis con permisos, revisiones y rutas 
       assert.equal((await fetch(base + path, { headers: { Authorization: 'Bearer ' + 'b'.repeat(64) } }).then(r => r.json())).canEdit, false);
     });
     await t.test('guarda cambios completos e impide sobrescribir una revisión posterior', async () => {
-      const changed = { ...room, name: 'Cuarto compartido', furniture, showFurniture: false, ceilingColor: '#c8d7e2', floorFinish: 'tile-brick', renderQuality: 'hyperrealistic', editing: { snap: true, step: 0.25, bounds: true }, sun: { ...room.sun, hour: 9 } };
+      const changed = { ...room, name: 'Cuarto compartido', furniture, ceilingColor: '#c8d7e2', floorFinish: 'tile-brick', renderQuality: 'hyperrealistic', editing: { snap: true, step: 0.25, bounds: true }, sun: { ...room.sun, hour: 9 } };
       const saved = await send(path, 'PUT', { room: changed, revision: 1 });
       assert.equal(saved.status, 200); assert.equal((await saved.json()).revision, 2);
       const repeated = await send(path, 'PUT', { room: changed, revision: 1 });
@@ -160,7 +161,7 @@ test('el servidor persiste proyectos y croquis con permisos, revisiones y rutas 
       server = createServer({ dataDir, staticDir }); base = await listen(server);
       headers.Origin = base;
       const restored = await (await send(path)).json();
-      assert.equal(restored.room.name, 'Cuarto compartido'); assert.equal(restored.room.showFurniture, false); assert.equal(restored.canEdit, true); assert.equal(restored.revision, 2);
+      assert.equal(restored.room.name, 'Cuarto compartido'); assert.equal(restored.canEdit, true); assert.equal(restored.revision, 2);
       assert.deepEqual(restored.room.furniture, furniture);
       assert.deepEqual((await (await send(path, 'GET', undefined, false)).json()).room.furniture, furniture);
       assert.equal(restored.room.ceilingColor, '#c8d7e2'); assert.equal(restored.room.floorFinish, 'tile-brick'); assert.equal(restored.room.renderQuality, 'hyperrealistic');

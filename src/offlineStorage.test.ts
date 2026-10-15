@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto';
 import { IDBObjectStore } from 'fake-indexeddb';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { clearOffline, getOfflineAccess, listOffline, onOfflinePurge, readOffline, removeOffline, setOfflineAccess, writeOffline } from './offlineStorage';
+import { cacheOfflineAsset, clearOffline, getOfflineAccess, listOffline, onOfflinePurge, readOffline, removeOffline, setOfflineAccess, updateOffline, writeOffline } from './offlineStorage';
 
 test('offline records commit before resolving, remain separated by keys, and delete completely', async () => {
   await clearOffline();
@@ -79,4 +79,31 @@ test('authoritative session expiry removes access immediately but preserves unsy
   await removing;
   assert.equal(await readOffline('meta', 'identity'), undefined);
   assert.deepEqual(await readOffline('projects', 'a:room'), { accountId: 'a', pending: true });
+});
+test('binary storage uses portable buffers, keeps asset metadata small, and does not rewrite files for flags', async () => {
+  await clearOffline(); await writeOffline('meta', 'identity', { id: 'owner' });
+  const put = IDBObjectStore.prototype.put; let binaryWrites = 0;
+  IDBObjectStore.prototype.put = function (...args: Parameters<typeof put>) {
+    const value = args[0] as { blob?: Blob; bytes?: ArrayBuffer };
+    assert.equal(value.blob instanceof Blob, false, 'Some WebKit implementations reject native Blobs in IndexedDB');
+    if (this.name === 'blobs') { assert.ok(value.bytes instanceof ArrayBuffer); binaryWrites++; }
+    return put.apply(this, args);
+  };
+  try {
+    await writeOffline('assets', 'owner:room:model', { accountId: 'owner', roomId: 'room', blob: new Blob(['GLB'], { type: 'model/gltf-binary' }), pending: true });
+    await updateOffline<{ accountId: string; pending: boolean }>('assets', 'owner:room:model', 'owner', value => value ? { ...value, pending: false } : undefined);
+    assert.equal(binaryWrites, 1);
+    const record = await readOffline<{ blob: Blob; pending: boolean }>('assets', 'owner:room:model');
+    assert.equal(await record?.blob.text(), 'GLB'); assert.equal(record?.blob.type, 'model/gltf-binary'); assert.equal(record?.pending, false);
+    await writeOffline('blobs', 'sketch', { accountId: 'owner', blob: new Blob(['PNG'], { type: 'image/png' }) });
+    assert.equal(await (await readOffline<{ blob: Blob }>('blobs', 'sketch'))?.blob.text(), 'PNG');
+  } finally { IDBObjectStore.prototype.put = put; }
+});
+test('late asset caching cannot erase a pending deletion or replace its recovery file', async () => {
+  await clearOffline(); await writeOffline('meta', 'identity', { id: 'owner' });
+  const key = 'owner:room:model';
+  await writeOffline('assets', key, { accountId: 'owner', roomId: 'room', blob: new Blob(['original']), pending: false, deleted: true });
+  await cacheOfflineAsset(key, { accountId: 'owner', roomId: 'room', blob: new Blob(['stale response']), pending: false });
+  const record = await readOffline<{ blob: Blob; deleted?: boolean }>('assets', key);
+  assert.equal(record?.deleted, true); assert.equal(await record?.blob.text(), 'original');
 });

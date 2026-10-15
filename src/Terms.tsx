@@ -8,7 +8,7 @@ export default function Terms() {
     <header className="privacy-header"><a href="/" aria-label="3D Space, inicio"><Brand className="privacy-brand" /></a><a className="privacy-back" href="/"><ArrowLeft size={18} />Volver al inicio</a></header>
     <main className="privacy-main">
       <article className="privacy-document">
-        <header><h1>Condiciones de uso</h1><p className="privacy-updated">Última actualización: 13 de octubre de 2026 · Versión {TERMS_VERSION}</p></header>
+        <header><h1>Condiciones de uso</h1><p className="privacy-updated">Última actualización: 15 de octubre de 2026 · Versión {TERMS_VERSION}</p></header>
         <p className="privacy-summary">3D Space es un servicio gratuito para crear y probar diseños de habitaciones. No tiene pagos, suscripciones, publicidad ni analíticas de uso.</p>
         <nav className="privacy-index" aria-label="Secciones de las condiciones"><a href="#servicio">Servicio</a><a href="#conservacion">Conservación</a><a href="#respaldos">Respaldos</a><a href="#contacto">Contacto</a></nav>
 
@@ -31,8 +31,15 @@ export default function Terms() {
           <p>Una cuenta sin actividad se conserva durante al menos <strong>3 meses naturales</strong> desde su última actividad autenticada correcta. Entrar a tu cuenta o usarla para consultar o editar tus diseños renueva ese plazo. Visitar el demo, intentar ingresar sin éxito o abrir un enlace compartido sin usar tu cuenta no lo renueva.</p>
           <p>Al cumplirse ese plazo, la siguiente limpieza elimina automáticamente la cuenta, sus diseños, croquis, sesiones y enlaces compartidos. La limpieza se ejecuta cada hora mientras el servicio está funcionando; si se interrumpe, vuelve a comprobar las cuentas al arrancar. No se envían recordatorios por correo.</p>
           <p>También se eliminan los modelos, permisos y estado de sincronización de sus diseños, así como sus invitaciones y accesos en otros diseños. La actividad de los colaboradores no renueva el plazo de la cuenta propietaria; si ésta vence, desaparecen sus diseños compartidos. Las aportaciones ya integradas en diseños de otros propietarios pueden permanecer en ellos.</p>
-          <p>Para las cuentas que ya existían cuando se activó esta política, el plazo comienza en la fecha de activación o en una actividad posterior. No se eliminan por una inactividad anterior a esta política.</p>
           <p>Puedes eliminar tus diseños desde la aplicación o solicitar la cancelación de tu cuenta mediante el contacto indicado abajo. Las eliminaciones son definitivas para el uso del servicio. Los respaldos pueden conservar copias residuales durante el plazo explicado a continuación.</p>
+        </section>
+
+        <section><h2>Uso sin conexión</h2>
+          <p>Puedes preparar la aplicación en tu dispositivo desde Ajustes. Se descargan tus diseños privados sin colaboradores ni enlace público, sus croquis y modelos y tu biblioteca de modelos. El modo sin conexión permite crear y editar diseños y modelos sin consultar ni enviar datos del servicio, aunque tengas internet. Recuperar la conexión no lo desactiva.</p>
+          <p>No hay colaboración en vivo en esa modalidad. Puedes preparar una copia personal de un diseño compartido mientras estés conectado; esa copia es independiente del original y de sus permisos.</p>
+          <p>Al desactivar el modo sin conexión se intentan sincronizar todos los cambios pendientes de la cuenta, previa comprobación de la sesión, el acceso y la versión del servidor. Un conflicto no autoriza sobrescribir automáticamente otra versión. Si vence la sesión, puedes continuar con el trabajo local y exportarlo; para sincronizar debes autenticarte de nuevo con la misma cuenta.</p>
+          <p>El almacenamiento local depende de tu navegador y no está cifrado por una contraseña propia de la aplicación. No es una copia de seguridad garantizada: borrar los datos del sitio o perder el dispositivo puede eliminar cambios sin sincronizar. El cierre de sesión comprueba los pendientes antes de permitir la limpieza de esa cuenta; conserva una exportación completa antes de descartarlos.</p>
+          <p>El uso sin conexión no renueva los tres meses de actividad de tu cuenta en el servidor. La cancelación o eliminación de la cuenta no puede borrar copias que permanezcan en dispositivos desconectados ni archivos exportados por sus usuarios.</p>
         </section>
 
         <section id="respaldos"><h2>Respaldos</h2>

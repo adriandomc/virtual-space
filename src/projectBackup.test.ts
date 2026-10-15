@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createDefaultRoom } from './model';
-import { parseProjectBackup } from './projectBackup';
+import { parseProjectBackup, serializeProjectBackup, validateProjectBackupResources } from './projectBackup';
 import { validateGlb } from './modelAssets';
 
 const FIRST = '00000000-0000-4000-8000-000000000001', SECOND = '00000000-0000-4000-8000-000000000002';
@@ -18,8 +18,8 @@ function glb() {
 }
 function fixture() {
   const room = createDefaultRoom();
-  room.furniture = [{ id: 'furniture-1', type: 'custom', assetId: FIRST, name: 'Tabla', width: 1, height: 1, depth: 1, x: 0, z: 0, rotation: 0 }];
-  return { format: '3d-space-offline', version: 1, room, sketch: { type: 'image/png', base64: png } as { type: string; base64: string } | null, assets: [{ asset: { id: FIRST, name: 'Tabla' }, data: { type: 'model/gltf-binary', base64: glb().toString('base64') } }] };
+  room.furniture = [{ id: 'furniture-1', type: 'custom', assetId: FIRST, name: 'Tabla', parts: {}, color: null, material: null, width: 1, height: 1, depth: 1, x: 0, z: 0, rotation: 0 }];
+  return { format: '3d-space-project', version: 2, room, sketch: { type: 'image/png', base64: png } as { type: string; base64: string } | null, assets: [{ asset: { id: FIRST, name: 'Tabla' }, data: { type: 'model/gltf-binary', base64: glb().toString('base64') } }] };
 }
 
 test('complete backup decodes its referenced models and sketch without mutating the source', async () => {
@@ -31,9 +31,9 @@ test('complete backup decodes its referenced models and sketch without mutating 
   assert.equal(JSON.stringify(input), original);
 });
 
-test('legacy room documents fall through; malformed backup formats and rooms are rejected', () => {
-  assert.equal(parseProjectBackup(createDefaultRoom()), null); assert.equal(parseProjectBackup(null), null);
-  for (const change of [ { version: 2 }, { format: 'other' }, { room: {} }, { assets: {} }, { sketch: undefined } ]) assert.throws(() => parseProjectBackup({ ...fixture(), ...change }), /respaldo no es válido/);
+test('old room documents and backup versions are rejected', () => {
+  assert.throws(() => parseProjectBackup(createDefaultRoom())); assert.throws(() => parseProjectBackup(null));
+  for (const change of [ { version: 1 }, { format: 'other' }, { room: {} }, { assets: {} }, { sketch: undefined } ]) assert.throws(() => parseProjectBackup({ ...fixture(), ...change }), /respaldo no es válido/);
   const input = fixture(); input.assets = Array.from({ length: 101 }, () => input.assets[0]); assert.throws(() => parseProjectBackup(input), /100 modelos/);
 });
 
@@ -44,19 +44,39 @@ test('models require distinct UUIDs, safe names, and all identifiers referenced 
   const incomplete = fixture(); incomplete.assets = []; assert.throws(() => parseProjectBackup(incomplete), /falta un modelo/);
 });
 
-test('only models referenced by furniture are returned and repeated references share one blob', () => {
+test('all resources are retained for validation and repeated references share one blob', () => {
   const input = fixture(); input.assets.push({ asset: { id: SECOND, name: 'Sobrante' }, data: input.assets[0].data });
   input.room.furniture.push({ ...input.room.furniture[0], id: 'furniture-2', x: 1 });
   const result = parseProjectBackup(input)!;
-  assert.equal(result.room.furniture.length, 2); assert.deepEqual(result.assets.map(asset => asset.id), [FIRST]);
-  input.room.furniture = []; input.sketch = null; assert.deepEqual(parseProjectBackup(input)!.assets, []);
+  assert.equal(result.room.furniture.length, 2); assert.deepEqual(result.assets.map(asset => asset.id), [FIRST, SECOND]);
+  input.room.furniture = []; input.assets = []; input.sketch = null; assert.deepEqual(parseProjectBackup(input)!.assets, []);
+});
+
+test('one writer produces a complete package recoverable without external resources', async () => {
+  const input = parseProjectBackup(fixture());
+  const serialized = await serializeProjectBackup(input);
+  const recovered = parseProjectBackup(JSON.parse(serialized));
+  await validateProjectBackupResources(recovered);
+  assert.deepEqual(recovered.room, input.room);
+  assert.deepEqual(Buffer.from(await recovered.assets[0].blob.arrayBuffer()), glb());
+  assert.deepEqual(Buffer.from(await recovered.sketch!.arrayBuffer()), Buffer.from(png, 'base64'));
+  assert.throws(() => parseProjectBackup({ ...fixture(), format: '3d-space-offline', version: 1 }), /copia actual/);
+});
+
+test('invalid binary resources fail validation before an importer can alter the design', async () => {
+  const badModel = parseProjectBackup(fixture()); badModel.assets[0].blob = new Blob(['invalid'], { type: 'model/gltf-binary' });
+  await assert.rejects(validateProjectBackupResources(badModel));
+  const badSketch = parseProjectBackup(fixture()); badSketch.sketch = new Blob(['invalid'], { type: 'image/png' });
+  await assert.rejects(serializeProjectBackup(badSketch), /contenido del croquis/);
+  const extra = parseProjectBackup(fixture()); extra.assets.push({ id: SECOND, name: 'Sin usar', blob: new Blob(['invalid'], { type: 'model/gltf-binary' }) });
+  await assert.rejects(validateProjectBackupResources(extra));
 });
 
 test('base64 must be canonical, without whitespace, URL encoding, garbage, or nonzero padding bits', () => {
   for (const base64 of ['', 'A', 'AAA', 'AA===', 'a A==', 'AA==\n', '-A==', '_A==', 'AB==', 'AAB=', 'data:model/gltf-binary;base64,AA==']) {
     const input = fixture(); input.assets[0].data.base64 = base64; assert.throws(() => parseProjectBackup(input), /formato|dañados/);
   }
-  const input = fixture(); input.assets[0].data.type = ''; assert.equal(parseProjectBackup(input)!.assets[0].blob.type, 'model/gltf-binary');
+  const input = fixture(); input.assets[0].data.type = ''; assert.throws(() => parseProjectBackup(input));
 });
 
 test('encoded model, sketch, and combined limits are rejected before decoding large blobs', () => {

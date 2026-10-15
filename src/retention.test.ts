@@ -1,19 +1,14 @@
+import { initializeTestDatabase, insertTestUser, insertTestSession, insertTestRoom } from './serverTestFixtures';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
-import { deleteInactiveAccounts, inactivityDeadline, initializeAccountPolicy, touchAccount } from './retention';
+import { deleteInactiveAccounts, inactivityDeadline, touchAccount } from './retention';
 
 const date = (value: string) => Date.parse(value);
 function fixture() {
   const database = new DatabaseSync(':memory:');
-  database.exec(`
-    PRAGMA foreign_keys=ON;
-    CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, created_at INTEGER NOT NULL);
-    CREATE TABLE rooms (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, sketch BLOB);
-    CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at INTEGER NOT NULL);
-    CREATE TABLE request_limits (key TEXT PRIMARY KEY, updated_at INTEGER NOT NULL, blocked_until INTEGER NOT NULL);
-  `);
+  initializeTestDatabase(database);
   return database;
 }
 function row(database: DatabaseSync, id: string) {
@@ -34,30 +29,10 @@ test('inactivity uses three UTC calendar months, clamping month ends and preserv
   }
 });
 
-test('old schema receives a full activation grace period and restart never extends it', () => {
-  const database = fixture();
-  const activated = date('2026-10-13T17:00:00Z');
-  try {
-    database.prepare('INSERT INTO users VALUES (?, ?, ?)').run('legacy', 'legacy_owner', date('2024-01-01T00:00:00Z'));
-    initializeAccountPolicy(database, activated);
-    const migrated = row(database, 'legacy')!;
-    assert.equal(migrated.created_at, date('2024-01-01T00:00:00Z'));
-    assert.equal(migrated.last_active_at, activated);
-    assert.equal(migrated.inactive_after, date('2027-01-13T17:00:00Z'));
-    assert.equal(migrated.terms_version, null);
-    assert.equal(migrated.terms_accepted_at, null);
-    initializeAccountPolicy(database, activated + 10 * 24 * 60 * 60_000);
-    assert.deepEqual(row(database, 'legacy'), migrated);
-    assert.equal(deleteInactiveAccounts(database, Number(migrated.inactive_after) - 1), 0);
-    assert.equal(deleteInactiveAccounts(database, Number(migrated.inactive_after)), 1);
-  } finally { database.close(); }
-});
-
 test('activity extends the deadline but a same-millisecond visit, clock rollback or expiry cannot revive an account', () => {
   const database = fixture(), started = date('2026-01-31T11:22:33.123Z');
   try {
-    database.prepare('INSERT INTO users VALUES (?, ?, ?)').run('owner', 'active_owner', started);
-    initializeAccountPolicy(database, started);
+    insertTestUser(database, 'owner', 'active_owner', started);
     const initial = row(database, 'owner')!;
     assert.equal(Number(touchAccount(database, 'owner', started)), 0);
     assert.equal(Number(touchAccount(database, 'owner', started - 1)), 0);
@@ -78,17 +53,16 @@ test('expiry cascades through designs, binary sketches and sessions while retain
   const database = fixture(), started = date('2026-01-31T11:22:33.123Z');
   const expiry = inactivityDeadline(started);
   try {
-    for (const id of ['expired', 'active']) database.prepare('INSERT INTO users VALUES (?, ?, ?)').run(id, id + '_owner', started);
-    initializeAccountPolicy(database, started);
+    for (const id of ['expired', 'active']) insertTestUser(database, id, id + '_owner', started);
     touchAccount(database, 'active', expiry - 1);
     for (const id of ['expired', 'active']) {
-      database.prepare('INSERT INTO rooms VALUES (?, ?, ?)').run('room_' + id, id, Buffer.from([0, 255, 137, 80]));
-      database.prepare('INSERT INTO sessions VALUES (?, ?, ?)').run('session_' + id, id, expiry + 24 * 60 * 60_000);
+      insertTestRoom(database, 'room_' + id, id, { sketch: Buffer.from([0, 255, 137, 80]), sketch_mime: 'image/png' });
+      insertTestSession(database, 'session_' + id, id, expiry + 24 * 60 * 60_000);
       const limitKey = 'create-user:' + createHash('sha256').update(id).digest('hex');
-      database.prepare('INSERT INTO request_limits VALUES (?, ?, ?)').run(limitKey, expiry, 0);
+      database.prepare('INSERT INTO request_limits (key, updated_at, blocked_until, count, window_start) VALUES (?, ?, ?, 1, 0)').run(limitKey, expiry, 0);
     }
-    database.prepare('INSERT INTO request_limits VALUES (?, ?, ?)').run('failed-ip:old_block', started, expiry + 1);
-    database.prepare('INSERT INTO request_limits VALUES (?, ?, ?)').run('failed-ip:old_inactive', started, 0);
+    database.prepare('INSERT INTO request_limits (key, updated_at, blocked_until, count, window_start) VALUES (?, ?, ?, 1, 0)').run('failed-ip:old_block', started, expiry + 1);
+    database.prepare('INSERT INTO request_limits (key, updated_at, blocked_until, count, window_start) VALUES (?, ?, ?, 1, 0)').run('failed-ip:old_inactive', started, 0);
     assert.equal(deleteInactiveAccounts(database, expiry - 1), 0);
     assert.equal(deleteInactiveAccounts(database, expiry), 1);
     assert.equal(row(database, 'expired'), undefined);

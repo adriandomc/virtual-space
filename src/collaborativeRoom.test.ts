@@ -18,7 +18,7 @@ function change(doc: Y.Doc, patch: (room: Room) => Room) {
 
 test('Yjs conserva cambios simultáneos en objetos y campos distintos', () => {
   const room = createDefaultRoom();
-  room.furniture = [{ id: 'ropero', type: 'wardrobe', width: 1, height: 2, depth: 0.6, x: 0, z: 0, rotation: 0 }];
+  room.furniture = [{ id: 'ropero', type: 'wardrobe', variant: 'wardrobe-classic', material: 'wood', color: '#b8a084', width: 1, height: 2, depth: 0.6, x: 0, z: 0, rotation: 0 }];
   const [first, second] = copies(room);
   const one = change(first, value => ({ ...value, furniture: [{ ...value.furniture[0], x: 1 }], ceilingColor: '#112233' }));
   const two = change(second, value => ({ ...value, furniture: [{ ...value.furniture[0], color: '#aabbcc' }], sun: { ...value.sun, hour: 10 } }));
@@ -43,7 +43,7 @@ test('Yjs conserva colores simultáneos de paredes distintas', () => {
 test('un color atrasado no repone el contorno anterior y un borrado no revive por movimiento', () => {
   const room = createDefaultRoom();
   room.openings = [];
-  room.furniture = [{ id: 'ropero', type: 'wardrobe', width: 1, height: 2, depth: 0.6, x: 0, z: 0, rotation: 0 }];
+  room.furniture = [{ id: 'ropero', type: 'wardrobe', variant: 'wardrobe-classic', material: 'wood', color: '#b8a084', width: 1, height: 2, depth: 0.6, x: 0, z: 0, rotation: 0 }];
   const [first, second] = copies(room);
   const vertices = [{ x: -3, z: -2 }, { x: 3, z: -2 }, { x: 3, z: 2 }, { x: -3, z: 2 }];
   const one = change(first, value => ({ ...value, vertices, furniture: [] }));
@@ -65,7 +65,7 @@ test('el cambio usa la versión mostrada y conserva otros campos recibidos entre
 
 test('las primeras ediciones simultáneas de una pieza conservan acabado y transformación', () => {
   const room = createDefaultRoom();
-  room.furniture = [{ id: 'custom', type: 'custom', name: 'Modelo', assetId: '3141abd1-94c5-4858-a5f9-7c337f1622df', width: 1, height: 1, depth: 1, x: 0, z: 0, rotation: 0 }];
+  room.furniture = [{ id: 'custom', type: 'custom', material: null, color: null, name: 'Modelo', assetId: '3141abd1-94c5-4858-a5f9-7c337f1622df', width: 1, height: 1, depth: 1, x: 0, z: 0, rotation: 0 }];
   const [first, second] = copies(room);
   assert.deepEqual(readYRoom(first), room);
   const one = change(first, value => ({ ...value, furniture: [{ ...value.furniture[0], parts: { '0': { color: '#112233' } } }] }));
@@ -78,7 +78,7 @@ test('las primeras ediciones simultáneas de una pieza conservan acabado y trans
 
 test('un arrastre desde una vista atrasada no vuelve a crear un mueble ya eliminado', () => {
   const room = createDefaultRoom();
-  room.furniture = [{ id: 'ropero', type: 'wardrobe', width: 1, height: 2, depth: 0.6, x: 0, z: 0, rotation: 0 }];
+  room.furniture = [{ id: 'ropero', type: 'wardrobe', variant: 'wardrobe-classic', material: 'wood', color: '#b8a084', width: 1, height: 2, depth: 0.6, x: 0, z: 0, rotation: 0 }];
   const [first, second] = copies(room), displayed = readYRoom(first);
   const deletion = change(second, value => ({ ...value, furniture: [] }));
   Y.applyUpdate(first, deletion);

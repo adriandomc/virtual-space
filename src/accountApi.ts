@@ -1,3 +1,4 @@
+import { assertOnlineMode, offlineForced, trackOfflineRequest } from './offlineMode';
 export class AccountRequestError extends Error {
   readonly network: boolean;
   constructor(message: string, readonly status = 0, readonly data?: unknown) {
@@ -8,8 +9,10 @@ export const isNetworkError = (cause: unknown): cause is AccountRequestError => 
 
 export async function accountRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
   const controller = new AbortController();
+  const untrack = trackOfflineRequest(controller);
   const timeout = setTimeout(() => controller.abort(), 15000);
   try {
+    await assertOnlineMode();
     const response = await fetch(path, { ...options, credentials: 'same-origin', signal: controller.signal });
     let data: T & { error?: string };
     try { data = await response.json(); }
@@ -17,10 +20,11 @@ export async function accountRequest<T>(path: string, options: RequestInit = {})
       if (response.ok && (cause instanceof TypeError || cause instanceof DOMException && ['AbortError', 'TimeoutError'].includes(cause.name))) throw new AccountRequestError('No se pudo conectar. Inténtalo de nuevo.');
       throw new AccountRequestError('No se pudo leer la respuesta. Inténtalo de nuevo.', response.status);
     }
+    if (offlineForced() || controller.signal.aborted) throw new AccountRequestError('El modo sin conexión está activado.');
     if (!response.ok) throw new AccountRequestError(typeof data?.error === 'string' ? data.error : 'No se pudo completar la operación.', response.status, data);
     return data;
   } catch (cause) {
     if (cause instanceof TypeError || (cause instanceof DOMException && (cause.name === 'AbortError' || cause.name === 'TimeoutError'))) throw new AccountRequestError('No se pudo conectar. Inténtalo de nuevo.');
     throw cause;
-  } finally { clearTimeout(timeout); }
+  } finally { clearTimeout(timeout); untrack(); }
 }

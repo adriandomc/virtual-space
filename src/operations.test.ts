@@ -1,3 +1,4 @@
+import { initializeTestDatabase, insertTestUser, insertTestSession, insertTestRoom } from './serverTestFixtures';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -6,8 +7,9 @@ import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { BACKUP_INTERVAL, restoreBackup, runBackup } from './backups';
+import { assertCurrentDatabase, initializeDatabase } from './databaseSchema';
 import { initializeErasures } from './erasures';
-import { cancelAccount, closeService } from './operations';
+import { cancelAccount, closeService, resetPrelaunch } from './operations';
 
 const time = 1_800_000_000_000;
 const owner = '11111111-1111-4111-8111-111111111111';
@@ -20,20 +22,13 @@ function fixture() {
   const directory = join(root, 'data'); mkdirSync(directory);
   const path = join(directory, 'accounts.sqlite');
   const database = new DatabaseSync(path);
-  database.exec(`
-    PRAGMA journal_mode=DELETE; PRAGMA foreign_keys=ON;
-    CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT UNIQUE, salt TEXT, password_hash TEXT, created_at INTEGER, last_active_at INTEGER, inactive_after INTEGER);
-    CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id TEXT REFERENCES users(id) ON DELETE CASCADE, expires_at INTEGER);
-    CREATE TABLE rooms (id TEXT PRIMARY KEY, owner_id TEXT REFERENCES users(id) ON DELETE CASCADE, room TEXT, revision INTEGER, shared INTEGER, updated_at INTEGER, sketch BLOB, sketch_mime TEXT, sketch_version INTEGER);
-    CREATE TABLE request_limits (key TEXT PRIMARY KEY, count INTEGER, window_start INTEGER, blocked_until INTEGER, strikes INTEGER, updated_at INTEGER);
-    INSERT INTO users VALUES ('${owner}', 'owner', '${'a'.repeat(32)}', '${'b'.repeat(128)}', ${time}, ${time}, ${time + 90 * BACKUP_INTERVAL});
-    INSERT INTO users VALUES ('${other}', 'other', '${'c'.repeat(32)}', '${'d'.repeat(128)}', ${time}, ${time}, ${time + 90 * BACKUP_INTERVAL});
-    INSERT INTO sessions VALUES ('${'e'.repeat(64)}', '${owner}', ${time + 30 * BACKUP_INTERVAL});
-    INSERT INTO sessions VALUES ('${'f'.repeat(64)}', '${other}', ${time + 30 * BACKUP_INTERVAL});
-    INSERT INTO request_limits VALUES ('ip:masked', 3, ${time}, 0, 0, ${time});
-  `);
+  initializeTestDatabase(database);
+  for (const [id, username] of [[owner, 'owner'], [other, 'other']]) insertTestUser(database, id, username, time);
+  insertTestSession(database, 'e'.repeat(64), owner, time + 30 * BACKUP_INTERVAL);
+  insertTestSession(database, 'f'.repeat(64), other, time + 30 * BACKUP_INTERVAL);
+  database.prepare('INSERT INTO request_limits VALUES (?, ?, ?, ?, ?, ?)').run('ip:masked', 3, time, 0, 0, time);
   database.prepare('INSERT INTO request_limits VALUES (?, 1, ?, 0, 0, ?)').run('create-user:' + createHash('sha256').update(owner).digest('hex'), time, time);
-  for (const [id, user, name] of [[room, owner, 'Owner design'], [otherRoom, other, 'Other design']]) database.prepare('INSERT INTO rooms VALUES (?, ?, ?, 1, 1, ?, ?, ?, 1)').run(id, user, JSON.stringify({ name }), time, Buffer.from([137, 80, 78, 71, 0, 255]), 'image/png');
+  for (const [id, user, name] of [[room, owner, 'Owner design'], [otherRoom, other, 'Other design']]) insertTestRoom(database, id, user, { updated_at: time, shared: 1, sketch: Buffer.from([137, 80, 78, 71, 0, 255]), sketch_mime: 'image/png', sketch_version: 1 });
   database.close();
   const ledger = initializeErasures(directory);
   const neighbor = join(root, 'neighbor.sqlite'); writeFileSync(neighbor, 'outside service data');
@@ -172,5 +167,48 @@ test('destructive commands reject symlinked service directories, source database
     assert.throws(() => closeService(sample.directory, '--confirm=erase-all'), /Invalid service metadata/);
     assert.equal(readFileSync(sample.neighbor, 'utf8'), 'outside service data');
     assert.deepEqual(inspect(sample.path).users.map(row => row.username), ['owner', 'other']);
+  } finally { sample.dispose(); }
+});
+
+
+test('one-time prelaunch reset replaces recognized test data and backups with the complete empty current schema', async () => {
+  const sample = fixture();
+  try {
+    const source = new DatabaseSync(sample.path);
+    try { await runBackup(source, sample.directory, { now: time }); source.exec('PRAGMA user_version=0'); }
+    finally { source.close(); }
+    assert.throws(() => resetPrelaunch(sample.directory, '--confirm=erase-all', time), /confirmation/);
+    assert.deepEqual(resetPrelaunch(sample.directory, '--confirm=reset-3d-space-test-data', time), { reset: true, version: 2, removedBackups: 1 });
+    const database = new DatabaseSync(sample.path);
+    try {
+      assertCurrentDatabase(database); initializeDatabase(database);
+      for (const table of ['users', 'sessions', 'rooms', 'model_assets', 'room_members', 'request_limits']) assert.equal(database.prepare('SELECT COUNT(*) AS n FROM ' + table).get()!.n, 0);
+      assert.equal(database.prepare('PRAGMA integrity_check').get()!.integrity_check, 'ok');
+      assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(), []);
+    } finally { database.close(); }
+    assert.deepEqual(JSON.parse(readFileSync(sample.ledger, 'utf8')), { version: 1, entries: [] });
+    assert.deepEqual(JSON.parse(readFileSync(join(sample.directory, 'prelaunch-reset.json'), 'utf8')), { version: 2, resetAt: time });
+    assert.deepEqual(readdirSync(join(sample.directory, 'backups')), []);
+    assert.equal(readFileSync(sample.neighbor, 'utf8'), 'outside service data');
+    assert.throws(() => resetPrelaunch(sample.directory, '--confirm=reset-3d-space-test-data', time + 1), /already completed/);
+  } finally { sample.dispose(); }
+});
+
+test('prelaunch reset rejects active databases, unknown files and foreign tables before erasing anything', () => {
+  const sample = fixture();
+  try {
+    const before = readFileSync(sample.path);
+    writeFileSync(sample.path + '-wal', 'active');
+    assert.throws(() => resetPrelaunch(sample.directory, '--confirm=reset-3d-space-test-data'), /Stop the service/);
+    unlinkSync(sample.path + '-wal');
+    const unknown = join(sample.directory, 'operator-note.txt'); writeFileSync(unknown, 'preserve');
+    assert.throws(() => resetPrelaunch(sample.directory, '--confirm=reset-3d-space-test-data'), /Unrecognized service files/);
+    assert.deepEqual(readFileSync(sample.path), before); unlinkSync(unknown);
+    const database = new DatabaseSync(sample.path); database.exec('CREATE TABLE foreign_data (id TEXT)'); database.close();
+    const foreignBefore = readFileSync(sample.path);
+    assert.throws(() => resetPrelaunch(sample.directory, '--confirm=reset-3d-space-test-data'), /recognized 3D Space/);
+    assert.deepEqual(readFileSync(sample.path), foreignBefore);
+    assert.deepEqual(inspect(sample.path).users.map(row => row.username), ['owner', 'other']);
+    assert.equal(readFileSync(sample.neighbor, 'utf8'), 'outside service data');
   } finally { sample.dispose(); }
 });

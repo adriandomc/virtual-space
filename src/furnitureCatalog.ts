@@ -37,7 +37,7 @@ export const FURNITURE_CATALOG: readonly FurniturePreset[] = [
 ];
 
 export function getFurniturePreset(type: string, variant?: string): FurniturePreset | undefined {
-  return FURNITURE_CATALOG.find(preset => preset.type === type && (variant === undefined || preset.id === variant));
+  return FURNITURE_CATALOG.find(preset => preset.type === type && preset.id === variant);
 }
 
 export function isFurnitureVariant(type: string, variant: unknown): variant is string {

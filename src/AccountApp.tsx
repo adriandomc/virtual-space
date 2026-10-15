@@ -1,12 +1,13 @@
 import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from 'react';
-import { Box, Eye, EyeOff, LoaderCircle, LogOut, Plus, Trash2 } from 'lucide-react';
+import { Box, Copy, Eye, EyeOff, LoaderCircle, LogOut, Plus, Trash2 } from 'lucide-react';
 import Brand from './Brand';
 import Notifications from './Notifications';
 import { createBlankRoom } from './onboardingModel';
 import { accountRequest, isNetworkError } from './accountApi';
 import { offlineIdentity, rememberOfflineIdentity } from './offlineIdentity';
-import { listOfflineDesigns } from './offlineProject';
-import { clearOffline, removeOffline } from './offlineStorage';
+import OfflineSettings, { useOfflineMode } from './OfflineSettings';
+import { bootstrapOfflineMode, offlineForced } from './offlineMode';
+import { clearOfflineAccount, copyDesign, createDesignLocal, deleteDesign as removeDesign, listDesigns, pendingOfflineCount } from './offlineService';
 import { TERMS_VERSION } from './legalPolicy';
 import { accountRedirect, DESIGNS_PATH, editorPath, LOGIN_PATH, type SitePage } from './routes';
 import './account.css';
@@ -15,7 +16,7 @@ const RoomEditor = lazy(() => import('./App'));
 const SetupApp = lazy(() => import('./SetupApp'));
 
 type User = { id: string; username: string };
-type Design = { id: string; name: string; updatedAt: string; setupStep?: 0 | 1 | 2; role: 'owner' | 'editor' | 'reader'; canManage: boolean };
+type Design = { id: string; name: string; updatedAt: string; setupStep?: 0 | 1 | 2; role: 'owner' | 'editor' | 'reader'; canManage: boolean; offlineAllowed?: boolean; offline?: boolean };
 
 function PasswordField({ label, name, value, onChange, register, disabled }: { label: string; name: string; value: string; onChange: (value: string) => void; register: boolean; disabled: boolean }) {
   const [visible, setVisible] = useState(false);
@@ -65,11 +66,13 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
 }
 
 export default function AccountApp({ page }: { page: Exclude<SitePage, 'landing' | 'privacy' | 'terms'> }) {
+  const forced = useOfflineMode();
   const [user, setUser] = useState<User | null>(null);
   const [loadingSession, setLoadingSession] = useState(true);
   const [sessionError, setSessionError] = useState('');
   const [sessionAttempt, setSessionAttempt] = useState(0);
   const [offline, setOffline] = useState(false);
+  const [reauthenticate, setReauthenticate] = useState(false);
   const [designs, setDesigns] = useState<Design[]>([]);
   const [loadingDesigns, setLoadingDesigns] = useState(false);
   const [libraryAttempt, setLibraryAttempt] = useState(0);
@@ -84,11 +87,16 @@ export default function AccountApp({ page }: { page: Exclude<SitePage, 'landing'
   useEffect(() => {
     let active = true;
     setLoadingSession(true); setSessionError('');
-    void accountRequest<{ user: User | null }>('/api/auth/session').then(async result => {
+    void (async () => {
+      const local = await bootstrapOfflineMode();
+      if (local.forced) return { user: local.identity, local: true };
+      const result = await accountRequest<{ user: User | null }>('/api/auth/session');
+      return { ...result, local: false };
+    })().then(async result => {
       if (!active) return;
-      if (result.user) await rememberOfflineIdentity(result.user).catch(() => {});
-      else await removeOffline('meta', 'identity').catch(() => {});
-      if (active) { setUser(result.user); setOffline(false); }
+      if (result.user && !result.local) await rememberOfflineIdentity(result.user).catch(() => {});
+      const local = !result.user ? await offlineIdentity().catch(() => null) : null;
+      if (active) { setUser(result.user ?? local); setOffline(result.local || !!local); setReauthenticate(!result.user && !!local); }
     }).catch(async cause => {
       const identity = isNetworkError(cause) ? await offlineIdentity().catch(() => null) : null;
       if (!active) return;
@@ -96,17 +104,18 @@ export default function AccountApp({ page }: { page: Exclude<SitePage, 'landing'
       else setSessionError(cause instanceof Error ? cause.message : 'No se pudo conectar.');
     }).finally(() => { if (active) setLoadingSession(false); });
     return () => { active = false; };
-  }, [page, sessionAttempt]);
+  }, [page, sessionAttempt, forced]);
 
   useEffect(() => {
-    const reconnect = () => setSessionAttempt(current => current + 1);
+    const reconnect = () => { if (!offlineForced()) setSessionAttempt(current => current + 1); };
     const offlineError = (event: Event) => { const message = (event as CustomEvent).detail; if (typeof message === 'string') setError(message); };
     window.addEventListener('online', reconnect);
     window.addEventListener('space-offline-error', offlineError);
     return () => { window.removeEventListener('online', reconnect); window.removeEventListener('space-offline-error', offlineError); };
   }, []);
 
-  const redirect = loadingSession || sessionError ? null : accountRedirect(page, !!user);
+  const signingIn = page === 'login' && new URL(window.location.href).searchParams.get('reauth') === '1' && !forced;
+  const redirect = loadingSession || sessionError || signingIn ? null : accountRedirect(page, !!user);
   useEffect(() => { if (redirect) window.location.replace(redirect); }, [redirect]);
 
   useEffect(() => {
@@ -117,24 +126,21 @@ export default function AccountApp({ page }: { page: Exclude<SitePage, 'landing'
       loading = true;
       const generation = libraryGeneration.current;
       if (!silent) { setLoadingDesigns(true); setError(''); }
-      void accountRequest<{ rooms: Design[] }>('/api/rooms').then(result => {
-        if (active && generation === libraryGeneration.current && !pendingAccount.current) { setDesigns(result.rooms); setOffline(false); }
+      void listDesigns().then(result => {
+        if (active && generation === libraryGeneration.current && !pendingAccount.current) { setDesigns(result); setOffline(offlineForced() || !navigator.onLine || reauthenticate); }
       }).catch(async cause => {
         if (!active || generation !== libraryGeneration.current) return;
-        if (isNetworkError(cause)) {
-          const cached = await listOfflineDesigns(user.id).catch(() => []);
-          if (!active || generation !== libraryGeneration.current) return;
-          setDesigns(cached); setOffline(true);
-          setError(cached.length ? '' : 'No hay diseños disponibles sin conexión en este dispositivo.');
-        } else setError(cause instanceof Error ? cause.message : 'No se pudieron cargar los diseños.');
+        setError(cause instanceof Error ? cause.message : 'No se pudieron cargar los diseños.');
       }).finally(() => { loading = false; if (active) setLoadingDesigns(false); });
     };
-    const refresh = () => { if (document.visibilityState === 'visible') load(true); };
+    const refresh = () => { if (!offlineForced() && document.visibilityState === 'visible') load(true); };
+    const refreshLocal = () => load(true);
     load();
-    const timer = setInterval(refresh, 30000);
+    const timer = forced ? undefined : setInterval(refresh, 30000);
     window.addEventListener('focus', refresh); window.addEventListener('online', refresh); document.addEventListener('visibilitychange', refresh);
-    return () => { active = false; clearInterval(timer); window.removeEventListener('focus', refresh); window.removeEventListener('online', refresh); document.removeEventListener('visibilitychange', refresh); };
-  }, [user, page, libraryAttempt]);
+    window.addEventListener('space-offline-data', refreshLocal);
+    return () => { active = false; clearInterval(timer); window.removeEventListener('focus', refresh); window.removeEventListener('online', refresh); document.removeEventListener('visibilitychange', refresh); window.removeEventListener('space-offline-data', refreshLocal); };
+  }, [user, page, libraryAttempt, forced, reauthenticate]);
 
   async function createDesign() {
     if (pending) return;
@@ -142,7 +148,10 @@ export default function AccountApp({ page }: { page: Exclude<SitePage, 'landing'
     setPending('create'); setError('');
     creationId.current ??= crypto.randomUUID();
     try {
-      const result = await accountRequest<{ id: string }>('/api/rooms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: creationId.current, room: createBlankRoom() }) });
+      let result: { id: string };
+      if (forced || offline) result = await createDesignLocal();
+      else try { result = await accountRequest<{ id: string }>('/api/rooms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: creationId.current, room: createBlankRoom() }) }); }
+      catch (cause) { if (!isNetworkError(cause)) throw cause; result = await createDesignLocal(createBlankRoom(), creationId.current); }
       window.location.assign(editorPath(result.id, true));
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudo crear el diseño.'); setPending(null); }
   }
@@ -150,7 +159,7 @@ export default function AccountApp({ page }: { page: Exclude<SitePage, 'landing'
     if (design.role !== 'owner' || pending || !window.confirm('¿Eliminar «' + design.name + '»?')) return;
     libraryGeneration.current++;
     setPending(design.id); setError('');
-    try { await accountRequest('/api/rooms/' + encodeURIComponent(design.id), { method: 'DELETE', headers: { 'Content-Type': 'application/json' } }); setDesigns(current => current.filter(item => item.id !== design.id)); }
+    try { await removeDesign(design.id); setDesigns(current => current.filter(item => item.id !== design.id)); }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudo eliminar el diseño.'); }
     finally { setPending(null); }
   }
@@ -158,20 +167,35 @@ export default function AccountApp({ page }: { page: Exclude<SitePage, 'landing'
     if (pending) return;
     libraryGeneration.current++;
     setPending('logout'); setError('');
-    try { await accountRequest('/api/auth/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); await clearOffline(); window.location.assign(LOGIN_PATH); }
+    try {
+      if (forced) throw new Error('Desactiva el modo sin conexión y sincroniza tus cambios antes de cerrar sesión.');
+      if (!user) return;
+      const locks = await navigator.locks?.query();
+      if (locks?.held?.some(lock => lock.name?.startsWith('3d-space-project:' + user.id + ':'))) throw new Error('Cierra las pestañas del editor antes de cerrar sesión.');
+      if (await pendingOfflineCount(user.id)) throw new Error('Hay cambios pendientes. Sincronízalos desde Ajustes antes de cerrar sesión.');
+      await accountRequest('/api/auth/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      await clearOfflineAccount(user.id); window.location.assign(LOGIN_PATH);
+    }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudo cerrar sesión.'); }
     finally { setPending(null); }
+  }
+  async function personalCopy(design: Design) {
+    if (pending) return;
+    setPending(design.id); setError('');
+    try { const result = await copyDesign(design.id); window.location.assign(editorPath(result.id)); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudo crear la copia.'); setPending(null); }
   }
 
   if (page === 'editor' && roomId) return <Suspense fallback={<main className="account-page account-loading" aria-label="Cargando diseño"><LoaderCircle className="saving-spinner" size={25} /></main>}>{new URL(window.location.href).searchParams.get('setup') === '1' ? <SetupApp /> : <RoomEditor onHome={() => window.location.assign(DESIGNS_PATH)} />}</Suspense>;
   if (loadingSession || redirect) return <main className="account-page account-loading" aria-label="Cargando cuenta"><LoaderCircle className="saving-spinner" size={25} /></main>;
   if (sessionError) return <main className="account-page account-loading"><p className="account-error" role="alert">{sessionError}</p><button className="account-secondary" onClick={() => setSessionAttempt(current => current + 1)}>Reintentar</button></main>;
-  if (!user) return <AuthScreen onAuthenticated={next => { void rememberOfflineIdentity(next).catch(() => {}).finally(() => setUser(next)); }} />;
-  return <main className="account-page library-page"><header className="account-header"><Brand /><div><span className="account-username">{user.username}</span><Notifications onAccepted={() => setLibraryAttempt(current => current + 1)} /><button type="button" className="account-secondary" aria-label="Cerrar sesión" disabled={!!pending} onClick={() => void logout()}><LogOut size={17} /><span>Cerrar sesión</span></button></div></header>
-    <section className="design-library" aria-labelledby="designs-title"><div className="library-heading"><h1 id="designs-title">Mis diseños</h1><button type="button" className="account-primary" disabled={!!pending || offline} onClick={() => void createDesign()}>{pending === 'create' ? <LoaderCircle size={17} className="saving-spinner" /> : <Plus size={19} />}Nuevo diseño</button></div>
+  if (!user || signingIn) return <AuthScreen onAuthenticated={next => { void rememberOfflineIdentity(next).catch(() => {}).finally(() => window.location.replace(DESIGNS_PATH)); }} />;
+  return <main className="account-page library-page"><header className="account-header"><Brand /><div><span className="account-username">{user.username}</span>{!forced && !offline && <Notifications onAccepted={() => setLibraryAttempt(current => current + 1)} />}<OfflineSettings /><button type="button" className="account-secondary" aria-label="Cerrar sesión" disabled={!!pending} onClick={() => void logout()}><LogOut size={17} /><span>Cerrar sesión</span></button></div></header>
+    <section className="design-library" aria-labelledby="designs-title"><div className="library-heading"><h1 id="designs-title">Mis diseños</h1><button type="button" className="account-primary" disabled={!!pending} onClick={() => void createDesign()}>{pending === 'create' ? <LoaderCircle size={17} className="saving-spinner" /> : <Plus size={19} />}Nuevo diseño</button></div>
       {offline && <p className="account-note" role="status">Sin conexión · Diseños disponibles en este dispositivo</p>}
+      {reauthenticate && !forced && <p className="account-note">Tu sesión venció. Puedes seguir trabajando aquí. <a href="/login?reauth=1">Inicia sesión para sincronizar</a>.</p>}
       {error && <div className="library-error"><p className="account-error" role="alert">{error}</p><button type="button" className="account-secondary" disabled={!!pending} onClick={() => setLibraryAttempt(current => current + 1)}>Reintentar</button></div>}
-      {loadingDesigns ? <div className="library-empty" aria-label="Cargando diseños"><LoaderCircle size={23} className="saving-spinner" /></div> : designs.length ? <ul className="design-list">{designs.map(design => <li key={design.id}><a href={editorPath(design.id, design.role === 'owner' && design.setupStep !== undefined)} className="design-open"><span className="design-icon"><Box size={27} strokeWidth={1.3} /></span><span><strong>{design.name}</strong>{design.role !== 'owner' && <span className="design-progress">Compartido · {design.role === 'editor' ? 'Editor' : 'Lector'}</span>}{design.role === 'owner' && design.setupStep !== undefined ? <span className="design-progress">Continuar preparación</span> : <time dateTime={new Date(design.updatedAt).toISOString()}>{new Date(design.updatedAt).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' })}</time>}</span></a>{design.role === 'owner' && <button type="button" className="design-delete" aria-label={'Eliminar ' + design.name} disabled={!!pending} onClick={() => void deleteDesign(design)}>{pending === design.id ? <LoaderCircle size={19} className="saving-spinner" /> : <Trash2 size={19} />}</button>}</li>)}</ul> : !error && <p className="library-empty">Sin diseños</p>}
+      {loadingDesigns ? <div className="library-empty" aria-label="Cargando diseños"><LoaderCircle size={23} className="saving-spinner" /></div> : designs.length ? <ul className="design-list">{designs.map(design => <li key={design.id}><a href={editorPath(design.id, design.role === 'owner' && design.setupStep !== undefined)} className="design-open"><span className="design-icon"><Box size={27} strokeWidth={1.3} /></span><span><strong>{design.name}</strong>{design.role !== 'owner' && <span className="design-progress">Compartido · {design.role === 'editor' ? 'Editor' : 'Lector'}</span>}{design.role === 'owner' && design.setupStep !== undefined ? <span className="design-progress">Continuar preparación</span> : <time dateTime={new Date(design.updatedAt).toISOString()}>{new Date(design.updatedAt).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' })}</time>}</span></a>{(design.offlineAllowed === false || design.offline) && <button type="button" className="design-delete" aria-label={'Crear copia personal de ' + design.name} title="Crear copia personal para usar sin conexión" disabled={!!pending || (design.offlineAllowed === false && (forced || offline))} onClick={() => void personalCopy(design)}><Copy size={19} /></button>}{design.role === 'owner' && <button type="button" className="design-delete" aria-label={'Eliminar ' + design.name} disabled={!!pending} onClick={() => void deleteDesign(design)}>{pending === design.id ? <LoaderCircle size={19} className="saving-spinner" /> : <Trash2 size={19} />}</button>}</li>)}</ul> : !error && <p className="library-empty">Sin diseños</p>}
     </section>
     <footer className="account-footer"><a className="privacy-link" href="/privacy">Aviso de privacidad</a><a className="privacy-link" href="/terms">Condiciones de uso</a></footer>
   </main>;

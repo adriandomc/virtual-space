@@ -11,7 +11,7 @@ test('los proyectos nuevos empiezan blancos, vacíos y con estructura válida', 
   assert.equal(room.floorColor, '#edede8');
   assert.equal(room.ceilingColor, '#ffffff');
   assert.deepEqual(room.furniture, []);
-  assert.equal(room.showFurniture, false);
+  assert.equal('showFurniture' in room, false);
   assert.equal(room.openings.length, 0);
   assert.equal(room.lights.length, 1);
   assert.equal(room.lights[0].enabled, true);
@@ -30,10 +30,10 @@ test('omitir colores mantiene planta, objetos y luces elegidos', () => {
 });
 
 test('omitir decoración retira todos los muebles sin cambiar la habitación', () => {
-  const room = { ...addLight(addOpening(addFurniture(createBlankRoom(), 'wardrobe'), 'door', 0)), showFurniture: true, ceilingColor: '#e0d0c0' };
+  const room = { ...addLight(addOpening(addFurniture(createBlankRoom(), 'wardrobe'), 'door', 0, { width: .9, height: 2 })), ceilingColor: '#e0d0c0' };
   const reset = resetOnboardingStep(room, 'decoration');
   assert.deepEqual(reset.furniture, []);
-  assert.equal(reset.showFurniture, false);
+  assert.equal('showFurniture' in reset, false);
   assert.deepEqual(reset.vertices, room.vertices);
   assert.deepEqual(reset.openings, []);
   assert.equal(reset.lights.length, 1);
@@ -42,7 +42,7 @@ test('omitir decoración retira todos los muebles sin cambiar la habitación', (
 });
 
 test('omitir croquis vuelve a dimensiones normales conservando acabado y muebles', () => {
-  const room = addOpening(addFurniture(resizeRoom(createBlankRoom(), 7, 6), 'nightstand'), 'window', 1);
+  const room = addOpening(addFurniture(resizeRoom(createBlankRoom(), 7, 6), 'nightstand'), 'window', 1, { width: 1.2, height: 1, sill: .7 });
   const reset = resetOnboardingStep({ ...room, height: 4, floorFinish: 'marble', floorColor: '#bbbbaa', name: 'Estudio' }, 'plan');
   assert.equal(bounds(reset.vertices).width, 5);
   assert.equal(bounds(reset.vertices).depth, 4);

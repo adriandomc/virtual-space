@@ -4,7 +4,7 @@ import * as THREE from 'three/webgpu';
 import { applyCustomPart, attachCustomModel, clearCustomModelCache, cloneCustomModel, modelAssetUrl } from './customModel';
 import type { FurnitureItem } from './types';
 
-const item: FurnitureItem = { id: 'custom-a', type: 'custom', width: 1, height: 1, depth: 1, x: 0, z: 0, rotation: 0 };
+const item: FurnitureItem = { id: 'custom-a', type: 'custom', material: null, color: null, width: 1, height: 1, depth: 1, x: 0, z: 0, rotation: 0 };
 test('custom models clone materials and geometry without mutating another instance', () => {
   const source = new THREE.Group(), material = new THREE.MeshStandardMaterial({ color: '#112233' });
   source.add(new THREE.Mesh(new THREE.BoxGeometry(), material));

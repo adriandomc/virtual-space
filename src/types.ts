@@ -35,8 +35,8 @@ export type FurnitureItem = {
   name?: string;
   parts?: Record<string, ModelPart>;
   bedSize?: BedSize;
-  material?: FurnitureMaterial;
-  color?: string;
+  material: FurnitureMaterial | null;
+  color: string | null;
   x: number;
   z: number;
   width: number;
@@ -45,7 +45,7 @@ export type FurnitureItem = {
   rotation: number;
 };
 export type Room = {
-  version: 1;
+  version: 2;
   setupStep?: 0 | 1 | 2;
   name: string;
   vertices: Point[];
@@ -57,7 +57,6 @@ export type Room = {
   floorFinish: FloorFinish;
   renderQuality: 'standard' | 'realistic' | 'hyperrealistic';
   editing: EditingSettings;
-  showFurniture: boolean;
   furniture: FurnitureItem[];
   openings: Opening[];
   lights: RoomLight[];
