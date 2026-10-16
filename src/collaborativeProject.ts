@@ -4,7 +4,7 @@ import type { ProjectDocument } from './projectDocument.js';
 import { sameData as same } from './sameData.js';
 
 const plain = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === 'object' && !Array.isArray(value));
-const collections = ['furniture', 'openings', 'lights', 'walls', 'surfaces', 'points'];
+const collections = ['furniture', 'openings', 'lights', 'walls', 'surfaces', 'points', 'stairs', 'roofs'];
 function flatParts(value: unknown): Record<string, unknown> {
   return Object.fromEntries(Object.entries(plain(value) ? value : {}).flatMap(([id, part]) => Object.entries(plain(part) ? part : {}).flatMap(([field, value]) => plain(value) ? Object.entries(value).map(([axis, number]) => [id + '.' + field + '.' + axis, number]) : [[id + '.' + field, value]])));
 }

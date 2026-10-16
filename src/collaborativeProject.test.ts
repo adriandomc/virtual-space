@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as Y from 'yjs';
-import { createDefaultProject, type ProjectLevel } from './projectDocument';
-import { projectScopes, readProjectScope, writeProjectScope } from './collaborativeProject';
+import { createDefaultProject, validateProjectDocument, type ProjectLevel } from './projectDocument';
+import { addLevel, addRoof, addStair } from './projectOperations';
+import { assembleProject, projectScopes, readProjectScope, writeProjectScope } from './collaborativeProject';
 import { stableStringify } from './sameData';
 const createDefaultRoom = () => createDefaultProject().levels[0];
 const readYRoom = (doc: Y.Doc) => readProjectScope(doc) as ProjectLevel;
@@ -10,17 +11,43 @@ const seedYRoom = (doc: Y.Doc, level: ProjectLevel) => writeProjectScope(doc, le
 const writeYRoom = (doc: Y.Doc, level: ProjectLevel, previous: ProjectLevel) => writeProjectScope(doc, level, previous);
 const validateRoom = (level: ProjectLevel) => level;
 
-test('a canonical JSON roundtrip does not replace unchanged raw arrays during an ordinary metadata edit', () => {
+test('a canonical JSON roundtrip preserves unchanged roof map identities during an ordinary metadata edit', () => {
   const doc = new Y.Doc(), previous = projectScopes(createDefaultProject()).meta;
   try {
     writeProjectScope(doc, previous);
-    const roofs = doc.getMap('data').get('roofs'), vector = Y.encodeStateVector(doc);
+    const roofs = doc.getMap('data').get('roofs') as Y.Map<unknown>, roofId = String((previous.roofs as { id: string }[])[0].id), roof = roofs.get(roofId), vector = Y.encodeStateVector(doc);
     const next = JSON.parse(stableStringify(previous)); next.name = 'Renamed';
     writeProjectScope(doc, next, previous);
-    assert.equal(doc.getMap('data').get('roofs'), roofs, 'key ordering must not replace array identities');
+    assert.equal(doc.getMap('data').get('roofs'), roofs); assert.equal(roofs.get(roofId), roof, 'key ordering must not replace entity identities');
     assert.equal(Y.decodeUpdate(Y.encodeStateAsUpdate(doc, vector)).structs.length, 1, 'only the edited name is written');
     assert.deepEqual(readProjectScope(doc), next);
   } finally { doc.destroy(); }
+});
+
+test('simultaneous roof and stair finishes on different levels merge by persistent entity ID', () => {
+  let project = addLevel(addLevel(createDefaultProject(), { copy: true }), { copy: true });
+  project = addRoof(project, project.levels[0].id);
+  project = addStair(project, { fromLevelId: project.levels[0].id, toLevelId: project.levels[1].id });
+  project = addStair(project, { fromLevelId: project.levels[1].id, toLevelId: project.levels[2].id });
+  const seed = new Y.Doc(); writeProjectScope(seed, projectScopes(project).meta);
+  const docs = [0, 1].map(() => { const doc = new Y.Doc(); Y.applyUpdate(doc, Y.encodeStateAsUpdate(seed)); return doc; });
+  try {
+    const colors = ['#112233', '#aabbcc'];
+    const updates = docs.map((doc, index) => {
+      const previous = readProjectScope(doc), vector = Y.encodeStateVector(doc), next = structuredClone(previous);
+      (next.roofs as typeof project.roofs)[index].finish.color = colors[index];
+      (next.stairs as typeof project.stairs)[index].finish.color = colors[index];
+      writeProjectScope(doc, next, previous); return Y.encodeStateAsUpdate(doc, vector);
+    });
+    docs.forEach((doc, index) => Y.applyUpdate(doc, updates[1 - index]));
+    const metadata = readProjectScope(docs[0]);
+    assert.deepEqual(metadata, readProjectScope(docs[1]));
+    const result = validateProjectDocument(assembleProject({ ...projectScopes(project), meta: metadata }));
+    assert.deepEqual(result.roofs.map(roof => roof.finish.color), colors);
+    assert.deepEqual(result.stairs.map(stair => stair.finish.color), colors);
+    assert.deepEqual(result.roofs.map(roof => roof.id), project.roofs.map(roof => roof.id));
+    assert.deepEqual(result.stairs.map(stair => stair.id), project.stairs.map(stair => stair.id));
+  } finally { for (const doc of [seed, ...docs]) doc.destroy(); }
 });
 
 function copies(room: ProjectLevel) {

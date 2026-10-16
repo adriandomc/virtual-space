@@ -13,7 +13,7 @@ import { createServer } from './server';
 import { createDefaultProject, projectToRoom, type ProjectDocument } from './projectDocument';
 import { patchProject } from './projectTestFixture';
 import { sameData } from './sameData';
-import { addLevel, removeLevel } from './projectOperations';
+import { addLevel, addRoof, addStair, removeLevel } from './projectOperations';
 import { LiveProject, type ProjectSnapshot } from './liveProject';
 
 const close = (server: Server) => new Promise<void>((accept, reject) => server.close(error => error ? reject(error) : accept()));
@@ -69,6 +69,53 @@ function observedProject(url: string, cookie: string, origin: string, loseFirstA
     destroy() { project.destroy(); for (const socket of sockets) socket.terminate(); },
   };
 }
+
+test('two editors preserve simultaneous finishes on roofs and stairs on different levels across restart', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'virtual-space-live-finishes-')), dataDir = join(directory, 'data');
+  let server = createServer({ dataDir, maintenance: false }), base = await listen(server);
+  const cookies: Record<string, string> = {};
+  const request = (path: string, username: string, method = 'GET', body?: unknown) => fetch(base + path, { method, headers: { Cookie: cookies[username] ?? '', Origin: base, 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+  let owner: ReturnType<typeof observedProject> | undefined, editor: ReturnType<typeof observedProject> | undefined, restored: ReturnType<typeof observedProject> | undefined;
+  try {
+    for (const username of ['roof_owner', 'roof_editor']) {
+      const registration = await request('/api/auth/register', username, 'POST', { username, password: 'Testing-password', confirmPassword: 'Testing-password', termsVersion: TERMS_VERSION });
+      assert.equal(registration.status, 201); cookies[username] = registration.headers.get('set-cookie')!.split(';')[0];
+    }
+    let project = addLevel(addLevel(createDefaultProject(), { copy: true }), { copy: true });
+    project = addRoof(project, project.levels[0].id);
+    project = addStair(project, { fromLevelId: project.levels[0].id, toLevelId: project.levels[1].id });
+    project = addStair(project, { fromLevelId: project.levels[1].id, toLevelId: project.levels[2].id });
+    const path = '/api/rooms/' + project.id;
+    assert.equal((await request('/api/rooms', 'roof_owner', 'POST', { id: project.id, project })).status, 201);
+    const invitation = (await (await request(path + '/members', 'roof_owner', 'POST', { username: 'roof_editor', role: 'editor' })).json()).members[0].id;
+    assert.equal((await request('/api/notifications/' + invitation + '/accept', 'roof_editor', 'POST', {})).status, 200);
+    owner = observedProject(base.replace('http:', 'ws:') + path + '/live', cookies.roof_owner, base);
+    editor = observedProject(base.replace('http:', 'ws:') + path + '/live', cookies.roof_editor, base);
+    owner.project.connect(); editor.project.connect();
+    await Promise.all([owner.wait(() => owner!.observation.connected), editor.wait(() => editor!.observation.connected)]);
+    const first = owner.observation.room!, second = editor.observation.room!, one = structuredClone(first), two = structuredClone(second);
+    one.roofs[0].finish = { color: '#112233', material: 'wood' }; one.stairs[0].finish = { color: '#445566', material: 'marble' };
+    two.roofs[1].finish = { color: '#aabbcc', material: 'marble' }; two.stairs[1].finish = { color: '#778899', material: 'wood' };
+    owner.project.change(one, first); editor.project.change(two, second);
+    await Promise.all([owner.wait(() => !owner!.observation.pending), editor.wait(() => !editor!.observation.pending)]);
+    const saved = await (await request(path, 'roof_owner')).json();
+    assert.deepEqual(saved.project.roofs.map((roof: ProjectDocument['roofs'][number]) => roof.finish), [one.roofs[0].finish, two.roofs[1].finish]);
+    assert.deepEqual(saved.project.stairs.map((stair: ProjectDocument['stairs'][number]) => stair.finish), [one.stairs[0].finish, two.stairs[1].finish]);
+    assert.equal(saved.revision, 3); assert.equal(saved.structureRevision, 1);
+    await Promise.all([owner.wait(() => sameData(owner!.observation.room, saved.project)), editor.wait(() => sameData(editor!.observation.room, saved.project))]);
+    assert.deepEqual(owner.observation.errors, []); assert.deepEqual(editor.observation.errors, []);
+    assert.equal(owner.observation.sends, 1); assert.equal(editor.observation.sends, 1);
+    owner.destroy(); owner = undefined; editor.destroy(); editor = undefined;
+    await close(server); server = createServer({ dataDir, maintenance: false }); base = await listen(server);
+    restored = observedProject(base.replace('http:', 'ws:') + path + '/live', cookies.roof_owner, base); restored.project.connect();
+    await restored.wait(() => restored!.observation.connected);
+    assert.deepEqual(restored.observation.room, saved.project); assert.deepEqual(restored.observation.errors, []);
+  } finally {
+    owner?.destroy(); editor?.destroy(); restored?.destroy(); await close(server);
+    assert.equal(dirname(resolve(directory)), resolve(tmpdir())); assert.ok(basename(directory).startsWith('virtual-space-live-finishes-'));
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test('el cliente combina ediciones, confirma guardado, recibe croquis y recupera una confirmación perdida', async t => {
   const directory = mkdtempSync(join(tmpdir(), 'virtual-space-live-client-')), server = createServer({ dataDir: join(directory, 'data'), maintenance: false }), base = await listen(server);
