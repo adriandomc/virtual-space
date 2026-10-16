@@ -1,4 +1,4 @@
-import { refreshOfflineMode, offlineFetch } from './offlineMode';
+import { refreshOfflineMode, offlineFetch, offlineForced } from './offlineMode';
 import { retireTestStorage } from './retiredStorage';
 
 type AppOfflineState = { ready: boolean; update: boolean; updating: boolean; error: string; installable: boolean; installed: boolean };
@@ -6,6 +6,7 @@ type InstallPrompt = Event & { prompt(): Promise<void>; userChoice: Promise<{ ou
 let state: AppOfflineState = { ready: false, update: false, updating: false, error: '', installable: false, installed: false };
 let registration: ServiceWorkerRegistration | undefined;
 let started: Promise<void> | undefined;
+let updateRequest: Promise<void> | undefined;
 let prompt: InstallPrompt | undefined;
 let freeze: { kind: 'update' | 'mode'; id: string } | undefined;
 let modeFreeze: { id: string; worker?: ServiceWorker } | undefined;
@@ -47,6 +48,7 @@ export function registerAppOffline() {
         return;
       }
       if (!['SPACE_SAVE_UPDATE', 'SPACE_SAVE_MODE'].includes(event.data?.type) || !event.ports[0]) return;
+      if (event.data.type === 'SPACE_SAVE_UPDATE' && offlineForced()) { event.ports[0].postMessage({ ready: false }); return; }
       const kind = event.data.type === 'SPACE_SAVE_MODE' ? 'mode' : 'update';
       if (freeze && (freeze.kind !== kind || freeze.id !== id)) { event.ports[0].postMessage({ ready: false }); return; }
       freeze = { kind, id };
@@ -57,6 +59,7 @@ export function registerAppOffline() {
       });
     });
     navigator.serviceWorker.addEventListener('controllerchange', () => {
+      publish({ update: !!registration?.waiting });
       if (freeze?.kind === 'update') window.location.reload();
       else if (navigator.serviceWorker.controller) void message(navigator.serviceWorker.controller, 'SPACE_STATUS').then(result => publish({ ready: !!result.ready })).catch(() => {});
     });
@@ -122,14 +125,18 @@ export async function releaseLocalSaveFreeze() {
   try { if (held.worker) await message(held.worker, 'SPACE_RELEASE_SAVED', held.id); }
   finally { try { await refreshOfflineMode(); } finally { unfreeze('mode', held.id); } }
 }
-export async function updateAppOffline() {
+export function updateAppOffline(): Promise<void> {
+  if (updateRequest) return updateRequest;
   const worker = registration?.waiting;
-  if (!worker || state.updating) return;
+  if (!worker || state.updating || offlineForced()) return Promise.resolve();
   publish({ error: '' });
-  try {
-    const result = await message(worker, 'SPACE_UPDATE');
-    if (result.error) throw new Error(result.error);
-  } catch (cause) { publish({ updating: false, error: cause instanceof Error ? cause.message : 'No se pudo actualizar.' }); }
+  updateRequest = (async () => {
+    try {
+      const result = await message(worker, 'SPACE_UPDATE');
+      if (result.error) throw new Error(result.error);
+    } catch (cause) { publish({ error: cause instanceof Error ? cause.message : 'No se pudo actualizar.' }); }
+  })().finally(() => { updateRequest = undefined; });
+  return updateRequest;
 }
 export async function installApp() {
   if (!prompt) return;
