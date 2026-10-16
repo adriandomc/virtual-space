@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createDefaultProject, projectToRoom, updateProjectRoom } from './projectDocument';
 import { addHole, addLevel, addRoom, movePoint } from './projectOperations';
 import { addFurniture } from './model';
-import { applyPlanMove, containingFloor, samePlanBase, type PlanMoveIntent } from './planDraft';
+import { applyPlanMove, containingFloor, planUpdateActivityReason, samePlanBase, type PlanMoveIntent } from './planDraft';
 
 test('resuming a pending move preserves current finishes and changes on other floors', () => {
   const base = addLevel(createDefaultProject(), { copy: true }), levelId = base.levels[0].id, vertex = base.levels[0].points[0];
@@ -37,4 +37,14 @@ test('a hole is placed into its containing floor region instead of the first flo
 test('object key order in a server acknowledgement is not a structural conflict', () => {
   const base = createDefaultProject(), reordered = JSON.parse(JSON.stringify(base), (_key, value: unknown) => value && typeof value === 'object' && !Array.isArray(value) ? Object.fromEntries(Object.entries(value).reverse()) : value);
   assert(samePlanBase(base, reordered, base.activeLevelId));
+});
+
+test('unfinished plan tools block an update synchronously, while a released valid move can flush', () => {
+  const idle = { points: 0, uploading: false, archived: 0, pointers: 0, dragging: false, pending: false, blocked: false };
+  assert.equal(planUpdateActivityReason(idle), '');
+  for (const active of [{ points: 1 }, { uploading: true }, { archived: 1 }, { pointers: 1 }, { dragging: true }]) {
+    assert.match(planUpdateActivityReason({ ...idle, ...active }), /borrador/);
+  }
+  assert.equal(planUpdateActivityReason({ ...idle, pending: true }), '', 'the update flush phase may persist a released valid movement');
+  assert.match(planUpdateActivityReason({ ...idle, pending: true, blocked: true }), /movimiento pendiente/);
 });

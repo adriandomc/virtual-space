@@ -16,8 +16,7 @@ const Privacy = React.lazy(() => import('./Privacy'));
 const Terms = React.lazy(() => import('./Terms'));
 const Help = React.lazy(() => import('./Help'));
 const route = siteRoute(new URL(window.location.href));
-if (route.page !== 'embed') registerAppOffline();
-else document.body.classList.add('embed-page');
+if (route.page === 'embed') document.body.classList.add('embed-page');
 const viewport = window.visualViewport;
 const syncViewportHeight = () => document.documentElement.style.setProperty('--app-height', Math.round(viewport && viewport.scale === 1 ? viewport.height : window.innerHeight) + 'px');
 viewport?.addEventListener('resize', syncViewportHeight);
@@ -29,9 +28,9 @@ if (route.redirect) window.location.replace(route.redirect);
 else {
  const root = ReactDOM.createRoot(document.getElementById('root')!);
  root.render(<main className="project-loading" aria-label={t('Cargando')}><LoaderCircle size={25} className="saving-spinner" /></main>);
- void (route.page === 'embed' ? Promise.resolve() : bootstrapOfflineMode()).then(() => root.render(
+ void (route.page === 'embed' ? Promise.resolve() : bootstrapOfflineMode()).then(() => { if (route.page !== 'embed') void registerAppOffline(); root.render(
   <React.StrictMode><AppRecovery><AppFrame><React.Suspense fallback={<main className="project-loading" aria-label={t('Cargando')}><LoaderCircle size={25} className="saving-spinner" /></main>}>
     {route.page === 'embed' ? <Embed /> : route.page === 'landing' ? <Landing /> : route.page === 'privacy' ? <Privacy /> : route.page === 'terms' ? <Terms /> : route.page === 'help' ? <Help /> : <AccountApp page={route.page} />}
   </React.Suspense></AppFrame></AppRecovery></React.StrictMode>,
- )).catch(() => root.render(<main className="project-loading"><p>{t('No se pudo abrir el almacenamiento de este dispositivo.')}</p><button className="primary-button" onClick={() => window.location.reload()}>{t('Reintentar')}</button></main>));
+ ); }).catch(() => root.render(<main className="project-loading"><p>{t('No se pudo abrir el almacenamiento de este dispositivo.')}</p><button className="primary-button" onClick={() => window.location.reload()}>{t('Reintentar')}</button></main>));
 }

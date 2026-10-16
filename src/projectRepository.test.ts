@@ -10,6 +10,7 @@ import { WebSocket } from 'ws';
 import * as Y from 'yjs';
 import { createAuth } from './auth';
 import { createLiveCollaboration, type RoomRow } from './collaborationServer';
+import { createProjectCommands } from './projectCommandService';
 import { createDefaultProject, validateProjectDocument, type ProjectDocument } from './projectDocument';
 import { addLevel } from './projectOperations';
 import { clearProjectCache, confirmProject, projectCacheStats, projectMutationHashPayload, readProject, seedProjectStates, stringifyProjectPayload, writeProject } from './projectRepository';
@@ -24,11 +25,12 @@ function fixture() {
   let project = createDefaultProject(); for (let i = 1; i < 12; i++) project = addLevel(project, { copy: true });
   insertTestRoom(database, project.id, owner, { room: JSON.stringify(project) });
   database.exec('BEGIN IMMEDIATE'); seedProjectStates(database, project); database.exec('COMMIT');
-  const live = createLiveCollaboration({ database, auth: createAuth(database, { secureCookie: false }), now: () => now, identify: () => ({ ip: '127.0.0.1', fromProxy: false }),
+  const commands = createProjectCommands({ database, now: () => now, quotas: { designs: 50, bytes: 500 * 1024 * 1024 }, find: id => database.prepare('SELECT * FROM rooms WHERE id=?').get(id) as RoomRow | undefined, canEdit: (_id, userId) => userId === owner, validateReferences: () => {}, eraseSketches: (_id, _entries, erase) => erase() });
+  const live = createLiveCollaboration({ database, commands, auth: createAuth(database, { secureCookie: false }), now: () => now, identify: () => ({ ip: '127.0.0.1', fromProxy: false }),
     find: id => database.prepare('SELECT * FROM rooms WHERE id=?').get(id) as RoomRow | undefined,
-    snapshot: row => ({ id: row.id, revision: row.revision, project: readProject(database, row.id) }), readJson: async () => ({}), sendJson: () => {}, eraseMember: (_id, erase) => erase(), eraseSketches: (_id, _entries, erase) => erase(), validateReferences: () => {},
+    snapshot: row => ({ id: row.id, revision: row.revision, project: readProject(database, row.id) }), readJson: async () => ({}), sendJson: () => {}, eraseMember: (_id, erase) => erase(),
   });
-  return { database, owner, project, now, live, close() { live.close(); database.close(); } };
+  return { database, owner, project, now, live, commands, close() { live.close(); database.close(); } };
 }
 
 test('a warm twelve-level REST save reads, writes and encodes only the changed level', context => {
@@ -51,7 +53,7 @@ test('a warm twelve-level REST save reads, writes and encodes only the changed l
       if (value && typeof value === 'object' && 'points' in value && 'id' in value && untouched.has(String(value.id))) encodedUntouched.push(String(value.id));
       return Reflect.apply(stringify, JSON, [value, ...args]);
     }) as typeof JSON.stringify);
-    const saved = live.putProject(project.id, validated, 1, owner, randomUUID());
+    const saved = sample.commands.putProject(project.id, validated, 1, owner, randomUUID());
     assert.equal(saved.revision, 2);
     const stored = readProject(database, project.id);
     assert.equal(stored.levels[5].walls[0].left.color, '#112233');
@@ -99,14 +101,14 @@ test('failed scoped commits cannot poison canonical cache, receipts or later ret
   try {
     const previous = readProject(database, project.id), next = structuredClone(previous), operationId = randomUUID(); next.levels[5].name = 'Changed floor';
     database.exec("CREATE TRIGGER reject_receipt BEFORE INSERT ON mutation_receipts BEGIN SELECT RAISE(ABORT, 'isolated rollback'); END;");
-    assert.throws(() => live.putProject(project.id, next, 1, owner, operationId), /isolated rollback/);
+    assert.throws(() => sample.commands.putProject(project.id, next, 1, owner, operationId), /isolated rollback/);
     assert.equal(readProject(database, project.id), previous);
     assert.equal(database.prepare('SELECT revision FROM rooms WHERE id=?').get(project.id)!.revision, 1);
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM mutation_receipts').get()!.count, 0);
     database.exec('DROP TRIGGER reject_receipt;');
-    assert.equal(live.putProject(project.id, next, 1, owner, operationId).revision, 2);
+    assert.equal(sample.commands.putProject(project.id, next, 1, owner, operationId).revision, 2);
     assert.equal(readProject(database, project.id).levels[5].name, 'Changed floor');
-    assert.equal(live.putProject(project.id, next, 1, owner, operationId).revision, 2, 'lost acknowledgements remain idempotent');
+    assert.equal(sample.commands.putProject(project.id, next, 1, owner, operationId).revision, 2, 'lost acknowledgements remain idempotent');
     database.exec('BEGIN IMMEDIATE');
     const pending = structuredClone(readProject(database, project.id)); pending.name = 'Uncommitted'; writeProject(database, pending, new Set(['meta']));
     assert.equal(readProject(database, project.id).name, 'Uncommitted');

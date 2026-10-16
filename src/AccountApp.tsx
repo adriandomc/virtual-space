@@ -1,5 +1,5 @@
 import { t, useLocale } from './i18n';
-import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from 'react';
 import { Box, Copy, Eye, EyeOff, LoaderCircle, LogOut, Plus, Trash2 } from 'lucide-react';
 import Brand from './Brand';
 import Notifications from './Notifications';
@@ -13,6 +13,7 @@ import { TERMS_VERSION } from './legalPolicy';
 import { accountRedirect, DESIGNS_PATH, editorPath, LOGIN_PATH, type SitePage } from './routes';
 import InformationMenu from './InformationMenu';
 import LanguageSelector from './LanguageSelector';
+import { appVersion, assertCurrentAppVersion, registerAppActivity, setAppUpdateReady, subscribeAppVersion } from './appActivity';
 import './account.css';
 
 const RoomEditor = lazy(() => import('./App'));
@@ -39,6 +40,8 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
   const [acceptTerms, setAcceptTerms] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
+  const editingCredentials = useRef(false); editingCredentials.current = !!(username || password || confirmPassword || pending);
+  useEffect(() => registerAppActivity(() => editingCredentials.current ? 'Termina o cancela el campo que estás editando antes de continuar.' : false), []);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (pending) return;
@@ -71,6 +74,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
 
 export default function AccountApp({ page }: { page: Exclude<SitePage, 'landing' | 'privacy' | 'terms' | 'help'> }) {
   const locale = useLocale();
+  const version = useSyncExternalStore(subscribeAppVersion, appVersion);
   const forced = useOfflineMode();
   const [user, setUser] = useState<User | null>(null);
   const [loadingSession, setLoadingSession] = useState(true);
@@ -86,6 +90,8 @@ export default function AccountApp({ page }: { page: Exclude<SitePage, 'landing'
   const pendingAccount = useRef<string | null>(null);
   const libraryGeneration = useRef(0);
   pendingAccount.current = pending;
+  useEffect(() => registerAppActivity(() => pendingAccount.current ? 'Espera a que termine la operación actual.' : false), []);
+  useEffect(() => { if (page === 'editor') return; setAppUpdateReady(!loadingSession && !loadingDesigns); return () => setAppUpdateReady(false); }, [page, loadingSession, loadingDesigns]);
   const creationId = useRef<string | null>(null);
   const roomId = new URL(window.location.href).searchParams.get('room');
 
@@ -153,6 +159,7 @@ export default function AccountApp({ page }: { page: Exclude<SitePage, 'landing'
     setPending('create'); setError('');
     creationId.current ??= crypto.randomUUID();
     try {
+      assertCurrentAppVersion();
       const initialRoom = createBlankProject(t('Mi diseño'), t('Luz principal'), t('Planta baja'));
       initialRoom.id = creationId.current!;
       let result: { id: string };
@@ -198,11 +205,11 @@ export default function AccountApp({ page }: { page: Exclude<SitePage, 'landing'
   if (sessionError) return <main className="account-page account-loading"><p className="account-error" role="alert">{t(sessionError)}</p><button className="account-secondary" onClick={() => setSessionAttempt(current => current + 1)}>{t("Reintentar")}</button></main>;
   if (!user || signingIn) return <AuthScreen onAuthenticated={next => { void rememberOfflineIdentity(next).catch(() => {}).finally(() => window.location.replace(DESIGNS_PATH)); }} />;
   return <main className="account-page library-page"><header className="account-header"><Brand /><div><span className="account-username">{user.username}</span>{!forced && !offline && <Notifications onAccepted={() => setLibraryAttempt(current => current + 1)} />}<OfflineSettings /><InformationMenu /><button type="button" className="account-secondary" aria-label={t("Cerrar sesión")} disabled={!!pending} onClick={() => void logout()}><LogOut size={17} /><span>{t("Cerrar sesión")}</span></button></div></header>
-    <section className="design-library" aria-labelledby="designs-title"><div className="library-heading"><h1 id="designs-title">{t("Mis diseños")}</h1><button type="button" className="account-primary" disabled={!!pending} onClick={() => void createDesign()}>{pending === 'create' ? <LoaderCircle size={17} className="saving-spinner" /> : <Plus size={19} />}{t("Nuevo diseño")}</button></div>
+    <section className="design-library" aria-labelledby="designs-title"><div className="library-heading"><h1 id="designs-title">{t("Mis diseños")}</h1><button type="button" className="account-primary" disabled={!!pending || version !== 'current'} onClick={() => void createDesign()}>{pending === 'create' ? <LoaderCircle size={17} className="saving-spinner" /> : <Plus size={19} />}{t("Nuevo diseño")}</button></div>
       {offline && <p className="account-note" role="status">{t("Sin conexión · Diseños disponibles en este dispositivo")}</p>}
       {reauthenticate && !forced && <p className="account-note">{t("Tu sesión venció. Puedes seguir trabajando aquí.")} <a href="/login?reauth=1">{t("Inicia sesión para sincronizar")}</a>.</p>}
       {error && <div className="library-error"><p className="account-error" role="alert">{t(error)}</p><button type="button" className="account-secondary" disabled={!!pending} onClick={() => setLibraryAttempt(current => current + 1)}>{t("Reintentar")}</button></div>}
-      {loadingDesigns ? <div className="library-empty" aria-label={t("Cargando diseños")}><LoaderCircle size={23} className="saving-spinner" /></div> : designs.length ? <ul className="design-list">{designs.map(design => <li key={design.id}><a href={editorPath(design.id, design.role === 'owner' && design.setupStep !== undefined)} className="design-open"><span className="design-icon"><Box size={27} strokeWidth={1.3} /></span><span><strong>{design.name}</strong>{design.role !== 'owner' && <span className="design-progress">{t("Compartido ·")} {design.role === 'editor' ? t("Editor") : t("Lector")}</span>}{design.role === 'owner' && design.setupStep !== undefined ? <span className="design-progress">{t("Continuar preparación")}</span> : <time dateTime={new Date(design.updatedAt).toISOString()}>{new Date(design.updatedAt).toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric' })}</time>}</span></a>{(design.offlineAllowed === false || design.offline) && <button type="button" className="design-delete" aria-label={t('Crear copia personal de {{name}}', { name: design.name })} title={t("Crear copia personal para usar sin conexión")} disabled={!!pending || (design.offlineAllowed === false && (forced || offline))} onClick={() => void personalCopy(design)}><Copy size={19} /></button>}{design.role === 'owner' && <button type="button" className="design-delete" aria-label={t('Eliminar {{name}}', { name: design.name })} disabled={!!pending} onClick={() => void deleteDesign(design)}>{pending === design.id ? <LoaderCircle size={19} className="saving-spinner" /> : <Trash2 size={19} />}</button>}</li>)}</ul> : !error && <p className="library-empty">{t("Sin diseños")}</p>}
+      {loadingDesigns ? <div className="library-empty" aria-label={t("Cargando diseños")}><LoaderCircle size={23} className="saving-spinner" /></div> : designs.length ? <ul className="design-list">{designs.map(design => <li key={design.id}><a href={editorPath(design.id, design.role === 'owner' && design.setupStep !== undefined)} className="design-open"><span className="design-icon"><Box size={27} strokeWidth={1.3} /></span><span><strong>{design.name}</strong>{design.role !== 'owner' && <span className="design-progress">{t("Compartido ·")} {design.role === 'editor' ? t("Editor") : t("Lector")}</span>}{design.role === 'owner' && design.setupStep !== undefined ? <span className="design-progress">{t("Continuar preparación")}</span> : <time dateTime={new Date(design.updatedAt).toISOString()}>{new Date(design.updatedAt).toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric' })}</time>}</span></a>{(design.offlineAllowed === false || design.offline) && <button type="button" className="design-delete" aria-label={t('Crear copia personal de {{name}}', { name: design.name })} title={t("Crear copia personal para usar sin conexión")} disabled={!!pending || version !== 'current' || (design.offlineAllowed === false && (forced || offline))} onClick={() => void personalCopy(design)}><Copy size={19} /></button>}{design.role === 'owner' && <button type="button" className="design-delete" aria-label={t('Eliminar {{name}}', { name: design.name })} disabled={!!pending || version !== 'current'} onClick={() => void deleteDesign(design)}>{pending === design.id ? <LoaderCircle size={19} className="saving-spinner" /> : <Trash2 size={19} />}</button>}</li>)}</ul> : !error && <p className="library-empty">{t("Sin diseños")}</p>}
     </section>
   </main>;
 }

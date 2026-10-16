@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { ArrowLeft, Box, Download, LoaderCircle, Plus, RefreshCw, Trash2, Upload } from 'lucide-react';
 import { copyModel, deleteModel, listModels, uploadModel, type ModelAsset } from './customModel';
 import { loadLibraryModelBlob } from './offlineAssets';
+import { assertCurrentAppVersion, beginAppActivity, registerAppActivity } from './appActivity';
 import './modelLibrary.css';
 
 type Props = { roomId: string; canManage?: boolean; disabled?: boolean; onSelect: (asset: ModelAsset) => void; onCreate: () => void; onBack?: () => void };
@@ -14,6 +15,8 @@ export default function ModelLibrary(props: Props) {
   const [models, setModels] = useState<ModelAsset[]>([]);
   const [scope, setScope] = useState<'room' | 'mine'>('room');
   const [loading, setLoading] = useState(true), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const pending = useRef(false); pending.current = busy;
+  useEffect(() => registerAppActivity(() => pending.current ? 'Espera a que termine la operación actual.' : false), []);
   const refresh = async () => {
     const sequence = ++requestId.current;
     setLoading(true); setError('');
@@ -27,36 +30,43 @@ export default function ModelLibrary(props: Props) {
   }, [roomId, scope]);
   const select = async (asset: ModelAsset) => {
     if (disabled || busy) return;
+    try { assertCurrentAppVersion(); } catch (cause) { setError((cause as Error).message); return; }
     if (!asset.roomId || asset.roomId === roomId) { onSelect(asset); return; }
+    const release = beginAppActivity();
     setBusy(true); setError('');
     try {
       const copy = await copyModel(asset, roomId);
       if (active.current && latest.current.roomId === roomId && !latest.current.disabled) latest.current.onSelect(copy);
     } catch (cause) { if (active.current && latest.current.roomId === roomId) setError(cause instanceof Error ? cause.message : "No se pudo copiar el modelo."); }
-    finally { if (active.current && latest.current.roomId === roomId) setBusy(false); }
+    finally { release(); if (active.current && latest.current.roomId === roomId) setBusy(false); }
   };
   const upload = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]; event.target.value = '';
     if (!file || disabled || busy || loading) return;
+    const release = beginAppActivity();
     setBusy(true); setError('');
     try {
+      assertCurrentAppVersion();
       const asset = await uploadModel(file, roomId);
       if (active.current && latest.current.roomId === roomId) {
         setModels(items => [asset, ...items]);
         if (!latest.current.disabled) latest.current.onSelect(asset);
       }
     } catch (cause) { if (active.current && latest.current.roomId === roomId) setError(cause instanceof Error ? cause.message : "No se pudo subir el modelo."); }
-    finally { if (active.current && latest.current.roomId === roomId) setBusy(false); }
+    finally { release(); if (active.current && latest.current.roomId === roomId) setBusy(false); }
   };
   const remove = async (asset: ModelAsset) => {
     if (disabled || busy || !canManage || !window.confirm(t('¿Eliminar «{{name}}»? Esta acción no se puede deshacer.', { name: asset.name }))) return;
+    const release = beginAppActivity();
     setBusy(true); setError('');
     try { await deleteModel(asset.id); if (active.current) setModels(items => items.filter(item => item.id !== asset.id)); }
     catch (cause) { if (active.current) setError(cause instanceof Error ? cause.message : "No se pudo eliminar el modelo."); }
-    finally { if (active.current) setBusy(false); }
+    finally { release(); if (active.current) setBusy(false); }
   };
+  const create = () => { try { assertCurrentAppVersion(); onCreate(); } catch (cause) { setError((cause as Error).message); } };
   const download = async (asset: ModelAsset) => {
     if (busy) return;
+    const release = beginAppActivity();
     setBusy(true); setError('');
     try {
       const blob = await loadLibraryModelBlob(asset, roomId);
@@ -65,12 +75,12 @@ export default function ModelLibrary(props: Props) {
       anchor.href = url; anchor.download = asset.name + '.glb'; anchor.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (cause) { if (active.current) setError(cause instanceof Error ? cause.message : "No se pudo descargar el modelo."); }
-    finally { if (active.current) setBusy(false); }
+    finally { release(); if (active.current) setBusy(false); }
   };
   return <section className="model-library" aria-label={t('Mis modelos')}>
     <div className="model-library-heading">{onBack && <button type="button" onClick={onBack} aria-label={t('Volver')} className="model-library-icon"><ArrowLeft size={20} /></button>}<h3>{t('Modelos')}</h3><button type="button" onClick={() => void refresh()} disabled={busy || loading} aria-label={t('Actualizar modelos')} className="model-library-icon"><RefreshCw size={18} /></button></div>
     <div className="model-library-tabs" aria-label={t('Biblioteca de modelos')}><button type="button" aria-pressed={scope === 'room'} disabled={busy} onClick={() => setScope('room')}>{t('Este diseño')}</button><button type="button" aria-pressed={scope === 'mine'} disabled={busy} onClick={() => setScope('mine')}>{t('Mis modelos')}</button></div>
-    <div className="model-library-actions"><button type="button" onClick={() => fileInput.current?.click()} disabled={disabled || busy || loading}><Upload size={18} />{busy ? t('Guardando…') : t('Subir modelo')}</button><button type="button" onClick={onCreate} disabled={disabled || busy}><Plus size={18} />{t('Crear modelo')}</button></div>
+    <div className="model-library-actions"><button type="button" onClick={() => fileInput.current?.click()} disabled={disabled || busy || loading}><Upload size={18} />{busy ? t('Guardando…') : t('Subir modelo')}</button><button type="button" onClick={create} disabled={disabled || busy}><Plus size={18} />{t('Crear modelo')}</button></div>
     <span className="model-library-filetype">.glb · 20 MB</span>
     <input ref={fileInput} type="file" accept=".glb,model/gltf-binary" onChange={event => void upload(event)} hidden disabled={disabled || busy || loading} aria-label={t('Subir modelo GLB')} />
     {error && <p className="model-library-error" role="alert">{t(error)}<button type="button" onClick={() => void refresh()} disabled={busy || loading}>{t('Reintentar')}</button></p>}

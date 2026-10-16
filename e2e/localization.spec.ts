@@ -140,6 +140,7 @@ test('mobile settings and Information lead to an English setup, editor and model
   await expect(workshop.getByRole('button', { name: 'Snap', exact: true })).toBeVisible();
   await expect(workshop.getByRole('button', { name: 'Save model', exact: true })).toBeEnabled();
   await workshop.getByRole('button', { name: 'Close model editor', exact: true }).click();
+  await page.getByRole('button', { name: 'Discard changes', exact: true }).click();
   dialog = await settings(page, 'en');
   await expect(dialog.getByRole('combobox', { name: 'Language', exact: true })).toHaveValue('en');
   await dialog.getByRole('combobox', { name: 'Language', exact: true }).selectOption('es');

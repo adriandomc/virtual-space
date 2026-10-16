@@ -1,5 +1,8 @@
 import { refreshOfflineMode, offlineFetch, offlineForced } from './offlineMode';
 import { retireTestStorage } from './retiredStorage';
+import { appActivityReason, appStartupIdle, setAppVersion, subscribeAppStartup } from './appActivity';
+import { hasStoredOfflineChanges } from './offlinePending';
+export { registerAppActivity, beginAppActivity, setAppUpdateReady } from './appActivity';
 
 type AppOfflineState = { ready: boolean; update: boolean; updating: boolean; error: string; installable: boolean; installed: boolean };
 type InstallPrompt = Event & { prompt(): Promise<void>; userChoice: Promise<{ outcome: string }> };
@@ -10,6 +13,8 @@ let updateRequest: Promise<void> | undefined;
 let prompt: InstallPrompt | undefined;
 let freeze: { kind: 'update' | 'mode'; id: string } | undefined;
 let modeFreeze: { id: string; worker?: ServiceWorker } | undefined;
+let reloadRequired = false;
+const build = import.meta.env?.VITE_BUILD_ID;
 const listeners = new Set<() => void>();
 const guards = new Map<() => Promise<void>, 'flush' | 'durable'>();
 const publish = (patch: Partial<AppOfflineState>) => { state = { ...state, ...patch }; listeners.forEach(listener => listener()); };
@@ -17,18 +22,22 @@ export const getAppOfflineState = () => state;
 export function subscribeAppOffline(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; }
 export function registerBeforeAppUpdate(guard: () => Promise<void>, phase: 'flush' | 'durable' = 'flush') { guards.set(guard, phase); return () => { guards.delete(guard); }; }
 export async function confirmLocalSaved() {
-  for (const phase of ['flush', 'durable']) await Promise.all([...guards].filter(([, value]) => value === phase).map(([guard]) => guard()));
+  const reason = appActivityReason(); if (reason) throw new Error(reason);
+  for (const phase of ['flush', 'durable']) {
+    await Promise.all([...guards].filter(([, value]) => value === phase).map(([guard]) => guard()));
+    const pending = appActivityReason(); if (pending) throw new Error(pending);
+  }
 }
 function unfreeze(kind: 'update' | 'mode', id: string) {
   if (freeze?.kind !== kind || freeze.id !== id) return;
   freeze = undefined; publish({ updating: false });
 }
-function message(worker: ServiceWorker, type: string, id: string = crypto.randomUUID()): Promise<{ ready?: boolean; error?: string }> {
+function message(worker: ServiceWorker, type: string, id: string = crypto.randomUUID(), automatic = false): Promise<{ ready?: boolean; error?: string; build?: string }> {
   return new Promise((resolve, reject) => {
     const channel = new MessageChannel();
     const timer = setTimeout(() => { channel.port1.close(); reject(new Error('No se pudo verificar la aplicación. Cierra las otras pestañas y vuelve a intentarlo.')); }, type === 'SPACE_PREPARE' || type === 'SPACE_UPDATE' ? 120000 : 25000);
     channel.port1.onmessage = event => { clearTimeout(timer); channel.port1.close(); resolve(event.data); };
-    worker.postMessage({ type, id }, [channel.port2]);
+    worker.postMessage({ type, id, automatic, build }, [channel.port2]);
   });
 }
 export function registerAppOffline() {
@@ -36,6 +45,7 @@ export function registerAppOffline() {
   started = (async () => {
     if (!import.meta.env?.PROD) { publish({ ready: true }); return; }
     if (!('serviceWorker' in navigator)) throw new Error('Este navegador no permite preparar la aplicación sin conexión.');
+    setAppVersion(navigator.serviceWorker.controller ? 'checking' : 'current');
     publish({ installed: window.matchMedia('(display-mode: standalone)').matches || !!(navigator as Navigator & { standalone?: boolean }).standalone });
     window.addEventListener('beforeinstallprompt', event => { event.preventDefault(); prompt = event as InstallPrompt; publish({ installable: true }); });
     window.addEventListener('appinstalled', () => { prompt = undefined; publish({ installed: true, installable: false }); });
@@ -49,11 +59,21 @@ export function registerAppOffline() {
       }
       if (!['SPACE_SAVE_UPDATE', 'SPACE_SAVE_MODE'].includes(event.data?.type) || !event.ports[0]) return;
       if (event.data.type === 'SPACE_SAVE_UPDATE' && offlineForced()) { event.ports[0].postMessage({ ready: false }); return; }
+      if (event.data.automatic && !appStartupIdle()) { event.ports[0].postMessage({ ready: false }); return; }
+      // A modal freeze would blur and validate the field before an asynchronous rejection.
+      const reason = appActivityReason();
+      if (reason) { publish({ error: reason }); event.ports[0].postMessage({ ready: false }); return; }
       const kind = event.data.type === 'SPACE_SAVE_MODE' ? 'mode' : 'update';
       if (freeze && (freeze.kind !== kind || freeze.id !== id)) { event.ports[0].postMessage({ ready: false }); return; }
       freeze = { kind, id };
-      publish({ updating: true, error: '' });
-      void confirmLocalSaved().then(() => event.ports[0].postMessage({ ready: true })).catch(cause => {
+      // Delayed handshakes must not erase a rejection already delivered through another port.
+      publish({ updating: true });
+      void (async () => {
+        if (event.data.automatic && await hasStoredOfflineChanges()) throw new Error('Hay cambios pendientes. Actualiza cuando termines de trabajar.');
+        await confirmLocalSaved();
+        if (event.data.automatic && !appStartupIdle()) throw new Error('Continúa trabajando. Puedes actualizar después.');
+        event.ports[0].postMessage({ ready: true, automaticSafe: true });
+      })().catch(cause => {
         unfreeze(kind, id); publish({ error: cause instanceof Error ? cause.message : 'Guarda los cambios antes de continuar.' });
         event.ports[0].postMessage({ ready: false });
       });
@@ -61,24 +81,41 @@ export function registerAppOffline() {
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       publish({ update: !!registration?.waiting });
       if (freeze?.kind === 'update') window.location.reload();
-      else if (navigator.serviceWorker.controller) void message(navigator.serviceWorker.controller, 'SPACE_STATUS').then(result => publish({ ready: !!result.ready })).catch(() => {});
+      else if (navigator.serviceWorker.controller) {
+        setAppVersion('checking');
+        void inspectController().catch(() => { reloadRequired = true; setAppVersion('outdated'); publish({ update: true }); });
+      }
     });
-    registration = await navigator.serviceWorker.register('/service-worker.js', { scope: '/', updateViaCache: 'none' });
-    const verify = async () => {
-      const active = registration?.active;
-      if (!active) return;
-      const result = await message(active, 'SPACE_STATUS');
-      publish({ ready: !!result.ready, ...(result.ready ? { error: '' } : {}) });
-    };
+    await refreshOfflineMode();
+    if (offlineForced()) registration = await navigator.serviceWorker.getRegistration('/');
+    else {
+      try { registration = await navigator.serviceWorker.register('/service-worker.js', { scope: '/', updateViaCache: 'none' }); }
+      catch (cause) {
+        // A failed network update check says nothing about the already installed worker's build.
+        registration = await navigator.serviceWorker.getRegistration('/').catch(() => undefined);
+        if (!registration) {
+          const controller = navigator.serviceWorker.controller;
+          if (!controller) throw cause;
+          await inspectController(controller); return;
+        }
+      }
+    }
+    if (!registration) {
+      if (navigator.serviceWorker.controller) { reloadRequired = true; setAppVersion('outdated'); publish({ update: true }); }
+      return;
+    }
+    const verify = () => inspectController();
     const check = () => {
-      publish({ update: !!registration?.waiting });
+      publish({ update: !!registration?.waiting || reloadRequired });
+      void automaticUpdate();
       const worker = registration?.installing;
       worker?.addEventListener('statechange', () => {
-        if (worker.state === 'installed') { publish({ update: !!registration?.waiting }); void verify(); }
+        if (worker.state === 'installed') { publish({ update: !!registration?.waiting || reloadRequired }); void verify(); void automaticUpdate(); }
         if (worker.state === 'redundant') publish({ error: 'No se pudo descargar la aplicación completa. Inténtalo de nuevo con conexión.' });
       });
     };
     registration.addEventListener('updatefound', check); check();
+    subscribeAppStartup(() => { void automaticUpdate(); });
     await verify();
     // The server publishes this gate only after its explicit one-time test-data reset.
     // Forced mode and failed requests leave every old database untouched.
@@ -90,7 +127,7 @@ export function registerAppOffline() {
     } catch (cause) {
       if (cause instanceof Error && cause.message.includes('datos de prueba')) publish({ error: cause.message });
     }
-  })().catch(cause => { started = undefined; publish({ error: cause instanceof Error ? cause.message : 'No se pudo preparar la aplicación.' }); });
+  })().catch(cause => { started = undefined; if (!navigator.serviceWorker?.controller) setAppVersion('current'); else { reloadRequired = true; setAppVersion('outdated'); } publish({ update: reloadRequired, error: cause instanceof Error ? cause.message : 'No se pudo preparar la aplicación.' }); });
   return started;
 }
 export async function waitForAppOffline(): Promise<void> {
@@ -102,10 +139,26 @@ export async function waitForAppOffline(): Promise<void> {
   const result = await message(worker, 'SPACE_PREPARE'); publish({ ready: !!result.ready, error: result.error ?? '' });
   if (!result.ready) throw new Error(result.error || 'Faltan recursos de la aplicación. Vuelve a preparar la copia con conexión.');
 }
-export async function checkAppUpdate() { await registration?.update(); }
+async function inspectController(worker = navigator.serviceWorker.controller ?? registration?.active) {
+  if (!worker) return;
+  const result = await message(worker, 'SPACE_STATUS');
+  if (worker !== (navigator.serviceWorker.controller ?? registration?.active)) return;
+  reloadRequired = !!(build && (result.build ? result.build !== build : navigator.serviceWorker.controller));
+  setAppVersion(reloadRequired ? 'outdated' : 'current');
+  publish({ ready: !!result.ready, update: !!registration?.waiting || reloadRequired });
+  void message(worker, 'SPACE_HELLO').catch(() => {});
+  if (reloadRequired) void automaticUpdate();
+}
+async function automaticUpdate() {
+  if (!appStartupIdle() || !navigator.onLine || offlineForced() || !state.update || state.updating || updateRequest) return;
+  try { if (await hasStoredOfflineChanges() || !appStartupIdle()) return; await updateAppOffline(true); }
+  catch { /* Keep the running application when local availability cannot be verified. */ }
+}
+export async function checkAppUpdate() { if (!offlineForced()) await registration?.update(); }
 export async function confirmAllLocalSaved() {
   await registerAppOffline();
   if (state.updating) throw new Error('Espera a que termine la operación actual.');
+  const reason = appActivityReason(); if (reason) throw new Error(reason);
   const id = crypto.randomUUID();
   const worker = typeof navigator !== 'undefined' ? navigator.serviceWorker?.controller ?? registration?.active ?? undefined : undefined;
   modeFreeze = { id, worker }; freeze = { kind: 'mode', id }; publish({ updating: true, error: '' });
@@ -125,15 +178,25 @@ export async function releaseLocalSaveFreeze() {
   try { if (held.worker) await message(held.worker, 'SPACE_RELEASE_SAVED', held.id); }
   finally { try { await refreshOfflineMode(); } finally { unfreeze('mode', held.id); } }
 }
-export function updateAppOffline(): Promise<void> {
+export function updateAppOffline(automatic = false): Promise<void> {
   if (updateRequest) return updateRequest;
   const worker = registration?.waiting;
-  if (!worker || state.updating || offlineForced()) return Promise.resolve();
+  if ((!worker && !reloadRequired) || state.updating || offlineForced()) return Promise.resolve();
   publish({ error: '' });
   updateRequest = (async () => {
     try {
-      const result = await message(worker, 'SPACE_UPDATE');
-      if (result.error) throw new Error(result.error);
+      if (!worker) {
+        const reason = appActivityReason(); if (reason) throw new Error(reason);
+        const id = crypto.randomUUID(); freeze = { kind: 'update', id }; publish({ updating: true });
+        try {
+          await confirmLocalSaved();
+          const pending = automatic && await hasStoredOfflineChanges();
+          if (offlineForced() || automatic && (pending || !appStartupIdle())) return;
+          window.location.reload(); return;
+        } finally { unfreeze('update', id); }
+      }
+      const result = await message(worker, 'SPACE_UPDATE', crypto.randomUUID(), automatic);
+      if (result.error || !result.ready) throw new Error(result.error || 'Guarda los cambios de las otras pestañas antes de continuar.');
     } catch (cause) { publish({ error: cause instanceof Error ? cause.message : 'No se pudo actualizar.' }); }
   })().finally(() => { updateRequest = undefined; });
   return updateRequest;

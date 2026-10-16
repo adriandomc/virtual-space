@@ -5,13 +5,15 @@ import { IDBObjectStore } from 'fake-indexeddb';
 import { createBlankProject } from './onboardingModel';
 import { offlineForced, setOfflineMode } from './offlineMode';
 import { accountRequest } from './accountApi';
-import { atomicOffline, clearOffline, listOffline, readOffline, setOfflineAccess, writeOffline } from './offlineStorage';
+import { atomicOffline, clearOffline, listOffline, listOfflineKeys, readOffline, setOfflineAccess, writeOffline } from './offlineStorage';
 import { readOfflineProject, type OfflineProjectRecord } from './offlineProject';
-import { assertRoomReadyToShare, createDesignLocal, clearOfflineAccount, deleteDesign, exportOfflineProject, importOfflineProject, listDesigns, pendingOfflineCount, persistOfflineProject, roomHasOfflineChanges, syncOfflineAccount } from './offlineService';
+import { assertRoomReadyToShare, copyDesign, createDesignLocal, clearOfflineAccount, deleteDesign, exportOfflineProject, importOfflineProject, listDesigns, pendingOfflineCount, persistOfflineProject, roomHasOfflineChanges, syncOfflineAccount } from './offlineService';
+import { appActivityReason, setAppVersion } from './appActivity';
 import { listOfflineModels, uploadOfflineModel, type OfflineAssetRecord } from './offlineAssets';
 import { addLevel } from './projectOperations';
 import { patchProject, snapshotFixture } from './projectTestFixture';
 import type { ProjectSnapshot } from './liveProject';
+import { syncOfflineAccount as syncQueue } from './offline/sync';
 
 const user = { id: '031f3902-316e-4233-931b-6e3776ba8ae6', username: 'pruebas', verifiedAt: 1700000000000 };
 function glb() {
@@ -47,8 +49,23 @@ test('forced mode creates, reloads, lists, imports and exports without any API r
   } finally { globalThis.fetch = fetch; await setOfflineMode(false); }
 });
 
+test('unchecked or outdated pages cannot start mutations but retain local saving, reading and export', async () => {
+  await reset(); await force(); const { id } = await createDesignLocal(), record = (await readOfflineProject(id))!;
+  const backup = await exportOfflineProject(id);
+  try {
+    for (const version of ['checking', 'outdated'] as const) {
+      setAppVersion(version);
+      await assert.rejects(createDesignLocal()); await assert.rejects(copyDesign(id)); await assert.rejects(deleteDesign(id)); await assert.rejects(importOfflineProject(id, backup));
+      record.draft = { ...record.draft!, name: 'Durable work from before ' + version }; await persistOfflineProject(record);
+      assert.equal((await listDesigns()).length, 1); assert.equal((await exportOfflineProject(id)).project.name, record.draft.name);
+      assert.equal((await readOfflineProject(id))?.draft?.name, record.draft.name); assert.equal(await pendingOfflineCount(), 1);
+    }
+  } finally { setAppVersion('current'); await setOfflineMode(false); }
+});
+
 test('atomic import rolls back assets, room and sketch when its final write fails', async () => {
   await reset(); await force(); const { id } = await createDesignLocal();
+  const levels = await listOfflineKeys('levels');
   const assetId = crypto.randomUUID(), blob = glb();
   const room = patchProject(createBlankProject(), { name: 'Imported', furniture: [{ id: 'piece', type: 'custom' as const, assetId, name: 'Tabla', material: null, color: null, width: 1, height: 1, depth: 1, x: 0, z: 0, rotation: 0 }] });
   const put = IDBObjectStore.prototype.put;
@@ -61,7 +78,61 @@ test('atomic import rolls back assets, room and sketch when its final write fail
   assert.equal((await listOffline('assets')).length, 0);
   assert.notEqual((await readOfflineProject(id))?.draft?.name, 'Imported');
   assert.equal((await listOffline('blobs')).length, 0);
+  assert.deepEqual(await listOfflineKeys('levels'), levels, 'failed import cannot leave new levels or remove the original ones');
   await setOfflineMode(false);
+});
+
+test('package export, failed import and nested copy block updates only for their lifetime', async () => {
+  await reset(); await force();
+  try {
+    const { id } = await createDesignLocal();
+    const exporting = exportOfflineProject(id, true);
+    assert.ok(appActivityReason()); await exporting; assert.equal(appActivityReason(), '');
+    const bad = importOfflineProject(id, { project: createBlankProject(), assets: [], sketches: [{ levelId: 'missing', blob: new Blob(['bad'], { type: 'image/png' }) }] });
+    assert.ok(appActivityReason()); await assert.rejects(bad); assert.equal(appActivityReason(), '');
+    const copying = copyDesign(id); assert.ok(appActivityReason()); await copying; assert.equal(appActivityReason(), '');
+  } finally { await setOfflineMode(false); }
+});
+
+test('a failed independent copy removes only its own normalized levels and binary records', async () => {
+  await reset(); await force(); const { id } = await createDesignLocal(), model = await uploadOfflineModel(new File([glb()], 'Table.glb'), id);
+  const original = (await readOfflineProject(id))!;
+  original.draft = patchProject(original.draft!, { furniture: [{ id: 'piece', type: 'custom', assetId: model.id, name: 'Table', material: null, color: null, width: 1, height: 1, depth: 1, x: 0, z: 0, rotation: 0 }] }); await persistOfflineProject(original);
+  await writeOffline('meta', 'another-account-setting', { accountId: 'another-account', untouched: true });
+  const stores = ['projects', 'levels', 'assets', 'blobs'] as const, keys = await Promise.all(stores.map(store => listOfflineKeys(store)));
+  const put = IDBObjectStore.prototype.put; let projectWrites = 0;
+  IDBObjectStore.prototype.put = function (...args: Parameters<typeof put>) {
+    if (this.name === 'projects' && ++projectWrites === 2) throw new DOMException('Full', 'QuotaExceededError');
+    return put.apply(this, args);
+  };
+  try { await assert.rejects(copyDesign(id), /espacio/); }
+  finally { IDBObjectStore.prototype.put = put; }
+  for (let index = 0; index < stores.length; index++) assert.deepEqual(await listOfflineKeys(stores[index]), keys[index], stores[index]);
+  assert.deepEqual((await readOfflineProject(id))?.draft, original.draft); assert.equal((await listOffline<OfflineAssetRecord>('assets'))[0].blob.size, model.size);
+  assert.deepEqual(await readOffline('meta', 'another-account-setting'), { accountId: 'another-account', untouched: true });
+  await setOfflineMode(false);
+});
+
+test('uploaded GLB files without a browser MIME type export and copy with canonical binary metadata', async () => {
+  await reset(); await force(); const { id } = await createDesignLocal(), model = await uploadOfflineModel(new File([glb()], 'Table.glb'), id), source = (await readOfflineProject(id))!;
+  source.draft = patchProject(source.draft!, { furniture: [{ id: 'piece', type: 'custom', assetId: model.id, name: 'Table', material: null, color: null, width: 1, height: 1, depth: 1, x: 0, z: 0, rotation: 0 }] }); await persistOfflineProject(source);
+  const backup = await exportOfflineProject(id); assert.equal(backup.assets[0].blob.type, 'model/gltf-binary');
+  const copy = await copyDesign(id), result = (await readOfflineProject(copy.id))!, models = await listOffline<OfflineAssetRecord>('assets');
+  assert.equal(result.draft!.levels[0].furniture.length, 1); assert.notEqual(result.draft!.levels[0].furniture[0].assetId, model.id); assert.equal(models.length, 2);
+  assert.deepEqual(await models.find(value => value.roomId === id)!.blob.arrayBuffer(), await models.find(value => value.roomId === copy.id)!.blob.arrayBuffer());
+  assert.deepEqual((await readOfflineProject(id))!.draft, source.draft); await setOfflineMode(false);
+});
+
+test('an account switch during copy export cannot create or import private content into the other account', async () => {
+  await reset(); const { id } = await createDesignLocal(), source = (await readOfflineProject(id))!;
+  source.localOnly = false; source.draft = null; source.snapshot.revision = 1; await persistOfflineProject(source);
+  const fetch = globalThis.fetch, other = { ...user, id: '42f01306-b06a-49b3-9301-7b5576da3a41', username: 'another_user' }; let switched = false;
+  globalThis.fetch = async () => { if (!switched) { switched = true; await writeOffline('meta', 'identity', other); } return json(source.snapshot); };
+  try {
+    await assert.rejects(copyDesign(id), /cuenta activa cambió/);
+    const projects = await listOffline<OfflineProjectRecord>('projects'); assert.equal(projects.length, 1); assert.equal(projects[0].accountId, user.id);
+    assert.deepEqual((await readOffline('meta', 'identity') as typeof user).id, other.id);
+  } finally { globalThis.fetch = fetch; await writeOffline('meta', 'identity', user); }
 });
 
 test('invalid GLB or sketch never partially changes an existing design', async () => {
@@ -95,7 +166,7 @@ test('logout guard preserves pending work and account-specific cleanup preserves
   assert.deepEqual(await readOffline('meta', 'other-setting'), { accountId: 'other', keep: true });
 });
 
-test('all closed new projects synchronize, including a GLB not inserted in any room', async () => {
+test('all closed new projects synchronize even on an outdated page, including a GLB not inserted in any room', async () => {
   await reset(); await force();
   const first = await createDesignLocal(), second = await createDesignLocal();
   const asset = await uploadOfflineModel(new File([glb()], 'Tabla.glb'), first.id);
@@ -120,11 +191,38 @@ test('all closed new projects synchronize, including a GLB not inserted in any r
     return json(snapshot);
   };
   try {
-    await setOfflineMode(false); await syncOfflineAccount();
+    setAppVersion('outdated'); await setOfflineMode(false); await syncOfflineAccount();
     assert.equal(remote.size, 2); assert.ok(remote.has(second.id));
     assert.equal(await pendingOfflineCount(), 0);
     const assets = await listOffline<OfflineAssetRecord>('assets'); assert.equal(assets[0].pending, false);
     assert.ok(requests.findIndex(request => request === 'POST /api/rooms') < requests.findIndex(request => request.startsWith('POST /api/models')));
+  } finally { globalThis.fetch = fetch; setAppVersion('current'); }
+});
+
+test('the facade and synchronization module share one durable synchronization queue', async () => {
+  await reset(); const { id } = await createDesignLocal(), record = (await readOfflineProject(id))!;
+  const fetch = globalThis.fetch; let sessions = 0, creations = 0, remote: ProjectSnapshot | null = null, release!: () => void;
+  const ready = new Promise<void>(resolve => { release = resolve; });
+  globalThis.fetch = async (input, options) => {
+    if (String(input) === '/api/auth/session') { sessions++; await ready; return json({ user }); }
+    if (String(input) === '/api/rooms' && options?.method === 'POST') { creations++; remote = snapshotFixture(id, user.id, record.snapshot.project); return json(remote, 201); }
+    if (options?.method === 'PUT') { remote = { ...remote!, project: JSON.parse(String(options.body)).project, revision: remote!.revision + 1 }; return json(remote); }
+    return json(remote);
+  };
+  try {
+    const first = syncOfflineAccount(), second = syncQueue(); release(); await Promise.all([first, second]);
+    assert.equal(sessions, 2, 'one queue verifies the account, then creation independently verifies it again'); assert.equal(creations, 1); assert.equal(await pendingOfflineCount(), 0, JSON.stringify(await readOfflineProject(id)));
+  } finally { release(); globalThis.fetch = fetch; }
+});
+
+test('synchronization preserves a rejected draft and its actionable error after module separation', async () => {
+  await reset(); const { id } = await createDesignLocal(), record = (await readOfflineProject(id))!;
+  record.localOnly = false; record.snapshot.revision = 1; record.draft = { ...record.snapshot.project, name: 'Unsent draft' }; await persistOfflineProject(record);
+  const fetch = globalThis.fetch;
+  globalThis.fetch = async (input, options) => String(input) === '/api/auth/session' ? json({ user }) : options?.method === 'PUT' ? json({ error: 'Conflicto de prueba' }, 409) : json(record.snapshot);
+  try {
+    await syncOfflineAccount(); const saved = (await readOfflineProject(id))!;
+    assert.equal(saved.draft?.name, 'Unsent draft'); assert.match(saved.error!, /Conflicto de prueba/); assert.equal(await pendingOfflineCount(), 1);
   } finally { globalThis.fetch = fetch; }
 });
 

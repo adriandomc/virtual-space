@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react';
+import { registerAppActivity } from './appActivity';
 
 type Options<T> = {
   value: T;
@@ -14,6 +15,8 @@ export default function useFieldDraft<T>(options: Options<T>) {
   const focused = useRef(false);
   const cancelled = useRef(false);
   const edited = useRef(false);
+  const composing = useRef(false);
+  useLayoutEffect(() => registerAppActivity(() => composing.current || focused.current && edited.current ? 'Termina o cancela el campo que estás editando antes de continuar.' : false), []);
   const [draft, setDraft] = useState(() => (options.format ?? String)(options.value));
   const raw = useRef(draft);
 
@@ -60,6 +63,8 @@ export default function useFieldDraft<T>(options: Options<T>) {
       value: draft,
       onFocus: () => { focused.current = true; cancelled.current = false; edited.current = false; },
       onChange: (event: ChangeEvent<HTMLInputElement>) => edit(event.target.value),
+      onCompositionStart: () => { composing.current = true; },
+      onCompositionEnd: () => { composing.current = false; },
       onBlur: () => { focused.current = false; if (cancelled.current) reset(); else finish(); },
       onKeyDown: (event: KeyboardEvent<HTMLInputElement>) => {
         if (event.nativeEvent.isComposing) return;

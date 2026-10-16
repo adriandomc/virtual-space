@@ -1,5 +1,5 @@
-import { lazy, Suspense, useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { Archive, ArrowDownToLine, ArrowUpFromLine, BedDouble, Box, Check, ChevronDown, CircleHelp, Copy, DoorClosed, DoorOpen, Focus, Footprints, Grid2X2, Layers3, Lightbulb, LoaderCircle, Magnet, MousePointer2, Move, Paintbrush, PanelLeftClose, PanelRightClose, Plus, RotateCcw, Ruler, Settings2, Share2, Shield, Sun, Table2, Trash2, WifiOff, X } from 'lucide-react';
+import { lazy, Suspense, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { Archive, ArrowDownToLine, ArrowUpFromLine, BedDouble, Box, Check, ChevronDown, CircleHelp, DoorClosed, DoorOpen, Focus, Footprints, Grid2X2, Layers3, Lightbulb, LoaderCircle, Magnet, MousePointer2, Move, Paintbrush, PanelLeftClose, PanelRightClose, Plus, RotateCcw, Ruler, Settings2, Share2, Shield, Sun, Table2, Trash2, WifiOff, X } from 'lucide-react';
 import RoomScene from './RoomScene';
 import { t, useLocale } from './i18n';
 import InformationMenu from './InformationMenu';
@@ -8,13 +8,13 @@ import PlanEditor from './PlanEditor';
 import LevelSelector from './LevelSelector';
 import ConstructionPanel from './ConstructionPanel';
 import useConstructionHistory from './useConstructionHistory';
-import { confirmLocalSaved } from './appOffline';
-import { ceilingFinishTargets, updateCeilingFinish, projectLevel, validateProjectDocument } from './projectDocument';
+import { confirmLocalSaved, registerAppActivity } from './appOffline';
+import { ceilingFinishTargets, updateCeilingFinish, projectLevel, projectToRoom, validateProjectDocument } from './projectDocument';
 import useProject from './useProject';
 import RecoveryPanel from './RecoveryPanel';
 import { DESIGNS_PATH } from './routes';
-import { parseColor } from './fieldDraft';
-import useFieldDraft from './useFieldDraft';
+import ColorPicker from './ColorPicker';
+import { projectColors, useColorPreview } from './colorPreview';
 import NameInput from './NameInput';
 import NumberInput from './NumberInput';
 import OpeningForm, { type OpeningValues } from './OpeningForm';
@@ -58,22 +58,11 @@ function Switch({ checked, label, onChange, disabled = false }: { checked: boole
 function Section({ title, children, defaultOpen = true }: { title: string; children: ReactNode; defaultOpen?: boolean }) {
   return <details className="property-section" open={defaultOpen}><summary><ChevronDown size={14} /><span>{title}</span></summary><div className="section-body">{children}</div></details>;
 }
-function HexColorField({ value, onChange, readOnly, notify, label = t("Color personalizado") }: { value: string; onChange: (value: string) => boolean | void; readOnly: boolean; notify: (text: string) => void; label?: string }) {
-  useLocale();
-  const inputId = useId();
-  const input = useRef<HTMLInputElement>(null);
-  const { inputProps } = useFieldDraft({ value, parse: parseColor, format: next => next.toUpperCase(), onCommit: next => readOnly ? false : onChange(next), onInvalid: () => notify("Escribe un código hexadecimal de 3 o 6 dígitos. Se conservó el color anterior.") });
-  return <div className="hex-field"><label htmlFor={inputId}>{label}</label><div>
-    <input type="color" aria-label={t("Elegir color personalizado")} disabled={readOnly} value={value} onChange={event => onChange(event.target.value)} />
-    <input {...inputProps} ref={input} id={inputId} className="hex-code-input" aria-label={t("Código hexadecimal")} readOnly={readOnly} required maxLength={9} spellCheck={false} autoCapitalize="characters" />
-    <button type="button" className="icon-button" aria-label={t("Copiar código hexadecimal")} title={t("Copiar código")} onClick={async () => { try { await navigator.clipboard.writeText(value.toUpperCase()); notify("Código copiado."); } catch { input.current?.select(); notify("Selecciona el código para copiarlo."); } }}><Copy size={15} /></button>
-  </div></div>;
-}
-
 export default function App({ onHome = () => window.location.assign(DESIGNS_PATH) }: { onHome?: () => void }) {
   useLocale();
   const { project, setProject, activeLevelId, setActiveLevelId, room, setRoom, ready, status, error: saveError, readOnly: projectReadOnly, canManage, role, connected, roomId, shareUrl, shared, setSharing, uploadSketch, sketchUrl, retry, offlineAllowed, pendingOffline, discardOffline, downloadOfflineBackup, importProject, recoveryProject } = useProject();
   const construction = useConstructionHistory(project, setProject);
+  const { shownProject, previewProject } = useColorPreview(project);
   const level = projectLevel(project, activeLevelId);
   const [wallSide, setWallSide] = useState<'left' | 'right'>('left');
   const [presentation, setPresentation] = useState<{ walls: 'full' | 'cut' | 'hidden'; roofs: boolean; levels: 'active' | 'below' | 'all' }>({ walls: 'cut', roofs: false, levels: 'active' });
@@ -82,6 +71,8 @@ export default function App({ onHome = () => window.location.assign(DESIGNS_PATH
   const [changingLevel, setChangingLevel] = useState(false);
   const levelNavigation = useRef(false);
   const importBusy = useRef(false);
+  const activeFiles = useRef(new Set<symbol>());
+  useEffect(() => registerAppActivity(() => activeFiles.current.size ? 'Espera a que termine la operación actual.' : false), []);
   const readOnly = projectReadOnly || importing || changingLevel;
   const [mode, setMode] = useState<ViewMode>('orbit');
   const [drawing, setDrawing] = useState(false);
@@ -121,7 +112,7 @@ export default function App({ onHome = () => window.location.assign(DESIGNS_PATH
   const surfaceName = surface === 'floor' ? t("Piso") : surface === 'ceiling' ? t("Techo") : wallName(selectedWall);
   const selectedColor = surface === 'floor' ? selectedSurface?.finish.color ?? room.floorColor : surface === 'ceiling' ? selectedCeiling?.finish.color ?? room.ceilingColor : level.walls[selectedWall]?.[wallSide].color ?? '#ffffff';
   const selectedName = selection?.kind === 'stair' ? t('Escalera') : selection?.kind === 'roof' ? t('Cubierta') : furniture ? furnitureName(furniture) : opening ? opening.type === 'door' ? t("Puerta") : t("Ventana") : light ? light.name : selection ? surfaceName : '';
-  const usedColors = [...new Set(project.levels.flatMap(level => [...level.walls.flatMap(wall => [wall.left.color, wall.right.color]), ...level.surfaces.flatMap(surface => [surface.finish.color, ...(surface.kind === 'floor' ? [surface.undersideFinish.color] : [])])]).concat(project.roofs.flatMap(roof => [roof.finish.color, roof.undersideFinish.color])).map(hex => hex.toLowerCase()))];
+  const usedColors = projectColors(project);
   const propertiesVisible = compact ? mobilePanel === 'properties' : rightOpen;
   const elementsVisible = compact ? mobilePanel === 'scene' : leftOpen;
   const saving = importing || status === 'saving' || status === 'syncing';
@@ -216,12 +207,17 @@ export default function App({ onHome = () => window.location.assign(DESIGNS_PATH
   function setBounds(enabled: boolean) {
     change(() => enabled ? fitRoom({ ...room, editing: { ...room.editing, bounds: true } }) : { ...room, editing: { ...room.editing, bounds: false } });
   }
+  function paintedProject(hex: string) {
+    if (selection?.kind === 'ceiling') return updateCeilingFinish(project, activeLevelId, { color: hex }, selectedCeiling?.id);
+    return validateProjectDocument({ ...project, levels: project.levels.map(value => value.id !== activeLevelId ? value : { ...value, walls: value.walls.map((wall, index) => surface === 'wall' && index === selectedWall ? { ...wall, [wallSide]: { ...wall[wallSide], color: hex } } : wall), surfaces: value.surfaces.map(item => item.id === selectedSurface?.id ? { ...item, finish: { ...item.finish, color: hex } } : item) }) });
+  }
+  function previewFurniture(next: FurnitureItem | null) {
+    previewProject(next ? { ...project, levels: project.levels.map(level => level.id !== activeLevelId ? level : { ...level, furniture: level.furniture.map(item => item.id === next.id ? { ...next, levelId: level.id } : item) }) } : null);
+  }
   function paint(hex: string) {
     if (readOnly || !selection || !['wall', 'floor', 'ceiling'].includes(selection.kind) || selection.kind === 'wall' && selectedWall < 0 || selection.kind === 'floor' && selection.id && !selectedSurface || selection.kind === 'ceiling' && !selectedCeiling) return false;
     try {
-      if (selection.kind === 'ceiling') return setProject(updateCeilingFinish(project, activeLevelId, { color: hex }, selectedCeiling?.id));
-      const next = { ...project, levels: project.levels.map(value => value.id !== activeLevelId ? value : { ...value, walls: value.walls.map((wall, index) => surface === 'wall' && index === selectedWall ? { ...wall, [wallSide]: { ...wall[wallSide], color: hex } } : wall), surfaces: value.surfaces.map(item => item.id === selectedSurface?.id ? { ...item, finish: { ...item.finish, color: hex } } : item) }), roofs: surface === 'ceiling' && !selectedSurface ? project.roofs.map(roof => roof.levelId === activeLevelId ? { ...roof, undersideFinish: { ...roof.undersideFinish, color: hex } } : roof) : project.roofs };
-      return setProject(validateProjectDocument(next));
+      return setProject(paintedProject(hex));
     } catch (cause) { setNotice(cause instanceof Error ? cause.message : 'No se pudo aplicar el color.'); return false; }
   }
   function finishSurface(material: FloorFinish) {
@@ -281,8 +277,10 @@ export default function App({ onHome = () => window.location.assign(DESIGNS_PATH
   }
   function exportRoom() { void downloadPending(); }
   async function downloadPending() {
-    try { await confirmLocalSaved(); await downloadOfflineBackup(); }
+    const activity = Symbol();
+    try { await confirmLocalSaved(); activeFiles.current.add(activity); await downloadOfflineBackup(); }
     catch (cause) { setNotice(cause instanceof Error ? cause.message : "No se pudo descargar la copia."); }
+    finally { activeFiles.current.delete(activity); }
   }
   async function useServerVersion() {
     if (!window.confirm(t("¿Usar la versión del servidor? Los cambios pendientes de este dispositivo se descartarán. Puedes descargarlos antes."))) return;
@@ -291,15 +289,22 @@ export default function App({ onHome = () => window.location.assign(DESIGNS_PATH
   }
   async function importRoom(file?: File) {
     if (!file || readOnly || importBusy.current) return;
+    const activity = Symbol();
     importBusy.current = true; setImporting(true);
     try {
       if (file.size > 225 * 1024 * 1024) throw new Error("La copia debe pesar menos de 225 MB.");
       await confirmLocalSaved();
+      activeFiles.current.add(activity);
       const backup = await parseProjectBackup(file);
       await importProject(backup);
       select(null); setResetKey(value => value + 1); setNotice("Proyecto abierto.");
     } catch (error) { setNotice(error instanceof SyntaxError ? "El archivo no es un proyecto válido." : error instanceof Error ? error.message : "No se pudo abrir el archivo."); }
-    finally { importBusy.current = false; setImporting(false); if (importRef.current) importRef.current.value = ''; }
+    finally { activeFiles.current.delete(activity); importBusy.current = false; setImporting(false); if (importRef.current) importRef.current.value = ''; }
+  }
+  async function changeSketch(file: File | null) {
+    const activity = Symbol(); activeFiles.current.add(activity);
+    try { await uploadSketch(file); }
+    finally { activeFiles.current.delete(activity); }
   }
   const items: { selection: Selection; name: string; Icon: typeof Box }[] = [
     ...room.furniture.map((item, index) => ({ selection: { kind: 'furniture', id: item.id } as Selection, name: furnitureName(item) + ' ' + (index + 1), Icon: FURNITURE_ICONS[item.type] })),
@@ -322,9 +327,9 @@ export default function App({ onHome = () => window.location.assign(DESIGNS_PATH
     {furniture && <Section title={furniture.type === 'bed' ? t("Estructura") : t("Material")}>
       <label className="select-field">{t("Material")}<select aria-label={t("Material del mueble")} disabled={readOnly} value={furniture.material ?? ''} onChange={event => updateFurniture({ material: event.target.value ? event.target.value as FurnitureMaterial : null })}>{furniture.type === 'custom' && <option value="">{t("Del modelo")}</option>}<option value="wood">{t("Madera")}</option><option value="plastic">{t("Plástico")}</option><option value="metal">{t("Metal")}</option></select></label>
       {furniture.type === 'custom' && <label className="check-field"><input type="checkbox" disabled={readOnly} checked={furniture.color === null} onChange={event => updateFurniture({ color: event.target.checked ? null : '#ffffff' })} />{t("Colores originales")}</label>}
-      {(furniture.type !== 'custom' || furniture.color !== null) && <HexColorField value={furniture.color ?? FURNITURE_COLORS[furniture.type]} onChange={color => updateFurniture({ color })} readOnly={readOnly} notify={setNotice} label={t("Color del material")} />}
+      {(furniture.type !== 'custom' || furniture.color !== null) && <ColorPicker key={furniture.id} value={furniture.color ?? FURNITURE_COLORS[furniture.type]} onChange={color => updateFurniture({ color })} onPreview={color => previewFurniture(color ? { ...furniture, color } : null)} revision={project} colors={usedColors} disabled={readOnly} label={t("Color del material")} />}
     </Section>}
-    {furniture?.type === 'custom' && <CustomModelEditor item={furniture} roomId={roomId} readOnly={readOnly} onChange={next => updateFurniture({ parts: next.parts })} notify={setNotice} />}
+    {furniture?.type === 'custom' && <CustomModelEditor item={furniture} roomId={roomId} readOnly={readOnly} onChange={next => updateFurniture({ parts: next.parts })} onPreview={previewFurniture} revision={project} colors={usedColors} notify={setNotice} />}
     <fieldset disabled={readOnly} className="property-fields">
       {furniture && <Section title={furnitureName(furniture)}>
         {furniture.type === 'bed' && <label className="select-field">{t("Tamaño")}<select aria-label={t("Tamaño de cama")} value={furniture.bedSize} onChange={event => { const bedSize = event.target.value as BedSize; updateFurniture({ bedSize, width: BED_SIZES[bedSize].width, depth: BED_SIZES[bedSize].depth }); }}>{Object.entries(BED_SIZES).map(([key, preset]) => <option key={key} value={key}>{t(preset.label)}</option>)}</select></label>}
@@ -349,7 +354,7 @@ export default function App({ onHome = () => window.location.assign(DESIGNS_PATH
 
   const colorPanel = <>
     <Section title={t("Superficie")}>{surface === 'wall' && <label className="select-field">{t('Cara de la pared')}<select aria-label={t('Cara de la pared')} value={wallSide} onChange={event => setWallSide(event.target.value as 'left' | 'right')}><option value="left">{t('Lado izquierdo')}</option><option value="right">{t('Lado derecho')}</option></select></label>}<label className="select-field">{t("Superficie")}<select aria-label={t("Superficie a pintar")} value={surface === 'wall' ? String(selectedWall) : surface} onChange={event => select(event.target.value === 'floor' || event.target.value === 'ceiling' ? { kind: event.target.value } : { kind: 'wall', index: Number(event.target.value), id: room.wallIds?.[Number(event.target.value)] })}>{Array.from({ length: wallCount(room) }, (_, index) => <option key={index} value={index}>{wallName(index)}</option>)}<option value="floor">{t("Piso")}</option><option value="ceiling">{t("Techo")}</option></select></label>
-      <HexColorField key={JSON.stringify(selection) + wallSide} value={selectedColor} onChange={paint} readOnly={readOnly} notify={setNotice} label={t("Color")} />
+      <ColorPicker key={JSON.stringify(selection) + wallSide} value={selectedColor} onChange={paint} onPreview={color => previewProject(color ? paintedProject(color) : null)} revision={project} colors={usedColors} disabled={readOnly} label={t("Color")} />
       {surface !== 'floor' && <label className="select-field">{t('Material de la superficie')}<select aria-label={t('Material de la superficie')} disabled={readOnly} value={surface === 'wall' ? level.walls[selectedWall]?.[wallSide].material ?? 'concrete' : selectedCeiling?.finish.material ?? 'concrete'} onChange={event => finishSurface(event.target.value as FloorFinish)}>{FINISHES.map(([finish, name]) => <option key={finish} value={finish}>{t(name)}</option>)}</select></label>}
       {surface === 'wall' && <button disabled={readOnly} className="outline-button full-width" onClick={() => setProject(validateProjectDocument({ ...project, levels: project.levels.map(value => value.id === activeLevelId ? { ...value, walls: value.walls.map(wall => ({ ...wall, [wallSide]: { ...wall[wallSide], color: selectedColor } })) } : value) }))}><Layers3 size={14} />{t("Aplicar a todas las paredes")}</button>}
       {surface === 'floor' && level.surfaces.filter(item => item.kind === 'floor').length > 1 && <label className="select-field">{t('Zona del piso')}<select aria-label={t('Zona del piso')} value={selectedSurface?.id ?? ''} onChange={event => select({ kind: 'floor', id: event.target.value })}>{level.surfaces.filter(item => item.kind === 'floor').map((item, index) => <option key={item.id} value={item.id}>{t('Zona {{number}}', { number: index + 1 })}</option>)}</select></label>}
@@ -362,7 +367,7 @@ export default function App({ onHome = () => window.location.assign(DESIGNS_PATH
     </Section>
   </>;
 
-  const spacePanel = <><ConstructionPanel project={project} activeLevelId={activeLevelId} onChange={construction.apply} selection={selection} onSelect={next => select(next)} readOnly={readOnly || drawing} /><fieldset disabled={readOnly || drawing} className="property-fields">
+  const spacePanel = <><ConstructionPanel project={project} activeLevelId={activeLevelId} onChange={construction.apply} onPreview={previewProject} selection={selection} onSelect={next => select(next)} readOnly={readOnly || drawing} /><fieldset disabled={readOnly || drawing} className="property-fields">
     <Section title={t("Dimensiones")}><div className="dimensions-grid"><NumberField label={t("Ancho del cuarto")} value={size.width} min={0.5} max={50} onChange={width => change(() => resizeRoom(room, width, size.depth))} /><NumberField label={t("Largo del cuarto")} value={size.depth} min={0.5} max={50} onChange={depth => change(() => resizeRoom(room, size.width, depth))} /><NumberField label={t("Altura del cuarto")} value={room.height} min={1.8} max={8} onChange={height => change(() => fitRoom({ ...room, height }))} /></div><div className="area-tag"><Ruler size={16} />{area.toFixed(2)} m²</div><button className="outline-button full-width" onClick={() => void changeView('plan')}><Grid2X2 size={17} />{t("Editar planta")}</button></Section>
     <Section title={t("Más opciones")} defaultOpen={false}><NumberField label={t("Espesor de muro")} value={room.thickness} min={0.05} max={0.6} step={0.01} onChange={thickness => change({ ...room, thickness })} /></Section>
   </fieldset></>;
@@ -407,7 +412,7 @@ export default function App({ onHome = () => window.location.assign(DESIGNS_PATH
       </div>
     {(status === 'error' || status === 'conflict') && <div className="save-error" role="alert"><CircleHelp size={17} /><span>{t(saveError)}</span><button onClick={retry}>{t("Reintentar")}</button><button aria-label={t("Descargar cambios sin guardar")} onClick={offlineAllowed || pendingOffline ? () => void downloadPending() : exportRoom}><ArrowDownToLine size={15} /></button>{status === 'conflict' && <button onClick={() => void useServerVersion()}>{t("Usar versión guardada")}</button>}</div>}
       <div className="viewport-body">
-        {mode === 'plan' ? <div className="large-plan"><PlanEditor project={project} activeLevelId={activeLevelId} onProjectChange={construction.apply} onUndo={construction.undo} onRedo={construction.redo} canUndo={construction.canUndo} canRedo={construction.canRedo} room={room} onChange={change} selection={selection} onSelect={next => select(next)} large onDrawingChange={setDrawing} sketchUrl={sketchUrl} onSketchChange={uploadSketch} readOnly={readOnly} /></div> : <RoomScene project={project} activeLevelId={activeLevelId} onProjectChange={setProject} onActiveLevelChange={setActiveLevelId} presentation={presentation} paused={!!workshop} room={room} roomId={roomId} onModelError={setNotice} mode={mode} selection={selection} onSelect={next => select(next)} onChange={change} readOnly={readOnly} transformMode={transformMode} resetKey={resetKey} />}
+        {mode === 'plan' ? <div className="large-plan"><PlanEditor project={shownProject} activeLevelId={activeLevelId} onProjectChange={construction.apply} onUndo={construction.undo} onRedo={construction.redo} canUndo={construction.canUndo} canRedo={construction.canRedo} room={shownProject === project ? room : projectToRoom(shownProject, activeLevelId)} onChange={change} selection={selection} onSelect={next => select(next)} large onDrawingChange={setDrawing} sketchUrl={sketchUrl} onSketchChange={changeSketch} readOnly={readOnly} /></div> : <RoomScene project={shownProject} activeLevelId={activeLevelId} onProjectChange={setProject} onActiveLevelChange={setActiveLevelId} presentation={presentation} paused={!!workshop} room={shownProject === project ? room : projectToRoom(shownProject, activeLevelId)} roomId={roomId} onModelError={setNotice} mode={mode} selection={selection} onSelect={next => select(next)} onChange={change} readOnly={readOnly} transformMode={transformMode} resetKey={resetKey} />}
         {mode !== 'plan' && <><div className="view-title"><span className="view-title-dot" />{mode === 'walk' ? t("Vista interior") : t("Perspectiva")}</div><div className="viewport-bottom"><div className="navigation-hint"><MousePointer2 size={13} />{mode === 'walk' ? t("Arrastra para mirar") : !readOnly && selection && (furniture || opening || light) ? t("Arrastra el elemento o sus controles") : t("Toca para seleccionar · Arrastra para girar")}</div><button className="focus-button" aria-label={t("Restablecer vista")} onClick={() => setResetKey(value => value + 1)}><Focus size={16} /></button></div></>}
         {selection && mode !== 'walk' && <div className="selection-dock"><span>{selectedName}</span>{(furniture || opening || light) && !readOnly && <><button className={transformMode === 'translate' ? 'active' : ''} aria-label={t("Mover elemento")} title={t("Mover elemento")} aria-pressed={transformMode === 'translate'} onClick={() => setTransformMode('translate')}><Move size={18} /><span>{t("Mover")}</span></button>{furniture && <button className={transformMode === 'rotate' ? 'active' : ''} aria-label={t("Girar elemento")} title={t("Girar elemento")} aria-pressed={transformMode === 'rotate'} onClick={() => setTransformMode('rotate')}><RotateCcw size={18} /><span>{t("Girar")}</span></button>}</>}<button className="selection-properties" aria-label={t("Propiedades del elemento")} onClick={() => showProperties(selection.kind === 'wall' || selection.kind === 'floor' || selection.kind === 'ceiling' ? 'color' : selection.kind === 'roof' || selection.kind === 'stair' ? 'space' : 'item')}><Settings2 size={19} /><span>{t("Editar")}</span></button>{(furniture || opening || light) && !readOnly && <button className="desktop-only" aria-label={t("Eliminar elemento seleccionado")} onClick={removeSelected}><Trash2 size={18} /></button>}<button aria-label={t("Deseleccionar elemento")} onClick={() => select(null)}><X size={18} /></button></div>}
       </div>

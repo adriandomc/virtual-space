@@ -81,7 +81,6 @@
   "Condiciones de uso": "Terms of use",
   "Ley de protección de datos personales de México": "Mexico’s personal data protection law",
   "Guía sobre el uso de cookies": "Guide on the use of cookies",
-  "Última actualización: 15 de octubre de 2026 · Versión": "Last updated: October 15, 2026 · Version",
   "3D Space es un servicio gratuito para crear y probar diseños de habitaciones. No tiene pagos, suscripciones, publicidad ni analíticas de uso.": "3D Space is a free service for creating and trying out room designs. It has no payments, subscriptions, advertising, or usage analytics.",
   "Secciones de las condiciones": "Terms sections",
   "Servicio": "Service",
@@ -139,5 +138,7 @@
   "La configuración y el plazo de conservación de los respaldos están pendientes de confirmar.": "The backup configuration and retention period have yet to be confirmed.",
   "El idioma elegido se guarda en este navegador para recordar tu preferencia. No se utiliza para analíticas ni se envía al servidor.": "Your selected language is saved in this browser to remember your preference. It is not used for analytics or sent to the server.",
   "Las preferencias de gráficos, como sombras, texturas, detalle y límite de fotogramas, se guardan únicamente en este navegador para adaptar el rendimiento. No se envían al servidor ni se utilizan para analíticas. Los ajustes visuales del diseño, su construcción de hasta 12 niveles y los croquis de cada nivel sí forman parte de los datos que guardas o sincronizas.": "Graphics preferences, such as shadows, textures, detail and frame-rate limits, are stored only in this browser to adapt performance. They are not sent to the server or used for analytics. The design visual settings, its construction of up to 12 levels and the reference images for each level are part of the data you save or sync.",
-  "Última actualización: 16 de octubre de 2026": "Last updated: October 16, 2026"
+  "Última actualización: 16 de octubre de 2026": "Last updated: October 16, 2026",
+  "Al abrir con conexión, la aplicación puede descargar una actualización. Solo se aplica automáticamente antes de comenzar a trabajar y sin cambios pendientes; durante el trabajo puedes posponerla. Estas comprobaciones no incorporan analíticas ni envían el contenido de tus borradores para decidir si es seguro actualizar.": "When opened online, the app may download an update. It applies automatically only before you start working and without pending changes; during work you can postpone it. These checks do not add analytics or send draft content to decide whether updating is safe.",
+  "Última actualización: 16 de octubre de 2026 · Versión": "Last updated: October 16, 2026 · Version"
 }

@@ -37,7 +37,7 @@ test('embedded viewer is the only frameable document and public reads never use 
   const headers = { Cookie: cookie, Origin: base, 'Content-Type': 'application/json' };
   const send = (path: string, method = 'GET', body?: unknown) => fetch(base + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
   const protectedResponse = (response: Response) => {
-    assert.equal(response.headers.get('x-frame-options'), 'DENY');
+    assert.equal(response.headers.get('x-frame-options'), 'DENY', response.url);
     assert.equal(response.headers.get('content-security-policy'), "frame-ancestors 'none'");
   };
   try {

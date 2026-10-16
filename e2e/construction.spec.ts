@@ -25,6 +25,7 @@ async function design(request: APIRequestContext, levels = 1, setup = false, wid
 }
 async function snapshot(request: APIRequestContext, id: string): Promise<ProjectDocument> { const response = await request.get('/api/rooms/' + id); expect(response.status()).toBe(200); return (await response.json()).project; }
 async function field(page: Page | Locator, label: string, value: string) { const input = page.getByLabel(label, { exact: true }); await input.fill(value); await input.press('Tab'); }
+async function color(scope: Page | Locator, value: string) { await scope.getByRole('button', { name: 'Color', exact: true }).click(); const picker = scope.getByRole('dialog', { name: 'Color', exact: true }); await picker.getByLabel('Código hexadecimal', { exact: true }).fill(value); await picker.getByRole('button', { name: 'Aplicar', exact: true }).click(); }
 async function openEditor(page: Page, project: ProjectDocument, setup = false) { await page.goto('/editor?room=' + project.id + (setup ? '&setup=1' : '')); await expect(page.getByLabel(setup ? 'Nombre del diseño' : 'Nombre del proyecto', { exact: true })).toBeEditable(); }
 async function openRoom(page: Page) { const button = page.getByRole('button', { name: 'Cuarto', exact: true }); if (await button.getAttribute('aria-expanded') !== 'true') await button.click(); }
 async function openMaterials(page: Page) { const button = page.getByRole('button', { name: 'Materiales', exact: true }); if (await button.getAttribute('aria-expanded') !== 'true') await button.click(); }
@@ -43,7 +44,7 @@ test('all four setup steps can be skipped without resetting edited work', async 
   await field(page, 'Nombre del diseño', 'Keep my changes'); await field(page, 'Ancho', '6');
   await page.getByRole('button', { name: 'Omitir', exact: true }).click(); await expect(page.getByRole('heading', { name: 'Cubierta', exact: true })).toBeVisible();
   await page.getByLabel('Forma de cubierta', { exact: true }).selectOption('gable'); await page.getByRole('button', { name: 'Omitir', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Colores', exact: true })).toBeVisible(); await field(page, 'Código de color', '#123456');
+  await expect(page.getByRole('heading', { name: 'Colores', exact: true })).toBeVisible(); await color(page, '#123456');
   await page.getByRole('button', { name: 'Omitir', exact: true }).click(); await page.getByRole('button', { name: 'Agregar', exact: true }).click();
   await page.getByRole('button', { name: 'Omitir', exact: true }).click(); await expect(page.getByLabel('Nombre del proyecto', { exact: true })).toHaveValue('Keep my changes');
   await expect.poll(async () => { const p = await snapshot(context.request, project.id), level = p.levels[0]; return { name: p.name, width: Math.max(...level.points.map(p => p.x)) - Math.min(...level.points.map(p => p.x)), roof: p.roofs[0].type, color: level.walls[0].left.color, furniture: level.furniture.length, setup: p.setupStep }; }).toEqual({ name: 'Keep my changes', width: 6, roof: 'gable', color: '#123456', furniture: 1, setup: undefined });
@@ -67,9 +68,9 @@ test('setup paints one floor zone and wall face without changing their neighbors
   project.levels[0].surfaces[0].finish = { color: '#112233', material: 'wood' }; project.levels[0].surfaces[1].finish = { color: '#aabbcc', material: 'marble' }; const wall = project.levels[0].walls[0]; wall.left.color = '#334455'; wall.right.color = '#556677';
   expect((await context.request.post('/api/rooms', { headers, data: { id: project.id, project } })).status()).toBe(201);
   await page.goto('/editor?room=' + project.id + '&setup=1'); await expect(page.getByRole('heading', { name: 'Colores', exact: true })).toBeVisible();
-  await page.getByLabel('Zona del piso', { exact: true }).selectOption(project.levels[0].surfaces[1].id); await field(page, 'Código de color', '#fedcba'); await page.getByLabel('Material del piso', { exact: true }).selectOption('tile-brick');
+  await page.getByLabel('Zona del piso', { exact: true }).selectOption(project.levels[0].surfaces[1].id); await color(page, '#fedcba'); await page.getByLabel('Material del piso', { exact: true }).selectOption('tile-brick');
   await expect.poll(async () => (await snapshot(context.request, project.id)).levels[0].surfaces[1].finish).toEqual({ color: '#fedcba', material: 'tile-brick' });
-  await page.getByLabel('Superficie a pintar', { exact: true }).selectOption(wall.id); await page.getByLabel('Cara de la pared', { exact: true }).selectOption('right'); await field(page, 'Código de color', '#123456');
+  await page.getByLabel('Superficie a pintar', { exact: true }).selectOption(wall.id); await page.getByLabel('Cara de la pared', { exact: true }).selectOption('right'); await color(page, '#123456');
   await expect.poll(async () => (await snapshot(context.request, project.id)).levels[0].walls[0].right.color).toBe('#123456'); const saved = await snapshot(context.request, project.id);
   expect(saved.levels[0].surfaces[0].finish).toEqual(project.levels[0].surfaces[0].finish); expect(saved.levels[0].walls[0].left).toEqual(wall.left); expect(saved.levels[0].surfaces[1].finish).toEqual({ color: '#fedcba', material: 'tile-brick' });
 });
@@ -122,7 +123,7 @@ test('a delayed shared-project response cannot restore another account after a r
 test('deleting the selected wall remotely cannot commit its unfinished color into the first wall', async ({ page, context }) => {
   await account(context.request); const project = await design(context.request); expect((await context.request.post('/api/rooms/' + project.id + '/share', { headers, data: { enabled: true } })).status()).toBe(200);
   await openEditor(page, project); await page.getByRole('button', { name: 'Materiales', exact: true }).click(); const selector = page.getByLabel('Superficie a pintar', { exact: true }); await selector.selectOption('3'); await expect(selector.locator('option')).toHaveCount(6);
-  await page.getByLabel('Código hexadecimal', { exact: true }).fill('#abcdef');
+  await page.getByRole('button', { name: 'Color', exact: true }).click(); await page.getByLabel('Código hexadecimal', { exact: true }).fill('#abcdef');
   const old = await (await context.request.get('/api/rooms/' + project.id)).json(), next = deleteWall(old.project, project.levels[0].id, project.levels[0].walls[3].id);
   expect((await context.request.put('/api/rooms/' + project.id, { headers, data: { project: next, revision: old.revision, operationId: randomUUID() } })).status()).toBe(200);
   await expect.poll(async () => selector.locator('option').count()).not.toBe(6); await page.keyboard.press('Tab');
@@ -134,12 +135,13 @@ test('additive plan tools create junctions, rooms and holes, with atomic undo', 
   const plan = page.locator('.large-plan'); await plan.getByRole('button', { name: 'Pared', exact: true }).click();
   for (const point of [{ x: -2.5, z: 0 }, { x: 2.5, z: 0 }]) { const screen = await planPoint(page, point.x, point.z); await page.mouse.click(screen.x, screen.y); }
   await plan.getByRole('button', { name: 'Terminar', exact: true }).click(); await expect.poll(async () => (await snapshot(context.request, project.id)).levels[0].walls.length).toBe(7);
-  await plan.getByRole('button', { name: 'Cancelar', exact: true }).click(); await expand(plan, 'Habitación'); await plan.getByRole('button', { name: 'Rectángulo', exact: true }).click();
+  await plan.getByRole('button', { name: 'Cancelar', exact: true }).click(); await plan.getByRole('button', { name: 'Habitación', exact: true }).click(); await plan.getByRole('menuitem', { name: 'Rectángulo', exact: true }).click();
+  await expect(plan.getByText('Toca dos esquinas opuestas.', { exact: true })).toBeVisible();
   for (const point of [{ x: -.8, z: -.8 }, { x: .8, z: .8 }]) { const screen = await planPoint(page, point.x, point.z); await page.mouse.click(screen.x, screen.y); }
   await expect.poll(async () => (await snapshot(context.request, project.id)).levels[0].surfaces.length).toBe(2);
   const current = await snapshot(context.request, project.id); for (const wall of project.levels[0].walls) expect(current.levels[0].walls.some(w => w.id === wall.id)).toBe(true);
   await plan.getByRole('button', { name: 'Deshacer construcción', exact: true }).click(); await expect.poll(async () => (await snapshot(context.request, project.id)).levels[0].surfaces.length).toBe(1);
-  await plan.getByRole('button', { name: 'Cancelar', exact: true }).click(); await expand(plan, 'Habitación'); await plan.getByRole('button', { name: 'Hueco', exact: true }).click();
+  await plan.getByRole('button', { name: 'Cancelar', exact: true }).click(); await plan.getByRole('button', { name: 'Habitación', exact: true }).click(); await plan.getByRole('menuitem', { name: 'Hueco', exact: true }).click();
   for (const point of [{ x: -.5, z: .8 }, { x: .5, z: .8 }, { x: .5, z: 1.6 }, { x: -.5, z: 1.6 }]) { const screen = await planPoint(page, point.x, point.z); await page.mouse.click(screen.x, screen.y); }
   await plan.getByRole('button', { name: 'Terminar', exact: true }).click(); await expect.poll(async () => (await snapshot(context.request, project.id)).levels[0].surfaces[0].holes.length).toBe(1);
   await plan.getByRole('button', { name: 'Cancelar', exact: true }).click(); const holePoint = await planPoint(page, .3, 1.2); await page.mouse.click(holePoint.x, holePoint.y);
@@ -155,7 +157,7 @@ test('pointer selection paints the exact nested floor region and preserves the s
   expect((await context.request.post('/api/rooms', { headers, data: { id: project.id, project } })).status()).toBe(201);
   await openEditor(page, project); await page.getByRole('tab', { name: 'Planta', exact: true }).click();
   const surface = page.locator('[data-plan-surface="' + project.levels[0].surfaces[1].id + '"]'); await expect(surface).toHaveAttribute('fill', '#aabbcc');
-  const point = await planPoint(page, 0, 0); await page.mouse.click(point.x, point.y); await page.getByRole('button', { name: 'Propiedades del elemento', exact: true }).click(); await field(page, 'Código hexadecimal', '#fedcba');
+  const point = await planPoint(page, 0, 0); await page.mouse.click(point.x, point.y); await page.getByRole('button', { name: 'Propiedades del elemento', exact: true }).click(); await color(page, '#fedcba');
   await expect.poll(async () => (await snapshot(context.request, project.id)).levels[0].surfaces[1].finish.color).toBe('#fedcba');
   expect((await snapshot(context.request, project.id)).levels[0].surfaces[0].finish).toEqual(project.levels[0].surfaces[0].finish);
 });
@@ -163,25 +165,25 @@ test('pointer selection paints the exact nested floor region and preserves the s
 test('a lower ceiling edits the upper slab underside independently of its floor and roof', async ({ page, context }) => {
   await account(context.request); const project = await design(context.request, 2); await openEditor(page, project);
   await page.getByRole('button', { name: 'Materiales', exact: true }).click(); await page.getByLabel('Superficie a pintar', { exact: true }).selectOption('ceiling');
-  await field(page, 'Código hexadecimal', '#123456'); await page.getByLabel('Material de la superficie', { exact: true }).selectOption('wood');
+  await color(page, '#123456'); await page.getByLabel('Material de la superficie', { exact: true }).selectOption('wood');
   await expect.poll(async () => (await snapshot(context.request, project.id)).levels[1].surfaces[0].undersideFinish).toEqual({ color: '#123456', material: 'wood' });
   let saved = await snapshot(context.request, project.id); expect(saved.levels[0].surfaces[0].finish.color).toBe('#ffffff'); expect(saved.levels[1].surfaces[0].finish.color).toBe('#ffffff'); expect(saved.roofs[0].undersideFinish.color).toBe('#ffffff');
-  await page.getByLabel('Nivel activo', { exact: true }).selectOption(project.levels[1].id); await expect(page.getByLabel('Nivel activo', { exact: true })).toHaveValue(project.levels[1].id); await openMaterials(page); await page.getByLabel('Superficie a pintar', { exact: true }).selectOption('floor'); await field(page, 'Código hexadecimal', '#fedcba');
+  await page.getByLabel('Nivel activo', { exact: true }).selectOption(project.levels[1].id); await expect(page.getByLabel('Nivel activo', { exact: true })).toHaveValue(project.levels[1].id); await openMaterials(page); await page.getByLabel('Superficie a pintar', { exact: true }).selectOption('floor'); await color(page, '#fedcba');
   await expect.poll(async () => (await snapshot(context.request, project.id)).levels[1].surfaces[0].finish.color).toBe('#fedcba');
   await page.getByLabel('Nivel activo', { exact: true }).selectOption(project.levels[0].id); await expect(page.getByLabel('Nivel activo', { exact: true })).toHaveValue(project.levels[0].id); await openMaterials(page); await page.getByLabel('Superficie a pintar', { exact: true }).selectOption('ceiling');
-  await expect(page.getByLabel('Código hexadecimal', { exact: true })).toHaveValue('#123456'); await expect(page.getByLabel('Material de la superficie', { exact: true })).toHaveValue('wood');
+  await expect(page.getByRole('button', { name: 'Color', exact: true })).toContainText('#123456'); await expect(page.getByLabel('Material de la superficie', { exact: true })).toHaveValue('wood');
   saved = await snapshot(context.request, project.id); expect(saved.levels[1].surfaces[0].undersideFinish).toEqual({ color: '#123456', material: 'wood' });
 });
 
 test('empty/copy level controls preserve original content and enforce twelve levels', async ({ page, context }) => {
   test.setTimeout(180000); await account(context.request); const project = await design(context.request); await openEditor(page, project); await page.getByRole('tab', { name: 'Planta', exact: true }).click();
-  const menu = page.locator('.level-menu'); await menu.locator('summary').click(); await menu.getByRole('button', { name: 'Nivel vacío', exact: true }).click();
+  const menu = page.locator('.level-menu'), trigger = menu.getByRole('button', { name: 'Opciones del nivel', exact: true }); await trigger.click(); await menu.getByRole('button', { name: 'Nivel vacío', exact: true }).click();
   await expect.poll(async () => (await snapshot(context.request, project.id)).levels.length).toBe(2); let saved = await snapshot(context.request, project.id); expect(saved.levels[1].walls).toHaveLength(0); expect(saved.levels[1].lights).toHaveLength(0);
   await page.getByLabel('Nivel activo', { exact: true }).selectOption(project.levels[0].id);
   for (let count = 3; count <= 12; count++) {
-    if (await menu.getAttribute('open') === null) await menu.locator('summary').click(); await menu.getByRole('button', { name: 'Copiar estructura inferior', exact: true }).click(); await expect.poll(async () => (await snapshot(context.request, project.id)).levels.length).toBe(count);
+    if (await trigger.getAttribute('aria-expanded') !== 'true') await trigger.click(); await menu.getByRole('button', { name: 'Copiar estructura inferior', exact: true }).click(); await expect.poll(async () => (await snapshot(context.request, project.id)).levels.length).toBe(count);
   }
-  if (await menu.getAttribute('open') === null) await menu.locator('summary').click(); await expect(menu.getByRole('button', { name: 'Nivel vacío', exact: true })).toBeDisabled(); await expect(menu.getByRole('button', { name: 'Copiar estructura inferior', exact: true })).toBeDisabled();
+  if (await trigger.getAttribute('aria-expanded') !== 'true') await trigger.click(); await expect(menu.getByRole('button', { name: 'Nivel vacío', exact: true })).toBeDisabled(); await expect(menu.getByRole('button', { name: 'Copiar estructura inferior', exact: true })).toBeDisabled();
   saved = await snapshot(context.request, project.id); expect(saved.levels[0].lights).toHaveLength(1); expect(saved.levels.slice(1).every(level => !level.furniture.length && !level.openings.length && !level.lights.length)).toBe(true);
 });
 
@@ -233,10 +235,12 @@ test('concurrent roof and stair finishes on different levels survive collaborati
       await openRoom(target); await expand(target, 'Cubiertas'); await expand(target, 'Acabado exterior');
     }
     async function simultaneousFinish(summary: string, colors: string[]) {
-      const inputs = pages.map(target => target.locator('details.construction-finish').filter({ has: target.locator('summary').filter({ hasText: new RegExp('^' + summary + '$') }) }).getByLabel('Código hexadecimal del acabado', { exact: true }));
+      const finishes = pages.map(target => target.locator('details.construction-finish').filter({ has: target.locator('summary').filter({ hasText: new RegExp('^' + summary + '$') }) }));
+      await Promise.all(finishes.map(finish => finish.getByRole('button', { name: 'Color', exact: true }).click()));
+      const inputs = finishes.map(finish => finish.getByLabel('Código hexadecimal', { exact: true }));
       await Promise.all(inputs.map((input, index) => input.fill(colors[index]))); paused = true;
       try {
-        await Promise.all(inputs.map(input => input.press('Tab')));
+        await Promise.all(finishes.map(finish => finish.getByRole('button', { name: 'Aplicar', exact: true }).click()));
         await expect.poll(() => held.map(queue => queue.length)).toEqual([1, 1]);
       } finally { paused = false; for (const queue of held) for (const send of queue.splice(0)) send(); }
       for (const target of pages) await expect(target.locator('.saved-status')).toHaveAttribute('title', 'Guardado');
@@ -253,9 +257,9 @@ test('concurrent roof and stair finishes on different levels survive collaborati
       await target.getByLabel('Nivel activo', { exact: true }).selectOption(project.levels[index ? 2 : 0].id);
       await expect(target.getByLabel('Nivel activo', { exact: true })).toHaveValue(project.levels[index ? 2 : 0].id);
       await openRoom(target); await expand(target, 'Cubiertas'); await expand(target, 'Acabado exterior');
-      await expect(target.locator('details.construction-finish').filter({ has: target.locator('summary').filter({ hasText: /^Acabado exterior$/ }) }).getByLabel('Código hexadecimal del acabado', { exact: true })).toHaveValue(index ? '#abcdef' : '#123456');
+      await expect(target.locator('details.construction-finish').filter({ has: target.locator('summary').filter({ hasText: /^Acabado exterior$/ }) }).getByRole('button', { name: 'Color', exact: true })).toContainText(index ? '#ABCDEF' : '#123456');
       await expand(target, 'Escaleras'); await expand(target, 'Acabado de escalera');
-      await expect(target.locator('details.construction-finish').filter({ has: target.locator('summary').filter({ hasText: /^Acabado de escalera$/ }) }).getByLabel('Código hexadecimal del acabado', { exact: true })).toHaveValue(index ? '#fedcba' : '#334455');
+      await expect(target.locator('details.construction-finish').filter({ has: target.locator('summary').filter({ hasText: /^Acabado de escalera$/ }) }).getByRole('button', { name: 'Color', exact: true })).toContainText(index ? '#FEDCBA' : '#334455');
     }
   } finally { paused = false; for (const queue of held) for (const send of queue.splice(0)) send(); await other.close(); }
 });
@@ -290,16 +294,85 @@ test('touch plan supports two-finger pan/zoom and actual point drawing at mobile
   } finally { await context.close(); }
 });
 
+for (const setup of [false, true]) test(`light drag stays under its grab point after release in ${setup ? 'mobile onboarding' : 'the editor'}`, async ({ page, context }) => {
+  await account(context.request); if (setup) await page.setViewportSize({ width: 390, height: 844 });
+  for (const snapping of [true, false]) {
+    const project = createDefaultProject('Light pointer regression'); project.editing.snap = snapping; if (setup) project.setupStep = 0;
+    expect((await context.request.post('/api/rooms', { headers, data: { id: project.id, project } })).status()).toBe(201);
+    await openEditor(page, project, setup); if (!setup) await page.getByRole('tab', { name: 'Planta', exact: true }).click();
+    const plan = page.locator(setup ? '.setup-preview' : '.large-plan'), light = page.locator('[data-plan-item="' + project.levels[0].lights[0].id + '"]'), circle = light.locator('circle').last();
+    for (const target of [{ x: .8, z: .4 }, { x: -.4, z: .7 }]) {
+      const wall = await planPoint(page, 0, -2); await page.mouse.click(wall.x, wall.y); await expect(plan.getByRole('button', { name: 'Dividir pared', exact: true })).toBeVisible();
+      const box = (await circle.boundingBox())!, grab = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+      await page.mouse.move(grab.x, grab.y); await page.mouse.down(); await expect(plan.getByRole('button', { name: 'Dividir pared', exact: true })).toHaveCount(0);
+      const pointer = await planPoint(page, target.x, target.z); await page.mouse.move(pointer.x, pointer.y, { steps: 8 });
+      const follows = async () => { const visible = (await circle.boundingBox())!; return Math.hypot(visible.x + visible.width / 2 - pointer.x, visible.y + visible.height / 2 - pointer.y); };
+      await expect.poll(follows).toBeLessThan(2); await page.mouse.up(); await expect.poll(follows).toBeLessThan(2);
+      await expect.poll(async () => { const saved = (await snapshot(context.request, project.id)).levels[0].lights[0]; return Math.hypot(saved.x - target.x, saved.z - target.z); }).toBeLessThan(.025);
+      const after = (await circle.boundingBox())!, expectedAfter = await planPoint(page, target.x, target.z);
+      expect(Math.abs(after.x + after.width / 2 - expectedAfter.x)).toBeLessThan(2); expect(Math.abs(after.y + after.height / 2 - expectedAfter.y)).toBeLessThan(2);
+    }
+  }
+});
+
+test('touch light dragging follows the finger while selection resizes the canvas', async ({ browser, browserName }) => {
+  test.skip(browserName !== 'chromium', 'Single-finger drag uses Chromium touch input; physical mobile gestures need device verification.');
+  const context = await browser.newContext({ baseURL: origin, viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, locale: 'es-MX' });
+  try {
+    await account(context.request); const project = await design(context.request), page = await context.newPage(); await openEditor(page, project); await page.getByRole('tab', { name: 'Planta', exact: true }).tap();
+    const plan = page.locator('.large-plan'), svg = plan.locator('.plan-canvas > svg'), circle = svg.locator('[data-plan-item="' + project.levels[0].lights[0].id + '"] circle').last();
+    const wall = await planPoint(page, 0, -2); await page.touchscreen.tap(wall.x, wall.y); await expect(plan.getByRole('button', { name: 'Dividir pared', exact: true })).toBeVisible();
+    const before = (await circle.boundingBox())!, session = await context.newCDPSession(page);
+    await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: before.x + before.width / 2, y: before.y + before.height / 2, id: 1 }] });
+    await expect(plan.getByRole('button', { name: 'Dividir pared', exact: true })).toHaveCount(0);
+    const pointer = await planPoint(page, .7, .4);
+    await session.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ ...pointer, id: 1 }] });
+    const follows = async () => { const visible = (await circle.boundingBox())!; return Math.hypot(visible.x + visible.width / 2 - pointer.x, visible.y + visible.height / 2 - pointer.y); };
+    await expect.poll(follows).toBeLessThan(2); await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await expect.poll(follows).toBeLessThan(2);
+    await expect.poll(async () => { const saved = (await snapshot(context.request, project.id)).levels[0].lights[0]; return Math.hypot(saved.x - .7, saved.z - .4); }).toBeLessThan(.025);
+  } finally { await context.close(); }
+});
+
+for (const native of [true, false]) test(`plan menus dismiss, restore focus and do not select the canvas underneath (${native ? 'native' : 'fallback'})`, async ({ page, context }) => {
+  if (!native) await page.addInitScript(() => { delete (HTMLElement.prototype as unknown as Record<string, unknown>).showPopover; delete (HTMLElement.prototype as unknown as Record<string, unknown>).hidePopover; });
+  await account(context.request); const project = await design(context.request); await openEditor(page, project); await page.getByRole('tab', { name: 'Planta', exact: true }).click();
+  const plan = page.locator('.large-plan'), room = plan.getByRole('button', { name: 'Habitación', exact: true });
+  await room.focus(); await page.keyboard.press('ArrowDown'); await expect(plan.getByRole('menuitem', { name: 'Rectángulo', exact: true })).toBeFocused();
+  await page.keyboard.press('ArrowDown'); await expect(plan.getByRole('menuitem', { name: 'Trazado libre', exact: true })).toBeFocused();
+  await page.keyboard.press('Escape'); await expect(room).toBeFocused(); await expect(room).toHaveAttribute('aria-expanded', 'false');
+  await room.click(); await plan.getByRole('menuitem', { name: 'Rectángulo', exact: true }).click(); await expect(room).toHaveAttribute('aria-expanded', 'false');
+  await expect(plan.locator('.plan-canvas > svg')).toHaveClass('drawing');
+  await plan.getByRole('button', { name: 'Cancelar', exact: true }).click();
+  const level = page.getByRole('button', { name: 'Opciones del nivel', exact: true }); await level.click(); await expect(page.getByLabel('Nombre del nivel', { exact: true })).toBeVisible();
+  const point = await planPoint(page, 0, 0); await page.mouse.click(point.x, point.y); await expect(level).toHaveAttribute('aria-expanded', 'false');
+  expect((await snapshot(context.request, project.id)).levels[0].lights[0]).toEqual(project.levels[0].lights[0]);
+  await level.click(); await page.keyboard.press('Escape'); await expect(level).toBeFocused();
+});
+
+test('two-finger panning follows screen distance with a horizontally letterboxed plan', async ({ browser, browserName }) => {
+  test.skip(browserName !== 'chromium', 'Chromium provides multi-touch input; physical mobile gestures need device verification.');
+  const context = await browser.newContext({ baseURL: origin, viewport: { width: 1360, height: 900 }, hasTouch: true, locale: 'es-MX' });
+  try {
+    await account(context.request); const project = await design(context.request), page = await context.newPage(); await openEditor(page, project); await page.getByRole('tab', { name: 'Planta', exact: true }).click();
+    const svg = page.locator('.large-plan .plan-canvas > svg'); await svg.evaluate(element => { element.style.height = '300px'; element.style.minHeight = '0'; });
+    const box = (await svg.boundingBox())!, before = await planPoint(page, 0, 0), x = box.x + box.width / 2, y = box.y + box.height / 2, session = await context.newCDPSession(page);
+    await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: x - 80, y: y - 45, id: 1 }, { x: x + 80, y: y - 45, id: 2 }] });
+    await session.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x - 45, y: y - 20, id: 1 }, { x: x + 115, y: y - 20, id: 2 }] }); await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    const after = await planPoint(page, 0, 0); expect(after.x - before.x).toBeCloseTo(35, 0); expect(after.y - before.y).toBeCloseTo(25, 0);
+    expect((await snapshot(context.request, project.id)).levels[0].lights[0]).toEqual(project.levels[0].lights[0]);
+  } finally { await context.close(); }
+});
+
 test('twenty level switches retain a single renderer and bounded resources at 1, 4 and 12 levels', async ({ page, context }, info) => {
   test.setTimeout(240000); await account(context.request); const measurements: unknown[] = [], errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   for (const count of [1, 4, 12]) {
     const project = await design(context.request, count, false, false, true), loadStarted = performance.now(); await openEditor(page, project); const canvas = page.locator('.room-scene canvas'); await expect(canvas).toBeVisible();
     await expect.poll(() => canvas.getAttribute('data-scene-metrics'), { timeout: 45000 }).not.toBeNull();
     const loadReadyMs = Math.round(performance.now() - loadStarted), paintStarted = performance.now();
-    await page.getByRole('button', { name: 'Materiales', exact: true }).click(); await field(page, 'Código hexadecimal', '#fafafa');
+    await page.getByRole('button', { name: 'Materiales', exact: true }).click(); await color(page, '#fafafa');
     await expect.poll(async () => (await snapshot(context.request, project.id)).levels[0].walls[0].left.color).toBe('#fafafa'); const paintToSaveMs = Math.round(performance.now() - paintStarted);
-    await page.getByRole('tab', { name: 'Planta', exact: true }).click(); const from = await planPoint(page, .28, .2), to = await planPoint(page, .88, .8), dragStarted = performance.now();
-    await page.mouse.move(from.x, from.y); await page.mouse.down(); await page.mouse.move(to.x, to.y, { steps: 5 }); await page.mouse.up();
+    await page.getByRole('tab', { name: 'Planta', exact: true }).click(); const from = await planPoint(page, .28, .2), dragStarted = performance.now();
+    await page.mouse.move(from.x, from.y); await page.mouse.down(); const to = await planPoint(page, .88, .8); await page.mouse.move(to.x, to.y, { steps: 5 }); await page.mouse.up();
     await expect.poll(async () => { const item = (await snapshot(context.request, project.id)).levels[0].furniture[0]; return { x: item.x, z: item.z }; }).toEqual({ x: .6, z: .6 }); const dragToSaveMs = Math.round(performance.now() - dragStarted);
     await page.getByRole('tab', { name: '3D', exact: true }).click();
     async function freshMetrics(after: number, levelId: string) {

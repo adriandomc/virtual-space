@@ -21,10 +21,11 @@ async function workerSource() {
 }
 const source = workerSource();
 
-type Tab = { id: string; result: 'ready' | 'unsaved' | 'silent' | 'discarded'; messages: string[]; acknowledge?: () => void };
-async function worker(options: { badScript?: boolean; offline?: boolean; tabs?: Tab[] } = {}) {
+type Tab = { id: string; result: 'ready' | 'unsaved' | 'silent' | 'discarded'; messages: string[]; automaticSafe?: boolean; url?: string; acknowledge?: () => void };
+async function worker(options: { badScript?: boolean; offline?: boolean; tabs?: Tab[]; preparedPrevious?: boolean } = {}) {
   const listeners = new Map<string, Function>(), entries = new Map<string, Map<string, Response>>(), calls: string[] = [], matches: string[] = [];
   entries.set('unrelated-app', new Map()); entries.set('3d-space-static-old', new Map()); entries.set('3d-space-v2-static-previous', new Map());
+  if (options.preparedPrevious) entries.get('3d-space-v2-static-previous')!.set('/environments/sunset-fairway-1k.hdr', new Response('prepared HDR'));
   const timers = new Map<number, () => void>(); let timerId = 0, activated = 0;
   let tabs = options.tabs ?? [];
   const caches = {
@@ -60,14 +61,14 @@ async function worker(options: { badScript?: boolean; offline?: boolean; tabs?: 
         matchAll: async (criteria: unknown) => {
           assert.equal(JSON.stringify(criteria), JSON.stringify({ type: 'window', includeUncontrolled: true }));
           return tabs.map(tab => ({
-            id: tab.id,
+            id: tab.id, url: tab.url,
             postMessage: (message: { type: string }, ports?: { postMessage(data: unknown): void }[]) => {
               tab.messages.push(message.type);
               if (tab.result === 'discarded') throw new Error('The tab was discarded.');
               if (message.type !== 'SPACE_SAVE_UPDATE' && message.type !== 'SPACE_SAVE_MODE') return;
-              if (tab.result === 'ready') ports?.[0].postMessage({ ready: true });
+              if (tab.result === 'ready') ports?.[0].postMessage({ ready: true, automaticSafe: tab.automaticSafe });
               else if (tab.result === 'unsaved') ports?.[0].postMessage({ ready: false });
-              else tab.acknowledge = () => ports?.[0].postMessage({ ready: true });
+              else tab.acknowledge = () => ports?.[0].postMessage({ ready: true, automaticSafe: tab.automaticSafe });
             },
           }));
         },
@@ -79,9 +80,9 @@ async function worker(options: { badScript?: boolean; offline?: boolean; tabs?: 
     entries, calls, matches, activated: () => activated, setTabs: (value: Tab[]) => { tabs = value; },
     setOffline: (value: boolean) => { offline = value; }, setUnavailable: (value: boolean) => { unavailable = value; },
     fireTimeouts() { for (const [id, callback] of timers) { timers.delete(id); callback(); } },
-    message(type: string, id: string = crypto.randomUUID()) {
-      const replies: { ready?: boolean; error?: string }[] = []; let pending: Promise<unknown> | undefined;
-      listeners.get('message')!({ data: { type, id }, ports: [{ postMessage: (value: { ready?: boolean; error?: string }) => replies.push({ ...value }) }], waitUntil: (value: Promise<unknown>) => { pending = value; } });
+    message(type: string, id: string = crypto.randomUUID(), automatic = false, client?: { id: string; build: string }) {
+      const replies: { ready?: boolean; error?: string; build?: string }[] = []; let pending: Promise<unknown> | undefined;
+      listeners.get('message')!({ data: { type, id, automatic, build: client?.build }, source: client ? { id: client.id } : undefined, ports: [{ postMessage: (value: { ready?: boolean; error?: string }) => replies.push({ ...value }) }], waitUntil: (value: Promise<unknown>) => { pending = value; } });
       return { replies, complete: () => pending };
     },
     async event(name: string) { let pending: Promise<unknown> | undefined; listeners.get(name)!({ waitUntil: (value: Promise<unknown>) => { pending = value; } }); await pending; },
@@ -130,12 +131,12 @@ test('availability checks every cached dependency, including modules, material a
   const app = await worker(); await app.event('install'); const prepared = app.message('SPACE_PREPARE'); await prepared.complete(); assert.deepEqual(prepared.replies, [{ ready: true }]); app.matches.length = 0; const requests = app.calls.length;
   const cache = [...app.entries].find(([key]) => key.startsWith('3d-space-v3-static-') && key !== '3d-space-v2-static-previous')![1];
   const status = app.message('SPACE_STATUS'); await status.complete();
-  assert.deepEqual(status.replies, [{ ready: true }]);
-  assert.deepEqual(new Set(app.matches), new Set(cache.keys()));
+  assert.equal(status.replies[0]?.ready, true);
+  assert.deepEqual(new Set(app.matches), new Set([...cache.keys()].filter(key => !key.startsWith('/__3d-space-'))));
   for (const path of ['/index.html', '/assets/ModelWorkshop.js', '/environments/sunset-fairway-1k.hdr']) {
     const saved = cache.get(path)!; cache.delete(path);
     const missing = app.message('SPACE_STATUS'); await missing.complete();
-    assert.deepEqual(missing.replies, [{ ready: false }], path); cache.set(path, saved);
+    assert.equal(missing.replies[0]?.ready, false, path); cache.set(path, saved);
   }
   assert.equal(app.calls.length, requests);
 });
@@ -150,7 +151,7 @@ test('an update activates only after every open tab confirms durable data and ac
   delayed.acknowledge!(); await update.complete();
   assert.equal(app.activated(), 1); assert.deepEqual(update.replies, [{ ready: true }]);
   assert.ok(app.entries.has('3d-space-v2-static-previous'), 'waiting for client durability never prunes the active application');
-  await app.event('activate'); assert.ok(!app.entries.has('3d-space-v2-static-previous')); assert.ok(app.entries.has('unrelated-app'));
+  await app.event('activate'); assert.ok(app.entries.has('3d-space-v2-static-previous'), 'old resources stay while clients have not identified their build'); assert.ok(app.entries.has('unrelated-app'));
 });
 
 test('unsaved, closed or discarded tabs refuse the update, preserve active resources, and allow retry after closing the blocking tab', async () => {
@@ -221,11 +222,66 @@ test('unsaved geometry, unacknowledged edits and discarded tabs refuse mode chan
 
 test('optional high-definition assets download only on explicit preparation and a partial retry preserves complete resources', async () => {
   const app = await worker(); await app.event('install');
-  const status = app.message('SPACE_STATUS'); await status.complete(); assert.deepEqual(status.replies, [{ ready: false }]);
+  const status = app.message('SPACE_STATUS'); await status.complete(); assert.equal(status.replies[0]?.ready, false);
   assert.ok(!app.calls.some(path => path.startsWith('/environments/')));
   app.setUnavailable(true); const failed = app.message('SPACE_PREPARE'); await failed.complete(); assert.ok(failed.replies[0].error);
   assert.equal((await app.request('/assets/main.js'))?.status, 200);
   app.setUnavailable(false); const prepared = app.message('SPACE_PREPARE'); await prepared.complete(); assert.deepEqual(prepared.replies, [{ ready: true }]);
   assert.ok(app.calls.some(path => path.startsWith('/environments/'))); assert.ok(app.calls.some(path => path.startsWith('/materials/512/')));
   const calls = app.calls.length, repeated = app.message('SPACE_PREPARE'); await repeated.complete(); assert.equal(app.calls.length, calls);
+});
+
+
+test('natural activation stages all assets when the previous application was prepared, and failed install preserves it', async () => {
+  const app = await worker({ preparedPrevious: true }); await app.event('install');
+  assert.ok(app.calls.includes('/environments/sunset-fairway-1k.hdr')); assert.ok(app.calls.some(path => path.startsWith('/materials/fabric/')));
+  await app.event('activate'); app.setOffline(true);
+  assert.equal((await app.request('/environments/sunset-fairway-1k.hdr'))?.status, 200);
+  const failed = await worker({ preparedPrevious: true, badScript: true }); await assert.rejects(failed.event('install'));
+  assert.ok(failed.entries.get('3d-space-v2-static-previous')!.has('/environments/sunset-fairway-1k.hdr'));
+});
+
+test('embedded viewers do not participate in save handshakes', async () => {
+  const embed: Tab = { id: 'embed', url: 'https://space.test/embed/?room=test', result: 'silent', messages: [] };
+  const app = await worker({ tabs: [embed] }); await app.event('install'); const update = app.message('SPACE_UPDATE'); await update.complete();
+  assert.equal(app.activated(), 1); assert.deepEqual(embed.messages, []);
+});
+
+test('a static file opened in another tab cannot block application updates', async () => {
+  const asset: Tab = { id: 'image', url: 'https://space.test/favicon.svg', result: 'silent', messages: [] };
+  const editor: Tab = { id: 'editor', url: 'https://space.test/editor/?room=test', result: 'ready', messages: [] };
+  const app = await worker({ tabs: [asset, editor] }); await app.event('install'); const update = app.message('SPACE_UPDATE');
+  await new Promise(resolve => setImmediate(resolve)); app.fireTimeouts(); await update.complete();
+  assert.equal(app.activated(), 1); assert.deepEqual(asset.messages, []); assert.ok(editor.messages.includes('SPACE_SAVE_UPDATE'));
+});
+
+test('a tab opened during acknowledgement is included before activating the new worker', async () => {
+  const first: Tab = { id: 'first', result: 'silent', messages: [] }, added: Tab = { id: 'added', result: 'unsaved', messages: [] };
+  const app = await worker({ tabs: [first] }); await app.event('install'); const update = app.message('SPACE_UPDATE'); await new Promise(resolve => setImmediate(resolve));
+  app.setTabs([first, added]); first.acknowledge!(); await update.complete(); assert.equal(app.activated(), 0); assert.ok(added.messages.includes('SPACE_SAVE_UPDATE'));
+});
+
+
+test('automatic activation requires the new safety capability; old acknowledgements remain manual only', async () => {
+  const old: Tab = { id: 'old', result: 'ready', messages: [] };
+  const app = await worker({ tabs: [old] }); await app.event('install');
+  const automatic = app.message('SPACE_UPDATE', 'automatic', true); await automatic.complete(); assert.equal(app.activated(), 0); assert.ok(automatic.replies[0].error);
+  const manual = app.message('SPACE_UPDATE', 'manual'); await manual.complete(); assert.equal(app.activated(), 1);
+  const safe = await worker({ tabs: [{ id: 'new', result: 'ready', automaticSafe: true, messages: [] }] }); await safe.event('install');
+  const update = safe.message('SPACE_UPDATE', 'safe', true); await update.complete(); assert.equal(safe.activated(), 1);
+});
+
+
+test('old active clients cannot prune the newer waiting generation while announcing their build', async () => {
+  const app = await worker({ tabs: [{ id: 'current', result: 'ready', messages: [] }] }); await app.event('install');
+  const status = app.message('SPACE_STATUS'); await status.complete(); const build = status.replies[0].build!;
+  const future = '3d-space-v3-static-future'; app.entries.set(future, new Map([['/index.html', new Response('new complete shell')]]));
+  const hello = app.message('SPACE_HELLO', 'hello', false, { id: 'current', build }); await hello.complete();
+  assert.ok(app.entries.has(future)); assert.ok(!app.entries.has('3d-space-v2-static-previous'));
+});
+
+test('a new tab during a mode change is guarded before the shared preference can change', async () => {
+  const first: Tab = { id: 'first', result: 'silent', messages: [] }, added: Tab = { id: 'added', result: 'unsaved', messages: [] };
+  const app = await worker({ tabs: [first] }); await app.event('install'); const changing = app.message('SPACE_SAVE_ALL'); await new Promise(resolve => setImmediate(resolve));
+  app.setTabs([first, added]); first.acknowledge!(); await changing.complete(); assert.ok(changing.replies[0].error); assert.ok(added.messages.includes('SPACE_SAVE_MODE')); assert.ok(first.messages.includes('SPACE_RELEASE_MODE'));
 });
