@@ -7,6 +7,7 @@ import { fitWorkshopCamera } from './modelWorkshopGeometry';
 import { t, useLocale } from './i18n';
 import type { RoofFace, RoofVertex } from './projectDocument';
 import { transformRoofVertices } from './roofMeshEditing';
+import { registerAppActivity } from './appActivity';
 
 type Props = { vertices: RoofVertex[]; faces: RoofFace[]; selectedIds: string[]; selectedFace: string | null; selectionMode: 'vertices' | 'faces'; multi: boolean; tool: 'translate' | 'rotate' | 'scale'; snap: boolean; step: number; resetKey: number; maximumHeight: number; onSelect: (ids: string[], face: string | null) => void; onChange: (vertices: RoofVertex[]) => void; onStart: () => void; disabled?: boolean };
 type Runtime = { renderer: WebGLRenderer; scene: THREE.Scene; camera: THREE.PerspectiveCamera; controls: OrbitControls; transform: TransformControls; proxy: THREE.Object3D; model: THREE.Mesh; points: THREE.InstancedMesh | null; edges: THREE.LineSegments | null; grid: THREE.GridHelper | null; dirty: boolean; dragging: boolean; initial: RoofVertex[]; inverse: THREE.Matrix4; faceIds: string[] };
@@ -15,6 +16,7 @@ export default function RoofMeshPreview(props: Props) {
   const locale = useLocale(), mount = useRef<HTMLDivElement>(null), runtime = useRef<Runtime | null>(null), latest = useRef(props);
   const [error, setError] = useState(''), [ready, setReady] = useState(false);
   latest.current = props;
+  useEffect(() => registerAppActivity(() => runtime.current?.dragging ? 'Aplica o cancela la forma antes de actualizar la aplicación.' : false), []);
   useEffect(() => {
     const host = mount.current; if (!host) return;
     let renderer: WebGLRenderer | undefined, resize: ResizeObserver | undefined, dispose = () => {};

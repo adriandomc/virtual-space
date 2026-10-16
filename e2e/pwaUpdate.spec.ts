@@ -73,9 +73,14 @@ test('an update preserves unfinished drawing, then survives reload and subsequen
     await page.mouse.click(box!.x + box!.width * .42, box!.y + box!.height * .42);
     const trace = canvas.locator('polyline[stroke="#315e44"]'); await expect(trace).toHaveCount(1);
     const points = await trace.getAttribute('points'); expect(points).toBeTruthy();
+    await page.evaluate(() => {
+      const overlay = document.querySelector('dialog.app-update-overlay'); if (!overlay) throw new Error('Missing update overlay');
+      new MutationObserver(records => { if (records.some(record => record.attributeName === 'open' && record.oldValue === null)) document.documentElement.setAttribute('data-update-freeze-seen', 'yes'); }).observe(overlay, { attributes: true, attributeFilter: ['open'], attributeOldValue: true });
+    });
     await notice(page).getByRole('button', { name: 'Actualizar ahora', exact: true }).click();
     await expect(page.getByRole('alert')).toContainText(/Termina|trazado|borrador|Guarda los cambios/);
     await expect(trace).toHaveAttribute('points', points!); await expect(build(page)).toHaveAttribute('content', 'old');
+    await expect(page.locator('html')).not.toHaveAttribute('data-update-freeze-seen', 'yes');
     expect(await page.evaluate(async () => Boolean((await navigator.serviceWorker.getRegistration())?.waiting))).toBe(true);
 
     await page.getByRole('button', { name: 'Cancelar', exact: true }).click();
@@ -120,18 +125,18 @@ test('a missing old application module can be recovered through the update notic
 test('forced offline mode hides a pending update and does not check workers or request account data', async ({ page, context }) => {
   const deployment = await pwaDeployment();
   try {
-    await sample(context.request); await oldApplication(page, deployment.origin);
-    deployment.deploy(); await page.reload();
-    await expect(notice(page)).toContainText('Actualización disponible', { timeout: 60000 });
+    await sample(context.request); await oldApplication(page, deployment.origin); await prepareDesigns(page);
+    deployment.deploy();
     const dialog = await settings(page);
-    await dialog.getByRole('button', { name: 'Preparar diseños', exact: true }).click();
-    await expect(dialog.getByRole('button', { name: 'Actualizar copia local', exact: true })).toBeEnabled({ timeout: 60000 });
+    await dialog.getByRole('button', { name: 'Buscar actualizaciones', exact: true }).click();
+    await expect(notice(page)).toContainText('Actualización disponible', { timeout: 60000 });
     await dialog.getByRole('switch', { name: 'Modo sin conexión', exact: true }).click();
     await expect(dialog.getByRole('switch', { name: 'Modo sin conexión', exact: true })).toHaveAttribute('aria-checked', 'true');
     await dialog.getByRole('button', { name: 'Cerrar ajustes', exact: true }).click();
     await expect(page.getByText('Sin conexión · Diseños disponibles en este dispositivo', { exact: true })).toBeVisible();
     await expect(notice(page)).toHaveCount(0);
     const start = deployment.requests.length;
+    await page.reload(); await expect(page.getByText('Sin conexión · Diseños disponibles en este dispositivo', { exact: true })).toBeVisible();
     const other = await context.newPage(); await other.goto('about:blank'); await page.bringToFront(); await other.close();
     const offlineSettings = await settings(page);
     await expect(offlineSettings.getByRole('button', { name: 'Actualizar aplicación', exact: true })).toBeDisabled();
@@ -141,4 +146,36 @@ test('forced offline mode hides a pending update and does not check workers or r
     expect(deployment.requests.slice(start).filter(request => request.path.startsWith('/api/') || request.path === '/service-worker.js')).toEqual([]);
     await expect(build(page)).toHaveAttribute('content', 'old');
   } finally { await page.close(); await deployment.close(); }
+});
+
+
+test('a clean opening applies the waiting build automatically without an update click', async ({ page, context }) => {
+  const deployment = await pwaDeployment();
+  try {
+    await sample(context.request); await oldApplication(page, deployment.origin);
+    deployment.deploy(); await page.reload();
+    await expect(build(page)).toHaveAttribute('content', 'new', { timeout: 60000 });
+    await expect(page.getByRole('heading', { name: 'Mis diseños', exact: true })).toBeVisible();
+    await expect(notice(page)).toHaveCount(0);
+  } finally { await page.close(); await deployment.close(); }
+});
+
+test('another tab with incomplete text prevents a manual update until that field is finished', async ({ page, context }) => {
+  const deployment = await pwaDeployment(); let other: Page | undefined;
+  try {
+    const project = await sample(context.request); await oldApplication(page, deployment.origin);
+    await page.getByRole('link', { name: /Diseño conservado.*Continuar preparación/ }).click();
+    const input = page.getByLabel('Nombre del diseño', { exact: true }); await input.fill('');
+    deployment.deploy(); other = await context.newPage(); await oldApplication(other, deployment.origin);
+    await expect(notice(other)).toContainText('Actualización disponible', { timeout: 60000 });
+    await expect(input).toHaveValue('');
+    await notice(other).getByRole('button', { name: 'Actualizar ahora', exact: true }).click();
+    await expect(notice(other)).toContainText(/Guarda|campo/); await expect(build(other)).toHaveAttribute('content', 'old');
+    await expect(input).toHaveValue('');
+    await input.fill('Trabajo conservado'); await input.press('Tab');
+    await notice(other).getByRole('button', { name: 'Actualizar ahora', exact: true }).click();
+    await expect(build(other)).toHaveAttribute('content', 'new', { timeout: 60000 });
+    await expect(build(page)).toHaveAttribute('content', 'new', { timeout: 60000 });
+    await expect(page.getByLabel('Nombre del diseño', { exact: true })).toHaveValue('Trabajo conservado');
+  } finally { await other?.close(); await page.close(); await deployment.close(); }
 });

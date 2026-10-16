@@ -10,7 +10,8 @@ import { bootstrapOfflineMode, offlineForced, offlineFetch, subscribeOfflineMode
 import { hydrateOfflineProject } from './offlineProject';
 import { assertRoomReadyToShare, exportOfflineProject, importOfflineProject, roomHasOfflineChanges, persistOfflineProject, soloNetworkDependencies } from './offlineService';
 import { serializeProjectBackup, type ProjectBackup } from './projectBackup';
-import { registerBeforeAppUpdate } from './appOffline';
+import { registerBeforeAppUpdate, setAppUpdateReady, beginAppActivity } from './appOffline';
+import { validateSketchBlob } from './imageValidation';
 
 type Status = 'loading' | 'saving' | 'saved' | 'error' | 'offline' | 'conflict' | 'syncing';
 const sketchAddress = (id: string, levelId: string, hasSketch: boolean, version: number) => hasSketch ? '/api/rooms/' + encodeURIComponent(id) + '/levels/' + encodeURIComponent(levelId) + '/sketch?v=' + version : null;
@@ -27,6 +28,7 @@ export default function useProject() {
   const [sketchEpoch, setSketchEpoch] = useState(0);
   const [ready, setReady] = useState(false);
   const [status, setStatus] = useState<Status>('loading');
+  useEffect(() => { setAppUpdateReady(status !== 'loading'); return () => setAppUpdateReady(false); }, [status]);
   const [error, setError] = useState('');
   const [connected, setConnected] = useState(false);
   const [canEdit, setCanEdit] = useState(false);
@@ -300,18 +302,22 @@ export default function useProject() {
   }, [id, activeLevelId, sketchEpoch]);
 
   const uploadSketch = useCallback(async (file: File | null) => {
+    const release = beginAppActivity(), levelId = activeLevelRef.current;
+    try {
     if (!canEdit) throw new Error('Espera a que se restablezca la conexión.');
     if (file && (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || file.size > 10 * 1024 * 1024)) throw new Error('Usa una imagen PNG, JPG o WebP de hasta 10 MB.');
-    if (solo.current) { await solo.current.changeSketch(file, activeLevelRef.current); return; }
+    if (file) await validateSketchBlob(file);
+    if (!mounted.current || activeLevelRef.current !== levelId) throw new Error('El nivel cambió. Vuelve a seleccionar el croquis.');
+    if (solo.current) { await solo.current.changeSketch(file, levelId); return; }
     if (!connection.current) throw new Error('Espera a que se restablezca la conexión.');
     if (sketchSaving.current) throw new Error('Espera a que termine de guardarse el croquis.');
     sketchSaving.current = true; lastError.current = ''; setError(''); setStatus('saving');
     try {
-      const levelId = activeLevelRef.current;
       const result = await accountRequest<{ hasSketch: boolean; version: number }>('/api/rooms/' + id + '/levels/' + levelId + '/sketch', { method: file ? 'PUT' : 'DELETE', headers: { ...(file ? { 'Content-Type': file.type } : {}), 'X-Sketch-Request-Id': crypto.randomUUID(), 'X-Sketch-Version': String(snapshotRef.current?.sketches[levelId]?.version ?? 0), 'X-Room-Revision': String(snapshotRef.current?.revision ?? 0) }, body: file ?? undefined });
       if (mounted.current && activeLevelRef.current === levelId) setSketchUrl(sketchAddress(id, levelId, result.hasSketch, result.version));
     } catch (cause) { failure(cause); throw cause; }
     finally { sketchSaving.current = false; finishStatus(); }
+    } finally { release(); }
   }, [id, canEdit, failure, finishStatus]);
   const setSharing = useCallback(async (enabled: boolean) => {
     if (offlineForced()) throw new Error('Desactiva el modo sin conexión para compartir.');
@@ -345,6 +351,8 @@ export default function useProject() {
     } else if (solo.current) await solo.current.discard(); else setAttempt(value => value + 1);
   }, [id, finishStatus]);
   const downloadOfflineBackup = useCallback(async () => {
+    const release = beginAppActivity();
+    try {
     if (solo.current) await solo.current.settled();
     let backup = await exportOfflineProject(id);
     if (recovery.current) {
@@ -355,6 +363,7 @@ export default function useProject() {
     const data = await serializeProjectBackup(backup);
     const url = URL.createObjectURL(data);
     const anchor = document.createElement('a'); anchor.href = url; anchor.download = '3d-space-' + id + '.3dspace'; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } finally { release(); }
   }, [id]);
   const importProject = useCallback(async (backup: ProjectBackup) => {
     if (!solo.current || !canEdit) throw new Error('Abre un diseño privado para importar la copia.');

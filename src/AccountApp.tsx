@@ -13,6 +13,7 @@ import { TERMS_VERSION } from './legalPolicy';
 import { accountRedirect, DESIGNS_PATH, editorPath, LOGIN_PATH, type SitePage } from './routes';
 import InformationMenu from './InformationMenu';
 import LanguageSelector from './LanguageSelector';
+import { registerAppActivity, setAppUpdateReady } from './appActivity';
 import './account.css';
 
 const RoomEditor = lazy(() => import('./App'));
@@ -39,6 +40,8 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
   const [acceptTerms, setAcceptTerms] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
+  const editingCredentials = useRef(false); editingCredentials.current = !!(username || password || confirmPassword || pending);
+  useEffect(() => registerAppActivity(() => editingCredentials.current ? 'Termina o cancela el campo que estás editando antes de continuar.' : false), []);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (pending) return;
@@ -86,6 +89,8 @@ export default function AccountApp({ page }: { page: Exclude<SitePage, 'landing'
   const pendingAccount = useRef<string | null>(null);
   const libraryGeneration = useRef(0);
   pendingAccount.current = pending;
+  useEffect(() => registerAppActivity(() => pendingAccount.current ? 'Espera a que termine la operación actual.' : false), []);
+  useEffect(() => { if (page === 'editor') return; setAppUpdateReady(!loadingSession && !loadingDesigns); return () => setAppUpdateReady(false); }, [page, loadingSession, loadingDesigns]);
   const creationId = useRef<string | null>(null);
   const roomId = new URL(window.location.href).searchParams.get('room');
 

@@ -7,7 +7,7 @@
     "postinstall": "node scripts/patch-three.mjs",
     "dev": "vite --host 0.0.0.0",
     "dev:server": "tsx src/server.ts",
-    "build": "tsc -b && vite build && npm run build:server",
+    "build": "tsc -b && vite build && node scripts/build-static-assets.mjs && npm run build:server",
     "build:server": "tsc -p tsconfig.server.json",
     "start": "node server-dist/server.js",
     "maintenance": "node server-dist/maintenance.js",

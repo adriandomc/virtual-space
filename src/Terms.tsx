@@ -12,7 +12,7 @@ export default function Terms() {
     <header className="privacy-header"><a href="/" aria-label={t("3D Space, inicio")}><Brand className="privacy-brand" /></a><LanguageSelector /><a className="privacy-back" href="/"><ArrowLeft size={18} />{t("Volver al inicio")}</a></header>
     <main className="privacy-main">
       <article className="privacy-document">
-        <header><h1>{t("Condiciones de uso")}</h1><p className="privacy-updated">{t("Última actualización: 15 de octubre de 2026 · Versión")} {TERMS_VERSION}</p></header>
+        <header><h1>{t("Condiciones de uso")}</h1><p className="privacy-updated">{t("Última actualización: 16 de octubre de 2026 · Versión")} {TERMS_VERSION}</p></header>
         <p className="privacy-summary">{t("3D Space es un servicio gratuito para crear y probar diseños de habitaciones. No tiene pagos, suscripciones, publicidad ni analíticas de uso.")}</p>
         <nav className="privacy-index" aria-label={t("Secciones de las condiciones")}><a href="#servicio">{t("Servicio")}</a><a href="#conservacion">{t("Conservación")}</a><a href="#respaldos">{t("Respaldos")}</a><a href="#contacto">{t("Contacto")}</a></nav>
 
@@ -23,6 +23,7 @@ export default function Terms() {
         </section>
 
         <section><h2>{t("Tu cuenta y tus diseños")}</h2>
+          <p>{t("Cada cuenta admite 50 diseños y 500 MiB de contenido. La biblioteca de modelos admite hasta 100 modelos y 100 MiB dentro de ese total. Si alcanzas un límite, puedes abrir, exportar o eliminar contenido para liberar espacio; tus cambios locales pendientes se conservan.")}</p>
           <p>{t("Eres responsable de mantener tu contraseña en secreto y de usar contenido que tengas derecho a incorporar. No hay recuperación de contraseñas: evita perderla y conserva copias de los diseños que necesites.")}</p>
           <p>{t("Tus diseños siguen siendo tuyos. Su almacenamiento y tratamiento se limitan a prestar el servicio, mantener su seguridad y atender las obligaciones descritas en el")} <a href="/privacy">{t("aviso de privacidad")}</a>{t(". No se venden, ni se utilizan para publicidad o entrenamiento de modelos de inteligencia artificial.")}</p>
           <p>{t("Los diseños son privados por defecto. Al activar un enlace compartido permites que quien lo reciba consulte ese diseño, su croquis y los modelos que incorpora y los descargue. Desactivar el enlace evita nuevas consultas, pero no elimina copias que otra persona ya haya descargado.")}</p>

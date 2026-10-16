@@ -34,3 +34,20 @@ test('graph cycles, duplicate parents, invalid materials and expanded triangle b
   assert.equal(validateGlb(file()).triangles, 1);
   assert.equal(inspectOfflineGlb(buffer(file())).texturePixels, 0);
 });
+
+test('online and offline use identical material, accessor, transform and metadata validation', () => {
+  for (const patch of [
+    { materials: [{ pbrMetallicRoughness: { roughnessFactor: 2 } }] },
+    { materials: [{ pbrMetallicRoughness: { metallicFactor: -1 } }] },
+    { materials: [{ emissiveFactor: [1, 2, 0] }] },
+    { materials: [{ alphaMode: 'unknown' }] },
+    { nodes: [{ mesh: 0, rotation: [0, 0, 0, 2] }] },
+    { accessors: [{ bufferView: 0, componentType: 5126, count: 3, type: 'VEC3', byteOffset: 1 }] },
+  ]) {
+    const bytes = file(patch);
+    assert.throws(() => validateGlb(bytes)); assert.throws(() => inspectOfflineGlb(buffer(bytes)));
+  }
+  const bytes = file({ materials: [{ pbrMetallicRoughness: { roughnessFactor: .4, metallicFactor: .6 } }] });
+  const { document: _document, ...offline } = inspectOfflineGlb(buffer(bytes));
+  assert.deepEqual(offline, validateGlb(bytes));
+});

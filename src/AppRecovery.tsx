@@ -1,8 +1,9 @@
 import { t, useLocale } from './i18n';
-import { Component, useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { Component, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { LoaderCircle, RefreshCw, X } from 'lucide-react';
 import { getAppOfflineState, subscribeAppOffline, updateAppOffline } from './appOffline';
 import { offlineForced, subscribeOfflineMode } from './offlineMode';
+import { setAppUpdateReady } from './appActivity';
 
 function AppUpdateNotice() {
   useLocale();
@@ -25,6 +26,11 @@ function AppUpdateNotice() {
 export function AppFrame({ children }: { children: ReactNode }) {
   useLocale();
   const state = useSyncExternalStore(subscribeAppOffline, getAppOfflineState);
+  const progress = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    if (['/', '/help', '/privacy', '/terms'].includes(window.location.pathname)) { setAppUpdateReady(true); return () => setAppUpdateReady(false); }
+  }, []);
+  useEffect(() => { if (state.updating && !progress.current?.open) progress.current?.showModal(); else if (!state.updating) progress.current?.close(); }, [state.updating]);
   useEffect(() => {
     if (!state.updating) return;
     const block = (event: Event) => { event.preventDefault(); event.stopImmediatePropagation(); };
@@ -32,7 +38,7 @@ export function AppFrame({ children }: { children: ReactNode }) {
     events.forEach(name => window.addEventListener(name, block, true));
     return () => events.forEach(name => window.removeEventListener(name, block, true));
   }, [state.updating]);
-  return <><div style={{ display: 'contents' }} inert={state.updating}>{children}<AppUpdateNotice /></div>{state.updating && <div className="app-update-overlay" role="alert" aria-busy="true"><LoaderCircle className="saving-spinner" size={28} /><p>{t("Guardando cambios…")}</p></div>}</>;
+  return <><div style={{ display: 'contents' }} inert={state.updating}>{children}<AppUpdateNotice /></div><dialog ref={progress} className="app-update-overlay" aria-label={t('Guardando cambios…')} aria-busy={state.updating} onCancel={event => event.preventDefault()}>{state.updating && <><LoaderCircle className="saving-spinner" size={28} /><p>{t("Guardando cambios…")}</p></>}</dialog></>;
 }
 export default class AppRecovery extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
@@ -44,5 +50,6 @@ export default class AppRecovery extends Component<{ children: ReactNode }, { fa
 }
 function RecoveryScreen() {
   useLocale();
+  useEffect(() => { setAppUpdateReady(true); return () => setAppUpdateReady(false); }, []);
   return <AppFrame><main className="project-loading"><p>{t('No se pudo abrir esta vista.')}</p><p>{t('Si faltan recursos, conecta el dispositivo y vuelve a intentarlo. Tus copias locales se conservan.')}</p><button className="primary-button" onClick={() => window.location.reload()}>{t('Reintentar')}</button><a href="/designs">{t('Mis diseños')}</a></main></AppFrame>;
 }

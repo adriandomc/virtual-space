@@ -4,8 +4,10 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync,
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import test from 'node:test';
-import { BACKUP_INTERVAL, BACKUP_RETENTION, pruneBackups, restoreBackup, runBackup, verifyBackup } from './backups';
+import { BACKUP_INTERVAL, BACKUP_RETENTION, pruneBackups, restoreBackup, runBackup, verifyBackup, verifyBackupAsync } from './backups';
 import { runMaintenance } from './maintenance';
 
 const time = 1_800_000_000_000;
@@ -61,6 +63,28 @@ test('online backup captures WAL, hashes, sessions, complete schema, policies, m
     assert.equal(restored.removed.revokedSessions, 1);
     assert.notEqual(restored.verified.digest, result.verified.digest);
     assert.ok(!existsSync(join(sample.directory, 'accounts.sqlite')));
+  } finally { sample.dispose(); }
+});
+
+test('snapshot verification keeps the main event loop responsive and reports worker failures', async context => {
+  const sample = fixture();
+  try {
+    sample.database.prepare('UPDATE model_assets SET size=?,data=?').run(16 * 1024 * 1024, Buffer.alloc(16 * 1024 * 1024, 7));
+    const snapshot = await runBackup(sample.database, sample.directory, { now: time });
+    const started = performance.now(), expected = verifyBackup(snapshot.path), synchronousMs = performance.now() - started;
+    let ticks = 0, maxGapMs = 0, last = performance.now();
+    const timer = setInterval(() => { const at = performance.now(); ticks++; maxGapMs = Math.max(maxGapMs, at - last); last = at; }, 5);
+    const asynchronousStarted = performance.now();
+    try { assert.deepEqual(await verifyBackupAsync(snapshot.path), expected); }
+    finally { clearInterval(timer); }
+    assert.ok(ticks > 0, 'verification must yield while hashing and restoring the snapshot');
+    context.diagnostic(JSON.stringify({ blobMiB: 16, synchronousBlockingMs: Math.round(synchronousMs), workerElapsedMs: Math.round(performance.now() - asynchronousStarted), mainLoopMaxGapMs: Math.round(maxGapMs), ticks }));
+    const damaged = join(sample.directory, 'damaged.sqlite'); writeFileSync(damaged, 'broken SQLite');
+    await assert.rejects(verifyBackupAsync(damaged));
+    const source = new URL('./backups.ts', import.meta.url).href;
+    const check = `import { tsImport } from 'tsx/esm/api'; const api = await tsImport(${JSON.stringify(source)}, { parentURL: ${JSON.stringify(import.meta.url)} }); const result = await api.verifyBackupAsync(process.argv[1]); console.log(result.digest);`;
+    const cli = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', check, snapshot.path]);
+    assert.equal(cli.stdout.trim(), expected.digest, 'the verification worker also supports ESM operator shells');
   } finally { sample.dispose(); }
 });
 

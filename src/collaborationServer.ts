@@ -5,11 +5,11 @@ import type { Duplex } from 'node:stream';
 import { WebSocket, WebSocketServer } from 'ws';
 import * as Y from 'yjs';
 import { checkOrigin, HttpError, ipRateIdentity, usernameValue, type createAuth, type User } from './auth.js';
-import { validateProjectDocument, validateProjectChange, projectStructure, type ProjectDocument } from './projectDocument.js';
-import { readProject, writeProject, seedProjectStates, removedSketchStates, confirmProject, stringifyProjectPayload, projectMutationHashPayload, clearProjectCache } from './projectRepository.js';
-import { assembleProject, projectScopes, readProjectScope, writeProjectScope } from './collaborativeProject.js';
+import { validateProjectDocument, validateProjectChange, type ProjectDocument } from './projectDocument.js';
+import { readProject, confirmProject, stringifyProjectPayload, clearProjectCache } from './projectRepository.js';
+import { assembleProject, projectScopes } from './collaborativeProject.js';
 import { mergeStructure, structureCommand, type StructureCommand } from './projectProtocol.js';
-import { sameData } from './sameData.js';
+import type { createProjectCommands } from './projectCommandService.js';
 
 export type RoomRole = 'owner' | 'editor' | 'reader' | 'public';
 export type RoomRow = { id: string; owner_id: string; room: string; revision: number; structure_revision: number; shared: number; updated_at: number };
@@ -19,6 +19,7 @@ type LiveClient = { socket: WebSocket; request: IncomingMessage; id: string; use
 type NotificationStream = { request: IncomingMessage; response: ServerResponse; userId: string; ip: string };
 type Dependencies = {
   database: DatabaseSync;
+  commands: ReturnType<typeof createProjectCommands>;
   auth: ReturnType<typeof createAuth>;
   identify: (request: IncomingMessage) => { ip: string; fromProxy: boolean };
   appOrigin?: string;
@@ -28,8 +29,6 @@ type Dependencies = {
   readJson: (request: IncomingMessage, limit?: number) => Promise<Record<string, unknown>>;
   sendJson: (response: ServerResponse, status: number, body: unknown) => void;
   eraseMember: (id: string, erase: () => void) => void;
-  eraseSketches: (id: string, entries: { levelId: string; version: number }[], erase: () => void) => void;
-  validateReferences: (project: ProjectDocument, userId: string, roomId: string) => void;
 };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_UPDATE = 512 * 1024, MAX_STATE = 4 * 1024 * 1024;
@@ -47,52 +46,8 @@ export function createLiveCollaboration(deps: Dependencies) {
   const { database, auth, identify, appOrigin, now, find, snapshot, readJson, sendJson } = deps;
   const clients = new Set<LiveClient>();
   const streams = new Set<NotificationStream>();
-  const docs = new Map<string, Map<string, Y.Doc>>();
+  const { docs, docFor, states, changedScopes, structureChanged, destroyDocs, commit, receipt, validScope, transaction } = deps.commands;
   const wss = new WebSocketServer({ noServer: true, maxPayload: 6 * 1024 * 1024, perMessageDeflate: false });
-  const docFor = (id: string) => {
-    const cached = docs.get(id); if (cached) return cached;
-    const project = readProject(database, id), values = projectScopes(project), result = new Map<string, Y.Doc>();
-    database.exec('BEGIN IMMEDIATE');
-    try { seedProjectStates(database, project); database.exec('COMMIT'); }
-    catch (cause) { database.exec('ROLLBACK'); throw cause; }
-    for (const [scope, value] of Object.entries(values)) {
-      const doc = new Y.Doc();
-      const row = scope === 'meta' ? database.prepare('SELECT y_state FROM rooms WHERE id=?').get(id) : database.prepare('SELECT y_state FROM project_levels WHERE room_id=? AND id=?').get(id, scope);
-      if (row?.y_state) Y.applyUpdate(doc, row.y_state as Uint8Array); else writeProjectScope(doc, value);
-      result.set(scope, doc);
-    }
-    docs.set(id, result); return result;
-  };
-  const states = (id: string) => Object.fromEntries([...docFor(id)].map(([scope, doc]) => [scope, Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64')]));
-  const changedScopes = (id: string, previous: ProjectDocument, project: ProjectDocument) => {
-    const before = projectScopes(previous), changed = new Map<string, Y.Doc>(), existing = docs.get(id);
-    try {
-      for (const [scope, value] of Object.entries(projectScopes(project))) {
-        if (sameData(before[scope], value)) continue;
-        const doc = new Y.Doc(), source = existing?.get(scope);
-        changed.set(scope, doc);
-        if (source) {
-          Y.applyUpdate(doc, Y.encodeStateAsUpdate(source));
-          // Mutations are serialized by this server. Preserve its actor and all client
-          // history so unacknowledged client updates still refer to existing items.
-          doc.clientID = source.clientID;
-        } else {
-          const row = scope === 'meta' ? database.prepare('SELECT y_state FROM rooms WHERE id=?').get(id) : database.prepare('SELECT y_state FROM project_levels WHERE room_id=? AND id=?').get(id, scope);
-          if (row?.y_state) Y.applyUpdate(doc, row.y_state as Uint8Array);
-          else if (before[scope]) writeProjectScope(doc, before[scope]);
-        }
-        writeProjectScope(doc, value, before[scope] ?? {});
-        if (!sameData(readProjectScope(doc), value)) throw new HttpError(409, 'Los cambios requieren sincronizar el diseño.');
-      }
-      return changed;
-    } catch (cause) { for (const doc of changed.values()) doc.destroy(); throw cause; }
-  };
-  const structureChanged = (previous: ProjectDocument, project: ProjectDocument, scopes: ReadonlySet<string>) => {
-    if (!sameData(previous.levels.map(level => level.id), project.levels.map(level => level.id))) return true;
-    const subset = (value: ProjectDocument) => ({ ...value, levels: value.levels.filter(level => scopes.has(level.id)), stairs: scopes.has('meta') ? value.stairs : [], roofs: scopes.has('meta') ? value.roofs : [] });
-    return projectStructure(subset(previous)) !== projectStructure(subset(project));
-  };
-  const destroyDocs = (id: string) => { for (const doc of docs.get(id)?.values() ?? []) doc.destroy(); docs.delete(id); };
   const send = (client: LiveClient, message: unknown) => {
     if (client.socket.readyState !== WebSocket.OPEN) return;
     if (client.socket.bufferedAmount > 2 * MAX_STATE) { client.socket.terminate(); return; }
@@ -139,41 +94,6 @@ export function createLiveCollaboration(deps: Dependencies) {
       try { authorize(client); send(client, message); }
       catch { client.socket.close(4003, 'Access revoked'); }
     }
-  };
-  const commit = (id: string, project: ProjectDocument, changed: Map<string, Y.Doc>, structural = false, affected: string[] = []) => {
-    writeProject(database, project, new Set(changed.keys()));
-    for (const [scope, doc] of changed) {
-      const state = Y.encodeStateAsUpdate(doc);
-      if (state.length > MAX_STATE) throw new HttpError(413, 'El diseño supera el tamaño permitido.');
-      if (scope === 'meta') database.prepare('UPDATE rooms SET y_state=? WHERE id=?').run(state, id);
-      else database.prepare('UPDATE project_levels SET y_state=? WHERE room_id=? AND id=?').run(state, id, scope);
-    }
-    const totalState = database.prepare('SELECT COALESCE((SELECT length(y_state) FROM rooms WHERE id=?),0)+COALESCE((SELECT SUM(length(y_state)) FROM project_levels WHERE room_id=?),0) AS bytes').get(id, id) as { bytes: number };
-    if (totalState.bytes > MAX_STATE) throw new HttpError(413, 'El diseño supera el tamaño permitido.');
-    for (const levelId of affected) database.prepare('UPDATE project_levels SET structure_revision=structure_revision+1 WHERE room_id=? AND id=?').run(id, levelId);
-    const row = database.prepare('UPDATE rooms SET revision=revision+1,structure_revision=structure_revision+?,updated_at=? WHERE id=? RETURNING revision,structure_revision').get(structural ? 1 : 0, now(), id) as { revision: number; structure_revision: number };
-    return { revision: row.revision, structureRevision: row.structure_revision, updatedAt: new Date(now()).toISOString() };
-  };
-  const saveReceipt = (id: string, operationId: string, userId: string, hash: string, result: unknown) => {
-    database.prepare('INSERT INTO mutation_receipts(room_id,id,user_id,hash,result,created_at) VALUES(?,?,?,?,?,?)').run(id, operationId, userId, hash, JSON.stringify(result), now());
-    database.prepare('DELETE FROM mutation_receipts WHERE created_at<?').run(now() - 30 * 86400000);
-  };
-  const receipt = (id: string, operationId: string, userId: string, hash: string) => {
-    const row = database.prepare('SELECT user_id,hash,result FROM mutation_receipts WHERE room_id=? AND id=?').get(id, operationId);
-    if (!row) return null;
-    if (row.user_id !== userId || row.hash !== hash) throw new HttpError(409, 'La identidad del cambio ya está en uso.');
-    return JSON.parse(String(row.result));
-  };
-  const validScope = (doc: Y.Doc) => {
-    if (doc.share.size !== 1 || !doc.share.has('data') || doc.store.pendingStructs || doc.store.pendingDs) throw new HttpError(400, 'Los cambios requieren sincronizar el diseño.');
-    return readProjectScope(doc);
-  };
-  const transaction = (id: string, project: ProjectDocument, apply: () => void) => {
-    const removed = removedSketchStates(database, project);
-    if (removed.length) { deps.eraseSketches(id, removed, apply); return; }
-    database.exec('BEGIN IMMEDIATE');
-    try { apply(); database.exec('COMMIT'); }
-    catch (cause) { database.exec('ROLLBACK'); throw cause; }
   };
   const initialSync = (client: LiveClient) => {
     const { row, user } = authorize(client);
@@ -228,9 +148,8 @@ export function createLiveCollaboration(deps: Dependencies) {
         changed.set(value.scope, next);
       }
       if (project.id !== client.id) throw new HttpError(400, 'La identidad del proyecto no es válida.');
-      deps.validateReferences(project, user.id, client.id);
       let saved!: ReturnType<typeof commit>;
-      try { transaction(client.id, project, () => { saved = commit(client.id, project, changed, value.type === 'replace-structure', affected); saveReceipt(client.id, messageId!, user.id, hash, saved); }); }
+      try { saved = transaction(client.id, project, user.id, messageId!, hash, () => commit(client.id, project, changed, value.type === 'replace-structure', affected)); }
       catch (cause) { for (const doc of changed.values()) doc.destroy(); next = undefined; uncommitted = undefined; throw cause; }
       confirmProject(database, project, saved.revision, new Set(changed.keys()));
       const cached = docs.get(client.id)!;
@@ -245,7 +164,7 @@ export function createLiveCollaboration(deps: Dependencies) {
       for (const doc of uncommitted?.values() ?? []) doc.destroy();
       const httpError = error instanceof HttpError ? error : new HttpError(400, error instanceof Error ? error.message : 'Los cambios no son válidos.');
       if (httpError.status === 401 || httpError.status === 404) { send(client, { type: 'access', error: httpError.message }); client.socket.close(4003, 'Access revoked'); return; }
-      try { const { row, user } = authorize(client); send(client, { type: 'error', error: httpError.message, status: httpError.status, states: states(client.id), ...snapshot(row, user), requestId: messageId }); }
+      try { const { row, user } = authorize(client); send(client, { type: 'error', error: httpError.message, status: httpError.status, ...(httpError.retryAfter ? { retryAfter: httpError.retryAfter } : {}), states: states(client.id), ...snapshot(row, user), requestId: messageId }); }
       catch { client.socket.close(4003, 'Access revoked'); }
       if (httpError.status === 429) client.socket.close(4008, 'Rate limit');
     }
@@ -303,28 +222,7 @@ export function createLiveCollaboration(deps: Dependencies) {
   return {
     attach(server: Server) { server.on('upgrade', upgrade); },
     refresh,
-    putProject(id: string, project: ProjectDocument, revision: number, userId: string, operationId: string) {
-      const row = find(id); if (!row) throw new HttpError(404, 'Este proyecto no existe.');
-      if (project.id !== id || !UUID.test(operationId)) throw new HttpError(400, 'La identidad del proyecto no es válida.');
-      const current = readProject(database, id);
-      const hash = createHash('sha256').update(projectMutationHashPayload(database, project, revision)).digest('hex');
-      const old = receipt(id, operationId, userId, hash); if (old) return old;
-      if (row.revision !== revision) throw new HttpError(409, 'Otra sesión guardó cambios. Abre el proyecto de nuevo para revisar esa versión.');
-      deps.validateReferences(project, userId, id);
-      const changed = changedScopes(id, current, project), structural = structureChanged(current, project, new Set(changed.keys()));
-      let saved!: ReturnType<typeof commit>;
-      try { transaction(id, project, () => { saved = commit(id, project, changed, structural, structural ? [...changed.keys()].filter(scope => scope !== 'meta') : []); saveReceipt(id, operationId, userId, hash, saved); }); }
-      catch (cause) { for (const doc of changed.values()) doc.destroy(); throw cause; }
-      confirmProject(database, project, saved.revision, new Set(changed.keys()));
-      const cached = docs.get(id);
-      if (cached) {
-        for (const [scope, doc] of changed) { cached.get(scope)?.destroy(); cached.set(scope, doc); }
-        for (const scope of cached.keys()) if (scope !== 'meta' && !project.levels.some(level => level.id === scope)) { cached.get(scope)!.destroy(); cached.delete(scope); }
-      } else for (const doc of changed.values()) doc.destroy();
-      syncClients(id);
-      if (![...clients].some(client => client.id === id)) destroyDocs(id);
-      return saved;
-    },
+    publishProject(id: string) { syncClients(id); if (![...clients].some(client => client.id === id)) destroyDocs(id); },
     async handle(request: IncomingMessage, response: ServerResponse, pathname: string, method: string, ip: string) {
       if (pathname === '/api/notifications/events') {
         if (method !== 'GET') throw new HttpError(405, 'Este método no está permitido.');

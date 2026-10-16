@@ -110,6 +110,8 @@ export class SoloProject {
   }
   async changeSketch(blob: Blob | null, levelId: string) {
     if (!this.editable || !(this.record.draft ?? this.record.snapshot.project).levels.some(level => level.id === levelId)) throw new Error('El diseño necesita revisar su conexión antes de continuar.');
+    if (blob) await validateSketchBlob(blob);
+    if (!this.editable || !(this.record.draft ?? this.record.snapshot.project).levels.some(level => level.id === levelId)) throw new Error('El diseño necesita revisar su conexión antes de continuar.');
     (this.record.sketchDrafts ??= {})[levelId] = { id: crypto.randomUUID(), blob }; this.record.updatedAt = Date.now(); this.generation++;
     this.update(this.status === 'offline' ? 'offline' : 'saving'); await this.persist(); this.schedule();
   }
@@ -229,3 +231,4 @@ export class SoloProject {
   destroy() { this.stopped = true; if (this.timer) clearTimeout(this.timer); }
   settled() { return this.saving.catch(() => {}); }
 }
+import { validateSketchBlob } from './imageValidation';

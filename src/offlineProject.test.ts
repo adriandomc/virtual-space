@@ -109,7 +109,7 @@ test('pending invites and public sharing prevent offline mutations before even u
 
 test('sketch changes coalesce offline, including removal, without losing a later edit after a lost acknowledgement', async () => {
   const f = fixture(); await f.project.initialize(true);
-  const image = new Blob(['image'], { type: 'image/png' }); await f.project.changeSketch(image, f.server.project.activeLevelId);
+  const image = new Blob([Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a4n8AAAAASUVORK5CYII=', 'base64')], { type: 'image/png' }); await f.project.changeSketch(image, f.server.project.activeLevelId);
   let release!: () => void, entered!: () => void;
   const started = new Promise<void>(resolve => { entered = resolve; });
   f.state.beforeSketch = () => new Promise<void>(resolve => { release = resolve; entered(); }); f.state.failAfterSketch = true;
@@ -120,7 +120,7 @@ test('sketch changes coalesce offline, including removal, without losing a later
 });
 
 test('remote sketch revision conflicts rather than replacing another device image', async () => {
-  const f = fixture(); await f.project.initialize(true); await f.project.changeSketch(new Blob(['local'], { type: 'image/png' }), f.server.project.activeLevelId);
+  const f = fixture(); await f.project.initialize(true); await f.project.changeSketch(new Blob([Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a4n8AAAAASUVORK5CYII=', 'base64')], { type: 'image/png' }), f.server.project.activeLevelId);
   f.server = { ...f.server, sketches: { [f.server.project.activeLevelId]: { version: 1, hasSketch: true, mutationId: 'remote' } } }; await f.project.retry();
   assert.equal(f.state.status, 'conflict'); assert.equal(f.state.sketches, 0); assert.ok(Object.keys(f.project.record.sketchDrafts ?? {}).length); f.project.destroy();
 });
@@ -151,7 +151,7 @@ test('closing or changing account while inflight intent is being persisted does 
       if (record.inflight || Object.keys(record.inflightSketches ?? {}).length) await new Promise<void>(resolve => { release = resolve; entered(); });
       await original(record);
     };
-    if (sketch) await f.project.changeSketch(new Blob(['image'], { type: 'image/png' }), f.server.project.activeLevelId);
+    if (sketch) await f.project.changeSketch(new Blob([Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a4n8AAAAASUVORK5CYII=', 'base64')], { type: 'image/png' }), f.server.project.activeLevelId);
     else f.project.change({ ...f.server.project, name: 'Pending' });
     const syncing = f.project.retry(); await started; f.project.destroy(); release(); await syncing;
     assert.equal(f.state.puts, 0); assert.equal(f.state.sketches, 0);

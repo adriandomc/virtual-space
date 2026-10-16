@@ -4,16 +4,11 @@ import { RotateCcw } from 'lucide-react';
 import type { FurnitureItem, ModelPart } from './types';
 import { modelMetadata, type ModelAsset } from './customModel';
 import NumberInput from './NumberInput';
-import useFieldDraft from './useFieldDraft';
-import { normalizeHex } from './color';
+import ColorPicker from './ColorPicker';
 import './customModel.css';
 
-type Props = { item: FurnitureItem; roomId?: string; onChange: (item: FurnitureItem) => void; readOnly?: boolean; notify?: (message: string) => void };
-function PartColor({ value, onChange, invalid }: { value: string; onChange: (value: string) => void; invalid: () => void }) {
-  const { inputProps } = useFieldDraft({ value, parse: normalizeHex, onCommit: onChange, onInvalid: invalid });
-  return <div className="model-part-color"><input type="color" aria-label={t('Color de la parte')} value={value} onChange={event => onChange(event.target.value)} /><input {...inputProps} type="text" aria-label={t('Código hexadecimal de la parte')} placeholder="#ffffff" maxLength={7} spellCheck={false} /></div>;
-}
-export default function CustomModelEditor({ item, roomId, onChange, readOnly = false, notify }: Props) {
+type Props = { item: FurnitureItem; roomId?: string; onChange: (item: FurnitureItem) => void; onPreview?: (item: FurnitureItem | null) => void; revision?: unknown; colors?: string[]; readOnly?: boolean; notify?: (message: string) => void };
+export default function CustomModelEditor({ item, roomId, onChange, onPreview, revision, colors, readOnly = false, notify }: Props) {
   useLocale();
   const [metadata, setMetadata] = useState<ModelAsset | null>(null);
   const [selected, setSelected] = useState('');
@@ -47,7 +42,7 @@ export default function CustomModelEditor({ item, roomId, onChange, readOnly = f
       <label>{t('Parte')}<select value={selected} onChange={event => { setSelected(event.target.value); setError(''); }}>{metadata.nodes.map(node => <option key={node.key} value={node.key}>{node.generatedName === true ? t('Parte {{number}}', { number: Number(node.key) + 1 }) : node.name}</option>)}</select></label>
       <label className="model-part-visible"><input type="checkbox" checked={part.visible !== false} onChange={event => change({ visible: event.target.checked })} />{t('Visible')}</label>
       <label>{t('Material')}<select value={part.material ?? ''} onChange={event => change({ material: event.target.value ? event.target.value as ModelPart['material'] : undefined })}><option value="">{t('Original')}</option><option value="wood">{t('Madera')}</option><option value="plastic">{t('Plástico')}</option><option value="metal">{t('Metal')}</option></select></label>
-      <div className="model-part-color-section" role="group" aria-label={t('Color de la parte')}><span>{t('Color')}</span><label className="model-part-visible"><input type="checkbox" checked={part.color === undefined} onChange={event => change({ color: event.target.checked ? undefined : item.color ?? '#ffffff' })} />{t('Color original')}</label>{part.color !== undefined && <PartColor value={part.color} onChange={color => change({ color })} invalid={() => report('Escribe un código hexadecimal válido.')} />}</div>
+      <div className="model-part-color-section" role="group" aria-label={t('Color de la parte')}><label className="model-part-visible"><input type="checkbox" checked={part.color === undefined} onChange={event => change({ color: event.target.checked ? undefined : item.color ?? '#ffffff' })} />{t('Color original')}</label>{part.color !== undefined && <ColorPicker key={item.id + selected} label={t('Color de la parte')} value={part.color} revision={revision ?? item} disabled={readOnly} colors={colors} onChange={color => change({ color })} onPreview={color => onPreview?.(color ? { ...item, parts: { ...item.parts, [selected]: { ...part, color } } } : null)} />}</div>
       <details className="model-part-transforms"><summary>{t('Posición y tamaño')}</summary>{controls('position', t('Desplazamiento'), 0, -20, 20, 0.1)}{controls('rotation', t('Rotación'), 0, -360, 360, 15)}{controls('scale', t('Escala'), 1, 0.1, 10, 0.1)}</details>
       <button type="button" onClick={reset} className="model-part-reset"><RotateCcw size={16} />{t('Restablecer parte')}</button>
     </fieldset>}

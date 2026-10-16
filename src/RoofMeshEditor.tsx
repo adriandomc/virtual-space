@@ -5,7 +5,7 @@ import { projectId, type MeshRoof, type ProjectDocument, type RoofFace, type Roo
 import { editRoofMesh } from './projectOperations';
 import NumberInput from './NumberInput';
 import RoofMeshPreview from './RoofMeshPreview';
-import { registerBeforeAppUpdate } from './appOffline';
+import { registerAppActivity, registerBeforeAppUpdate } from './appOffline';
 import { sameData } from './sameData';
 import './roofMeshEditor.css';
 
@@ -32,6 +32,7 @@ export default function RoofMeshEditor({ project, roof, onApply, onCancel, readO
   function cancel() { if (dirty) setConfirmDiscard(true); else onCancel(); }
   useEffect(() => { dialog.current?.showModal(); window.dispatchEvent(new CustomEvent('space-mesh-editor-active', { detail: true })); return () => { window.dispatchEvent(new CustomEvent('space-mesh-editor-active', { detail: false })); }; }, []);
   useEffect(() => registerBeforeAppUpdate(async () => { if (current.current.dirty) throw new Error('Aplica o cancela la forma antes de actualizar la aplicación.'); }), []);
+  useEffect(() => registerAppActivity(() => current.current.dirty ? 'Aplica o cancela la forma antes de actualizar la aplicación.' : false), []);
   useEffect(() => { if (!dirty) return; const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; }; window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn); }, [dirty]);
   return <dialog ref={dialog} className="roof-mesh-dialog" aria-labelledby="roof-mesh-title" onCancel={event => { event.preventDefault(); cancel(); }}>
     <header className="roof-mesh-header"><h2 id="roof-mesh-title">{t('Editar forma de cubierta')}</h2><button type="button" aria-label={t('Cerrar edición de cubierta')} onClick={cancel}><X size={21} /></button></header>

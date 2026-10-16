@@ -7,6 +7,7 @@ import { applyErasures, validateErasureFile } from './erasures.js';
 import { deleteInactiveAccounts } from './retention.js';
 import { assertCurrentDatabase } from './databaseSchema.js';
 import { BACKUP_RETENTION_DAYS } from './legalPolicy.js';
+import { Worker } from 'node:worker_threads';
 
 export const BACKUP_INTERVAL = 24 * 60 * 60_000;
 export const BACKUP_RETENTION = BACKUP_RETENTION_DAYS * BACKUP_INTERVAL;
@@ -110,6 +111,28 @@ export function verifyBackup(value: string): BackupVerification {
   }
 }
 
+/** Workers open only immutable snapshots; the live SQLite connection stays on its owner. */
+export function verifyBackupAsync(path: string): Promise<BackupVerification> {
+  const module = new URL(import.meta.url); module.search = '';
+  return new Promise((accept, reject) => {
+    const worker = new Worker(`(async () => { const { parentPort, workerData } = await import('node:worker_threads');
+      (async () => {
+        const api = new URL(workerData.module).pathname.endsWith('.ts')
+          ? await (await import('tsx/esm/api')).tsImport(workerData.module, { parentURL: workerData.module })
+          : await import(workerData.module);
+        return api.verifyBackup(workerData.path);
+      })().then(result => parentPort.postMessage({ result }), error => parentPort.postMessage({ error: error.message })); })();`,
+      { eval: true, workerData: { module: module.href, path } });
+    let settled = false;
+    worker.once('message', (message: { result?: BackupVerification; error?: string }) => {
+      settled = true;
+      if (message.result) accept(message.result); else reject(new Error(message.error ?? 'Backup verification failed.'));
+    });
+    worker.once('error', reject);
+    worker.once('exit', code => { if (!settled) reject(new Error('Backup verification worker exited: ' + code)); });
+  });
+}
+
 /** Expired snapshots are removed even if the next backup cannot be made. */
 export function pruneBackups(dataDir: string, { now = Date.now(), backupDir = join(dataDir, 'backups') }: { now?: number; backupDir?: string } = {}) {
   if (!Number.isSafeInteger(now) || now < 1_000_000_000_000 || now > 9_999_999_999_999) throw new Error('Invalid backup time.');
@@ -144,7 +167,7 @@ export async function runBackup(database: DatabaseSync, dataDir: string, { now =
     pruneBackups(dataDir, { now, backupDir: directory });
     for (const candidate of candidates(directory)) {
       if (force || now - candidate.timestamp >= BACKUP_INTERVAL || candidate.timestamp > now) break;
-      try { return { created: false, path: candidate.path, verified: verifyBackup(candidate.path) }; }
+      try { return { created: false, path: candidate.path, verified: await verifyBackupAsync(candidate.path) }; }
       catch { /* A damaged recent snapshot must not prevent a fresh backup. */ }
     }
     const token = randomBytes(16).toString('hex');
@@ -156,7 +179,7 @@ export async function runBackup(database: DatabaseSync, dataDir: string, { now =
       const snapshot = new DatabaseSync(partial);
       try { snapshot.exec('PRAGMA journal_mode=DELETE;'); } finally { snapshot.close(); }
       chmodSync(partial, 0o600);
-      const verified = verifyBackup(partial);
+      const verified = await verifyBackupAsync(partial);
       const descriptor = openSync(partial, 'r+');
       try { fsyncSync(descriptor); } finally { closeSync(descriptor); }
       renameSync(partial, destination);

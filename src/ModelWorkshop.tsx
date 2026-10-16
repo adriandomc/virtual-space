@@ -7,12 +7,13 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { Copy, Focus, Group, LoaderCircle, Magnet, Move, PanelRight, Pencil, Plus, Redo2, RotateCw, Scaling, Trash2, Undo2, Ungroup, X } from 'lucide-react';
 import FurnitureCatalog from './FurnitureCatalog.tsx';
 import type { FurniturePreset } from './furnitureCatalog';
-import { createFurnitureModel } from './RoomScene';
+import { createFurnitureModel } from './furnitureRendering';
 import { loadEditableModel, uploadModel } from './customModel';
 import type { ModelAsset } from './customModel';
 import type { FurnitureItem, FurnitureMaterial } from './types';
 import useFieldDraft from './useFieldDraft';
-import { parseColor, parseName, parseNumber } from './fieldDraft';
+import { parseName, parseNumber } from './fieldDraft';
+import ColorPicker from './ColorPicker';
 import { addModelFace, addModelVertex, clampWorkshopScale, cloneWorkshopModel, deleteModelFace, deleteModelVertex, disposeWorkshopModel, exportWorkshopGLB, fitWorkshopCamera, getEditableVertices, getModelFaces, moveModelVertex, setWorkshopColor, setWorkshopMaterial, workshopSurface } from './modelWorkshopGeometry';
 import { createWorkshopPiece, WORKSHOP_PIECES, type WorkshopPiecePreset } from './workshopPieces';
 import { captureWorkshopSnapshot, WorkshopHistory, type WorkshopSnapshot } from './workshopHistory';
@@ -21,7 +22,7 @@ import type { WorkshopBooleanOperation } from './workshopBoolean';
 import { alignWorkshopPiece, snapWorkshopPiece, type WorkshopAxis, type WorkshopAlignment } from './workshopAlignment';
 import { applySelectionTransform, captureSelectionTransform, createSelectionProxy, duplicateWorkshopPieces, groupWorkshopPieces, ungroupWorkshopPieces, workshopGroup, workshopSelectionUnit, type WorkshopSelectionTransform } from './workshopGrouping';
 import './modelWorkshop.css';
-import { registerBeforeAppUpdate } from './appOffline';
+import { registerBeforeAppUpdate, registerAppActivity } from './appOffline';
 
 type Props = { item?: FurnitureItem; roomId: string; onSaved: (asset: ModelAsset) => boolean | void; onClose: () => void };
 type Panel = 'add' | 'model' | 'pieces' | 'alignment' | 'geometry';
@@ -48,11 +49,6 @@ function NumberControl({ label, value, onChange, min = -10000, max = 10000, inte
 function NameControl({ value, onChange, label }: { value: string; onChange: (value: string) => void; label: string }) {
   const field = useFieldDraft({ value, parse: raw => parseName(raw), onCommit: onChange });
   return <label className="workshop-field"><span>{label}</span><input maxLength={80} {...field.inputProps} /></label>;
-}
-
-function ColorControl({ value, onChange }: { value: string; onChange: (value: string) => void }) {
-  const field = useFieldDraft({ value, parse: parseColor, onCommit: onChange });
-  return <label className="workshop-field"><span>{t('Color')}</span><span className="workshop-color"><input type="color" value={value} aria-label={t('Elegir color')} onChange={event => onChange(event.target.value)} /><input aria-label={t('Color hexadecimal')} maxLength={7} {...field.inputProps} /></span></label>;
 }
 
 function PieceThumbnail({ preset }: { preset: WorkshopPiecePreset }) {
@@ -95,14 +91,14 @@ function showSnapGuide(active: Runtime, piece: THREE.Mesh, matches: ReturnType<t
 
 export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props) {
   const locale = useLocale();
-  useEffect(() => registerBeforeAppUpdate(async () => { throw new Error('Guarda o cierra el modelo antes de actualizar la aplicación.'); }), []);
   const dialog = useRef<HTMLDialogElement>(null), mount = useRef<HTMLDivElement>(null), panelContent = useRef<HTMLDivElement>(null), runtime = useRef<Runtime | null>(null);
   const [ready, setReady] = useState(false), [error, setError] = useState(''), [saving, setSaving] = useState(false), [revision, setRevision] = useState(0);
-  useEffect(() => {
-    if (!revision) return;
-    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
-    window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn);
-  }, [revision]);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const initialName = useRef(item?.name ?? t('Mi modelo'));
+  const colorPreview = useRef<Map<THREE.MeshStandardMaterial, THREE.Color> | null>(null);
+  const dirtyState = useRef(false);
+  useEffect(() => registerBeforeAppUpdate(async () => { if (dirtyState.current || runtime.current?.transform.dragging) throw new Error('Guarda o cierra el modelo antes de actualizar la aplicación.'); }), []);
+  useEffect(() => registerAppActivity(() => dirtyState.current || runtime.current?.transform.dragging ? 'Guarda o cierra el modelo antes de actualizar la aplicación.' : false), []);
   const [selected, setSelected] = useState<string | null>(null), [panel, setPanel] = useState<Panel>(item ? 'model' : 'add'), [tool, setTool] = useState<Tool>('translate'), [geometryTool, setGeometryTool] = useState<GeometryTool>('vertices');
   const [selectedIds, setSelectedIds] = useState<string[]>([]), [multiSelect, setMultiSelect] = useState(false);
   const [palette, setPalette] = useState<'primitives' | 'prefabs' | 'furniture'>('prefabs'), [second, setSecond] = useState(''), [operation, setOperation] = useState<WorkshopBooleanOperation>('union');
@@ -113,6 +109,11 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
   const preview = useRef<{ result: THREE.Mesh; base: THREE.Mesh; cutter: THREE.Mesh; visibility: [boolean, boolean] } | null>(null);
   const [vertexId, setVertexId] = useState(0), [faceId, setFaceId] = useState(0), [faceVertices, setFaceVertices] = useState<[number, number, number]>([0, 1, 2]);
   const [name, setName] = useState(item?.name ?? t('Mi modelo'));
+  dirtyState.current = history.current.canUndo || name !== initialName.current || computing || previewing;
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => { if (dirtyState.current || runtime.current?.transform.dragging) { event.preventDefault(); event.returnValue = ''; } };
+    window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn);
+  }, []);
   const [panelOpen, setPanelOpen] = useState(true);
   const [snapEnabled, setSnapEnabled] = useState(true), [snapGrid, setSnapGrid] = useState(true), [snapPieces, setSnapPieces] = useState(true), [gridStep, setGridStep] = useState(.05), [angleStep, setAngleStep] = useState(15);
   const [alignmentReference, setAlignmentReference] = useState(''), [alignmentAxis, setAlignmentAxis] = useState<WorkshopAxis>('x');
@@ -128,6 +129,20 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
   const faces = mesh && panel === 'geometry' && geometryTool === 'faces' ? getModelFaces(mesh.geometry) : [];
   const vertex = vertices[Math.min(vertexId, Math.max(0, vertices.length - 1))];
   const reference = pieces.find(piece => piece.uuid === alignmentReference && !selectedIds.includes(piece.uuid));
+
+  function closeWorkshop() {
+    if (saving) return;
+    if (dirtyState.current || runtime.current?.transform.dragging) setConfirmDiscard(true);
+    else onClose();
+  }
+  function previewColor(color: string | null) {
+    if (color === null) {
+      colorPreview.current?.forEach((previous, material) => { material.color.copy(previous); }); colorPreview.current = null;
+      return;
+    }
+    if (!colorPreview.current) colorPreview.current = new Map(selection.flatMap(piece => (Array.isArray(piece.material) ? piece.material : [piece.material]).map(material => [material as THREE.MeshStandardMaterial, (material as THREE.MeshStandardMaterial).color.clone()] as const)));
+    colorPreview.current.forEach((_previous, material) => { material.color.set(color); });
+  }
 
   useEffect(() => {
     runtime.current?.renderer.domElement.setAttribute('aria-label', t('Editor de modelo 3D. Selecciona una pieza y arrastra los controles para editarla.'));
@@ -541,10 +556,11 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
     </>}
   </> : <p className="workshop-empty">{t('Selecciona una pieza.')}</p>;
 
-  return <dialog ref={dialog} className={'model-workshop' + (!pieces.length ? ' is-empty' : '') + (panel === 'alignment' || panel === 'pieces' ? ' is-aligning' : '')} aria-labelledby="workshop-title" onCancel={event => { event.preventDefault(); if (!saving) onClose(); }} onKeyDown={event => {
+  return <dialog ref={dialog} className={'model-workshop' + (!pieces.length ? ' is-empty' : '') + (panel === 'alignment' || panel === 'pieces' ? ' is-aligning' : '')} aria-labelledby="workshop-title" onCancel={event => { event.preventDefault(); closeWorkshop(); }} onKeyDown={event => {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z' && !(event.target as HTMLElement).closest('input,textarea,select,[contenteditable="true"]')) { event.preventDefault(); travelHistory(event.shiftKey ? 'redo' : 'undo'); }
   }}>
-    <header className="workshop-header"><h2 id="workshop-title">{item ? t('Editar modelo') : t('Crear modelo')}</h2><button type="button" className="workshop-save primary-button" onClick={() => void save()} disabled={!ready || locked || !pieces.length}>{saving && <LoaderCircle size={17} className="saving-spinner" />}{saving ? t('Guardando') : item ? t('Guardar copia') : t('Guardar modelo')}</button><button type="button" className="icon-button" aria-label={t('Cerrar editor de modelo')} onClick={onClose} disabled={saving}><X size={22} /></button></header>
+    <header className="workshop-header"><h2 id="workshop-title">{item ? t('Editar modelo') : t('Crear modelo')}</h2><button type="button" className="workshop-save primary-button" onClick={() => void save()} disabled={!ready || locked || !pieces.length}>{saving && <LoaderCircle size={17} className="saving-spinner" />}{saving ? t('Guardando') : item ? t('Guardar copia') : t('Guardar modelo')}</button><button type="button" className="icon-button" aria-label={t('Cerrar editor de modelo')} onClick={closeWorkshop} disabled={saving}><X size={22} /></button></header>
+    {confirmDiscard && <div className="workshop-discard" role="alert"><span>{t('¿Descartar los cambios del modelo?')}</span><button type="button" onClick={() => setConfirmDiscard(false)}>{t('Seguir editando')}</button><button type="button" onClick={onClose}>{t('Descartar cambios')}</button></div>}
     {(computing || previewing) && <div className="workshop-operation-status" role="status"><span>{computing ? <><LoaderCircle size={17} className="saving-spinner" />{t('Calculando…')}</> : t('Vista previa')}</span>{previewing && <button type="button" className="primary-button" onClick={applyBoolean}>{t('Aplicar')}</button>}<button type="button" className="outline-button" onClick={discardPreview}>{t('Cancelar')}</button></div>}
     <div className={`workshop-workspace${panelOpen ? '' : ' is-panel-hidden'}`}>
       <section className="workshop-viewport"><div ref={mount} className="workshop-canvas" />{!ready && !error && <div className="workshop-loading"><LoaderCircle size={24} className="saving-spinner" /></div>}
@@ -569,7 +585,7 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
             {mesh ? <>
               {commonGroup ? <NameControl label={t('Grupo')} value={commonGroup.name} onChange={value => run(() => { for (const piece of selection) piece.userData.workshopGroup = { ...commonGroup, name: value }; }, `group-name-${commonGroup.id}`)} /> : !isMultiple && <NameControl label={t('Pieza')} value={mesh.name} onChange={value => run(() => { mesh.name = value; }, `piece-name-${mesh.uuid}`)} />}
               <label className="workshop-field"><span>{isMultiple ? t('Material de la selección') : t('Material')}</span><select value={workshopSurface(firstMaterial(mesh))} onChange={event => run(() => { for (const piece of selection) setWorkshopMaterial(piece, event.target.value as FurnitureMaterial, '#' + firstMaterial(piece).color.getHexString()); })}><option value="wood">{t('Madera')}</option><option value="plastic">{t('Plástico')}</option><option value="metal">{t('Metal')}</option></select></label>
-              <ColorControl value={'#' + firstMaterial(mesh).color.getHexString()} onChange={value => run(() => { for (const piece of selection) setWorkshopColor(piece, value); }, `color-${selectedIds.join('-')}`)} />
+              <ColorPicker key={selectedIds.join('-')} value={'#' + firstMaterial(mesh).color.getHexString()} revision={revision} colors={[...new Set(pieces.flatMap(piece => (Array.isArray(piece.material) ? piece.material : [piece.material]).map(material => '#' + (material as THREE.MeshStandardMaterial).color.getHexString())))]} onPreview={previewColor} onChange={value => { previewColor(null); run(() => { for (const piece of selection) setWorkshopColor(piece, value); }); }} />
               {isMultiple ? <div className="workshop-group"><span>{t('Posición (m)')}</span><div className="workshop-coordinates">{AXES.map(axis => <NumberControl key={axis} label={axis.toUpperCase()} value={selectionCenter![axis]} onChange={value => moveSelection(axis, value)} />)}</div></div> : <>
                 <div className="workshop-group"><span>{t('Tamaño (m)')}</span><div className="workshop-coordinates">{([['x', "Ancho"], ['y', "Alto"], ['z', "Fondo"]] as const).filter(([axis]) => dimensions[axis] > .000001).map(([axis, label]) => <NumberControl key={axis} label={t(label)} value={dimensions[axis] * Math.abs(mesh.scale[axis])} min={.001} max={Math.min(10000, dimensions[axis] * 1000)} onChange={value => run(() => { mesh.scale[axis] = (Math.sign(mesh.scale[axis]) || 1) * value / dimensions[axis]; }, `size-${mesh.uuid}-${axis}`)} />)}</div></div>
                 <details className="workshop-transforms"><summary>{t('Posición y giro')}</summary>{([['position', "Posición (m)"], ['rotation', "Giro (°)"]] as const).map(([attribute, label]) => <div className="workshop-group" key={attribute}><span>{t(label)}</span><div className="workshop-coordinates">{AXES.map(axis => <NumberControl key={axis} label={axis.toUpperCase()} value={attribute === 'rotation' ? THREE.MathUtils.radToDeg(mesh.rotation[axis]) : mesh.position[axis]} onChange={value => run(() => { if (attribute === 'rotation') mesh.rotation[axis] = THREE.MathUtils.degToRad(value); else mesh.position[axis] = value; }, `${attribute}-${mesh.uuid}-${axis}`)} />)}</div></div>)}</details>

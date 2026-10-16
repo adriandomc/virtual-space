@@ -34,8 +34,6 @@ Rendering is an interactive approximation. It is not ray tracing, a photometric 
 - A current browser with WebGL; WebGPU is used where available. HTTPS or localhost is required for PWA capabilities and WebGPU.
 - Docker for container deployment. No separate database server or authentication service is required.
 
-Three.js is pinned to `0.180.0`. Installation applies [`scripts/patch-three.mjs`](scripts/patch-three.mjs), a small feature-check backport for browsers without `VideoFrame`; it does not add a video API or change rendering behavior. The script checks the exact dependency version and expected source before writing. Review or remove this patch when upgrading Three.js.
-
 ## Local development
 
 Install dependencies and start the API:
@@ -76,12 +74,19 @@ npm run test:e2e:webkit
 
 `npm test` runs the TypeScript unit and integration tests. `build` checks TypeScript and builds both applications. Playwright rebuilds the app, starts an isolated production server at `127.0.0.1:5188` and uses a temporary database; it does not use development or production data. Set `PLAYWRIGHT_CHANNEL=chrome` to use an installed Chrome channel. Failure screenshots and traces are written to `test-results/`.
 
-Browser coverage includes preparation, startup without a server, local models and reference images, forced-offline network isolation, durable drafts and synchronization. Browser automation does not replace installation and storage-retention checks on physical Android and iOS devices.
+CI uses Node.js 24 on Linux, runs unit/integration tests, the production build, Chromium/WebKit flows and a Docker build. Real-GPU checks remain separate from software-rendered CI.
+
+The [architecture and resource review](docs/architecture-review.md) records the verified changes, measurements and remaining operating limits.
+
+Browser coverage includes color previews and cancellation, plan item positions after release, transient menu dismissal, guarded automatic updates, preparation, startup without a server, local models and reference images, forced-offline network isolation, durable drafts and synchronization. Browser automation does not replace installation and storage-retention checks on physical Android and iOS devices.
 
 ## Configuration
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
+| `ACCOUNT_MAX_DESIGNS` | `50` | Maximum owned designs per account; positive integer. |
+| `ACCOUNT_MAX_BYTES` | `524288000` | Account content quota in bytes (500 MiB), including canonical documents, sketches and owned models. |
+| `ACCOUNT_MAX_RECEIPTS` | `100000` | New confirmed operations per design owner within the existing 30-day receipt window. Existing retries and storage-reducing edits remain allowed. |
 | `PORT` | `8080` | Internal HTTP port. |
 | `DATA_DIR` | `./data`; `/data` in Docker | Writable persistent storage directory. |
 | `NODE_ENV` | Set to `production` in Docker | Enables secure production session cookies. |
@@ -124,8 +129,10 @@ Run **one application instance per data directory**. Sharing the same SQLite sto
 | `src/model.ts`, `src/types.ts` | Internal flat level helpers and editor selection types; never a storage/import format. |
 | `src/graphicsSettings.ts`, `src/GraphicsSettings.tsx` | Device-local profiles, user overrides and bounded automatic performance tuning. |
 | `src/ModelWorkshop.tsx`, `src/workshop*.ts` | Model construction, booleans, alignment, grouping and history. |
-| `src/offline*.ts`, `src/appOffline.ts`, `vite.config.ts` | IndexedDB persistence, asset preparation, sync and generated service worker. |
-| `src/server.ts`, `src/auth.ts`, `src/collaborationServer.ts` | HTTP API, account/session protection, access control and Yjs transport. |
+| `src/offline/`, `src/offlineStorage.ts`, `src/offlineProject.ts` | Repository, preparation, one durable synchronization queue and transactional project packages; `offlineService.ts` is their public facade. |
+| `src/appActivity.ts`, `src/appOffline.ts`, `src/serviceWorkerSource.ts` | Cross-tab safe updates, unfinished-field/activity guards and versioned service-worker caches. |
+| `src/server.ts`, `src/auth.ts`, `src/collaborationServer.ts` | HTTP and WebSocket adapters, account/session protection and access control. `projectCommandService.ts` owns shared revision-checked transactions and receipts. |
+| `src/ColorPicker.tsx`, `src/Popover.tsx`, `src/furnitureRendering.ts` | Shared transient controls, color previews and scene-independent catalog model creation. |
 | `src/databaseSchema.ts`, `src/backups.ts`, `src/operations.ts` | Atomic database initialization, backups and operator-only maintenance. |
 | `src/i18n.ts`, `src/locales/` | Shared translation entry point and language catalogs. |
 | `src/Help.tsx`, `public/help/{es,en}/` | Localized tutorial and real application screenshots. |
@@ -148,7 +155,9 @@ Global document limits apply across the whole building, rather than multiplying 
 
 Private projects use durable account-scoped IndexedDB records and a pending queue. Preparation verifies all dependencies before marking content available. Explicit offline mode suppresses data requests, uploads, notifications and collaboration even when the network is available. Leaving offline mode checks the account, current permissions and revisions before syncing all pending projects and models. Conflicts preserve local work for recovery rather than silently overwriting server changes. Shared projects require independent personal copies for offline editing.
 
-The service worker keeps each installed application shell consistent until an update is applied. A waiting update shows a dismissible **Update available** notice across the application, including the recovery screen. **Update now** uses the existing save handshake across every open tab before activating and reloading; unfinished drawings or unsaved models can refuse the update without losing their drafts. The same action remains available in Settings. The notice and update action are hidden in forced offline mode. A normal reload can continue using the installed worker, so do not clear browser storage to update: apply the guarded update instead. Explicitly retired version-2 API payloads receive HTTP 426 with an update instruction; no conversion or data reset is performed.
+The service worker keeps application generations consistent. A fresh, untouched opening can update automatically only after local identity/mode initialization and checks for all pending projects, sketches, uninserted models and recovery records. Work in any other editor tab blocks automatic activation. User interaction during downloads turns the update into a dismissible notice. Returning from the background never resets the interaction guard. Manual **Update now** checks every editor tab, flushes valid edits, confirms durable local storage and freezes mutations until activation. Incomplete fields/IME, color previews, drawings and workshop drafts must be finished or cancelled; durable unsynchronized changes do not require a network sync. Embedded read-only viewers do not participate in save handshakes. Settings exposes the same guarded update action.
+
+A prepared application stages the new generation's full visual assets before installation can succeed; failed downloads retain the previous complete generation. Older caches remain while open or unidentified clients may still use them, and previous immutable chunks remain readable during controller changes. Forced offline startup reuses the existing registration without an explicit registration/update check. Do not clear site storage as an update mechanism.
 
 The production service worker caches the app, localized help and bundled visual assets. Graphics preferences and the selected language stay in browser storage and are not sent as analytics or copied into another device profile. IndexedDB stores editable records separately from binary assets. Installation and storage persistence remain browser-controlled; exports are the user's independent backup. Local work does not count as server account activity until authenticated synchronization occurs.
 
@@ -167,6 +176,11 @@ Do not persist internal level projections or send an unversioned partial project
 - Usernames are normalized to lowercase and require 3–32 ASCII letters, digits or underscores. Passwords require 8–128 characters and confirmation at registration. No email or password-recovery service is used.
 - Passwords use scrypt with a random salt. Stored session tokens are hashed. Production cookies are `__Host-`, `Secure`, `HttpOnly` and `SameSite=Lax`; mutations validate the request origin.
 - Session tokens expire within 30 days and are revoked at logout. A persistent cookie is used only when the optional remember-session checkbox is selected.
+- Account defaults allow 50 designs and 500 MiB of active content, including the existing 100-model/100-MiB model library limit. Quotas are checked inside the same transaction as the write; retries are not double-charged. Over-quota accounts retain read, export, delete and storage-reducing operations. Restores never truncate data to fit a quota.
+- New confirmed operations have a separate default budget of 100,000 receipts per owner across their designs in 30 days. No-op writes count. Previously confirmed retries remain idempotent, and content-reducing edits keep their receipts even above the budget. Exhaustion returns 429 with retry guidance; clients retain the rejected draft. Receipt retention is unchanged and the content quota does not count duplicated Yjs state or receipts. See [the architecture review](docs/architecture-review.md) for the reduction exception and measured limits.
+- Large upload admission allows two binary bodies per process, one per account; project JSON bodies allow eight per process and two per account. Both share a 40-MiB raw-body reservation; GLB validation is serialized. Overload returns HTTP 429 with Retry-After without dropping durable local work.
+- Sketch headers are validated before decoding: PNG/JPEG/WebP, at most 10 MiB compressed, 8192 pixels per axis and 16,777,216 total pixels. GLB/metadata validation is shared between server and offline import.
+- Static hashes and gzip representations are generated by `scripts/build-static-assets.mjs`; production serves them asynchronously, preserving no-cache HTML/service-worker responses. Backup verification runs in a worker and retains erasure/revocation checks before publication.
 - Persistent request limits cover login, registration, project creation and uploads. Login has per-username/IP and per-IP limits with progressive temporary blocking; IPv6 addresses are grouped by `/64`. Password derivation concurrency is limited.
 - Static GLBs are checked for file structure, geometry, node/triangle budgets, transforms, texture memory and ownership. External resources, animations and unsupported extensions/compression are rejected. A file is limited to 20 MB; additional per-design and per-owner budgets apply.
 - Account access, model access, invited roles and public links are checked server-side. Only `/embed` permits cross-origin framing. Reader interactions do not persist room edits.

@@ -1,10 +1,10 @@
 import { t, useLocale } from './i18n';
-import { lazy, Suspense, useId, useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import { ArrowLeft, ArrowRight, LoaderCircle } from 'lucide-react';
 import { BrandMark } from './Brand';
 import NumberInput from './NumberInput';
-import { parseColor } from './fieldDraft';
-import useFieldDraft from './useFieldDraft';
+import ColorPicker from './ColorPicker';
+import { projectColors, useColorPreview } from './colorPreview';
 import { createLandingProject, LANDING_WARDROBE_ID, updateLandingWardrobe } from './landingModel';
 import { projectToRoom, updateProjectRoom } from './projectDocument';
 import type { FurnitureItem, FurnitureMaterial, Selection } from './types';
@@ -23,16 +23,11 @@ function DemoDimension({ label, value, min, max, onChange, onNotice }: { label: 
   return <label className="demo-field"><span>{label}</span><div className="demo-number"><NumberInput label={t('{{label}} del ropero', { label })} value={value} min={min} max={max} onChange={onChange} onEdit={() => onNotice('')} onInvalid={() => onNotice(t('Usa un valor entre {{min}} y {{max}} m.', { min, max }))} /><span>{t("m")}</span></div></label>;
 }
 
-function DemoColor({ value, onChange, onNotice }: { value: string; onChange: (value: string) => boolean; onNotice: (message: string) => void }) {
-  const id = useId();
-  const { inputProps } = useFieldDraft({ value, parse: parseColor, format: next => next.toUpperCase(), onCommit: onChange, onInvalid: () => onNotice(t("Escribe un código de color de 3 o 6 dígitos.")) });
-  return <div className="demo-field"><label htmlFor={id}>{t("Color")}</label><div className="demo-color"><input type="color" aria-label={t("Elegir color del ropero")} value={value} onChange={event => { onNotice(''); onChange(event.target.value); }} /><input {...inputProps} id={id} aria-label={t("Código de color del ropero")} spellCheck={false} autoCapitalize="characters" maxLength={9} onChange={event => { onNotice(''); inputProps.onChange(event); }} /></div></div>;
-}
-
 export default function Landing() {
   useLocale();
   const [step, setStep] = useState(0);
   const [project, setProject] = useState(createLandingProject);
+  const { shownProject, previewProject } = useColorPreview(project);
   const room = projectToRoom(project);
   const setRoom = (next: typeof room) => setProject(current => updateProjectRoom(current, current.activeLevelId, next));
   const [selection, setSelection] = useState<Selection | null>(null);
@@ -75,7 +70,7 @@ export default function Landing() {
           <div className="demo-card">
             <div className="demo-viewport">
               <Suspense fallback={<div className="demo-loading"><LoaderCircle size={24} /><span>{t("Cargando…")}</span></div>}>
-                <RoomScene project={project} activeLevelId={project.activeLevelId} onProjectChange={setProject} room={room} mode={step === 2 ? 'walk' : 'orbit'} animateView selection={selection} onSelect={next => { if (editing && next?.kind === 'furniture' && next.id === LANDING_WARDROBE_ID) setSelection(next); }} onChange={setRoom} readOnly={step === 0} transformMode="translate" resetKey={0} />
+                <RoomScene project={shownProject} activeLevelId={project.activeLevelId} onProjectChange={setProject} room={shownProject === project ? room : projectToRoom(shownProject)} mode={step === 2 ? 'walk' : 'orbit'} animateView selection={selection} onSelect={next => { if (editing && next?.kind === 'furniture' && next.id === LANDING_WARDROBE_ID) setSelection(next); }} onChange={setRoom} readOnly={step === 0} transformMode="translate" resetKey={0} />
               </Suspense>
             </div>
             <aside className={'demo-properties' + (editing ? ' is-visible' : '')} aria-label={t("Ropero del demo")} aria-hidden={!editing} inert={!editing}>
@@ -92,7 +87,7 @@ export default function Landing() {
                 </>}
               </div> : <div className="demo-fields demo-finishes">
                 <label className="demo-field"><span>{t("Material")}</span><select aria-label={t("Material del ropero")} value={wardrobe.material ?? 'wood'} onChange={event => editWardrobe({ material: event.target.value as FurnitureMaterial })}><option value="wood">{t("Madera")}</option><option value="plastic">{t("Plástico")}</option><option value="metal">{t("Metal")}</option></select></label>
-                <DemoColor value={wardrobe.color ?? '#ba9773'} onChange={color => editWardrobe({ color })} onNotice={setNotice} />
+                <ColorPicker label={t('Color')} value={wardrobe.color ?? '#ba9773'} onChange={color => editWardrobe({ color })} onPreview={color => previewProject(color ? updateProjectRoom(project, project.activeLevelId, updateLandingWardrobe(room, { color })) : null)} revision={project} colors={projectColors(project)} />
               </div>}
               {notice && <p className="demo-notice" role="status">{t(notice)}</p>}
             </aside>

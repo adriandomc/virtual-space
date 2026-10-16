@@ -6,6 +6,11 @@ import type { Point, Selection } from './types';
 
 export type PlanMoveIntent = { kind: 'point'; id: string; position: Point } | { kind: 'wall'; id: string; delta: Point } | { kind: 'hole'; surfaceId: string; holeId: string; vertices: Point[] } | { kind: 'item'; selection: Selection; position: Point & { y?: number; rotation?: number } };
 
+export function planUpdateActivityReason(state: { points: number; uploading: boolean; archived: number; pointers: number; dragging: boolean; pending: boolean; blocked: boolean }) {
+  if (state.points || state.uploading || state.archived || state.pointers || state.dragging) return 'Termina, recupera o cancela el borrador antes de continuar.';
+  return state.pending && state.blocked ? 'El movimiento pendiente se conserva. Revísalo antes de continuar.' : '';
+}
+
 function scope(project: ProjectDocument, levelId: string) {
   return JSON.parse(projectStructure({ ...project, levels: project.levels.filter(level => level.id === levelId), roofs: project.roofs.filter(roof => roof.levelId === levelId), stairs: project.stairs.filter(stair => stair.fromLevelId === levelId || stair.toLevelId === levelId) }));
 }

@@ -1,5 +1,6 @@
 import { validateProjectDocument, type ProjectDocument } from './projectDocument';
 import { offlineModelMetadata } from './offlineModelValidation';
+import { validateSketchBlob } from './imageValidation';
 import { validateModelBudget } from './modelBudget';
 import type { ModelAsset } from './modelAssets';
 import type { FileEntry } from '@zip.js/zip.js';
@@ -95,11 +96,7 @@ export async function validateProjectBackupResources(backup: ProjectBackup): Pro
     if (!backup.project.levels.some(level => level.id === sketch.levelId) || levels.has(sketch.levelId)) invalid('hay croquis de niveles inexistentes o repetidos.');
     levels.add(sketch.levelId); const blob = sketch.blob;
     if (!(blob instanceof Blob) || !imageTypes.includes(blob.type) || !blob.size || blob.size > 10 * MB) invalid('el croquis supera 10 MB o tiene un formato incorrecto.');
-    const data = new Uint8Array(await blob.slice(0, 32).arrayBuffer());
-    const signature = blob.type === 'image/png' ? [137,80,78,71,13,10,26,10].every((byte, i) => data[i] === byte)
-      : blob.type === 'image/jpeg' ? data[0] === 255 && data[1] === 216 && data[2] === 255
-      : new TextDecoder().decode(data.slice(0, 4)) === 'RIFF' && new TextDecoder().decode(data.slice(8, 12)) === 'WEBP';
-    if (!signature) invalid('el contenido del croquis no corresponde a su formato.');
+    await validateSketchBlob(blob);
   }
 }
 

@@ -31,6 +31,7 @@ const sections: HelpSection[] = [
     "id": "account",
     "title": "Cuenta y biblioteca",
     "steps": [
+      "Cada cuenta admite 50 diseños y 500 MiB de contenido. La biblioteca de modelos admite hasta 100 modelos y 100 MiB dentro de ese total. Si alcanzas un límite, puedes abrir, exportar o eliminar contenido para liberar espacio; tus cambios locales pendientes se conservan.",
       "Crea tu cuenta con un usuario y una contraseña de 8 a 128 caracteres. Confirma la contraseña y acepta las condiciones. No se pide correo. El usuario se guarda y comprueba siempre en minúsculas.",
       "El botón del ojo muestra u oculta la contraseña. Guárdala en un lugar seguro: no existe recuperación de contraseña. Recordar sesión 30 días es opcional; evita activarlo en dispositivos compartidos.",
       "Mis diseños muestra tus proyectos y las invitaciones que hayas aceptado. Toca una tarjeta para abrirla. La papelera elimina un diseño propio; revisa su nombre antes de confirmar.",
@@ -47,13 +48,14 @@ const sections: HelpSection[] = [
     "id": "plan",
     "title": "Construir paredes y habitaciones",
     "steps": [
+      "Los menús Habitación y Opciones del nivel se cierran al elegir, tocar fuera o pulsar Escape. Con teclado puedes recorrer sus acciones con flechas y volver al botón con Escape. Arrastrar conserva el punto donde agarraste un elemento; al añadir un segundo dedo se cancela el movimiento provisional para navegar sin moverlo.",
       "Abre Planta para trabajar sobre la cuadrícula. Seleccionar permite tocar objetos, paredes, esquinas y huecos. Pared dibuja segmentos: toca el inicio y después cada extremo; Terminar confirma el trazado.",
       "Habitación → Rectángulo necesita dos esquinas opuestas. Trazado libre permite marcar otra forma y cerrar el contorno. Las nuevas habitaciones se añaden a la construcción existente.",
       "Las paredes se dividen en sus intersecciones y las puertas y ventanas conservan su pared cuando la división lo permite. No se puede dividir atravesando una abertura.",
       "Ajustar a cuadrícula coloca puntos por pasos. Líneas rectas limita la dirección a múltiplos de 15°, 30°, 45° o 90°. Longitud fija la medida del siguiente segmento; déjala vacía para trazar libremente.",
       "Arrastra una esquina para mover el punto y sus paredes conectadas, o edita sus coordenadas. Arrastra una pared para mover sus extremos. Dividir pared añade una unión a la mitad; Eliminar pared retira también sus puertas y ventanas.",
       "Habitación → Hueco crea una abertura en el piso. Dibuja su contorno dentro de una superficie y termina. Selecciona el hueco para ajustar sus esquinas o eliminarlo; los huecos ligados a escaleras se retiran con su escalera.",
-      "Croquis carga una referencia PNG, JPG o WebP de hasta 10 MB para el nivel activo. Cada nivel puede tener una imagen distinta. La imagen no se convierte automáticamente en paredes. Quitar croquis conserva la construcción.",
+      "Croquis carga una referencia PNG, JPG o WebP de hasta 10 MiB, 8192 píxeles por lado y 16 millones de píxeles en total para el nivel activo. Cada nivel puede tener una imagen distinta. La imagen no se convierte automáticamente en paredes. Quitar croquis conserva la construcción.",
       "En móvil, usa dos dedos para desplazar y ampliar la planta. En computadora, la rueda cambia el zoom. Cierra los paneles cuando necesites más espacio para dibujar.",
       "Si se interrumpe la conexión o cambia tu acceso mientras dibujas o arrastras, el trazado o movimiento pendiente queda detenido. Reanudar trazado o Aplicar movimiento pendiente requiere recuperar el acceso y conservar una base compatible. Recuperar borrador permite copiar sus coordenadas antes de cerrar la vista."
     ],
@@ -121,7 +123,7 @@ const sections: HelpSection[] = [
     "title": "Colores, materiales y calidad visual",
     "steps": [
       "Abre Materiales o selecciona una pared, piso o techo. Cara de la pared permite cambiar Lado izquierdo o Lado derecho por separado. Aplicar a todas las paredes reutiliza el color en la cara elegida.",
-      "Puedes usar el selector de color o escribir un hexadecimal de tres o seis dígitos, con o sin #. El botón de copiar permite reutilizarlo. En este cuarto reúne los colores que ya están aplicados.",
+      "Abre la muestra de color para ajustar tono, saturación y brillo, escribir un hexadecimal o valores RGB de 0 a 255. Anterior muestra el color al abrir; Nuevo muestra tu previsualización. Puedes copiar el hexadecimal o reutilizar los colores del diseño, incluidos muebles y escaleras. Aplicar guarda una modificación; Cancelar, Escape o tocar fuera descartan la previsualización.",
       "Selecciona el piso para elegir madera, loseta, loseta trabada, damero, mármol o concreto, además de su color.",
       "Techo selecciona la cara interior que queda sobre el nivel activo: la cara inferior de la losa superior o de la cubierta. Su color y material son independientes del piso que queda encima y del acabado exterior de la cubierta.",
       "Selecciona un mueble para cambiar su acabado entre madera, plástico y metal. En modelos importados puedes conservar los materiales originales o elegir un acabado propio. Los tejidos, espejos y otros componentes del catálogo mantienen sus materiales específicos.",
@@ -157,6 +159,7 @@ const sections: HelpSection[] = [
     "title": "Crear y modificar modelos",
     "introduction": "Crear elemento abre el taller. También puedes seleccionar un mueble existente y usar Editar modelo para tomarlo como base. Guardar crea un modelo nuevo y conserva el original.",
     "steps": [
+      "Si cierras con la X o Escape mientras hay modificaciones, el taller pide confirmar Descartar cambios. Seguir editando conserva las piezas y su historial. Aplica o cancela cualquier previsualización de color antes de guardar o actualizar.",
       "En Agregar, elige Formas para usar primitivos, Piezas para añadir tablas, patas y otros componentes, o Muebles para partir de un modelo del catálogo.",
       "Selecciona una pieza en el visor o en Piezas. Mover, Girar y Tamaño activan sus controles. En Editar puedes escribir sus medidas y su posición, cambiar el nombre y elegir material y color.",
       "Activa Snap con el imán cuando necesites precisión. En Alinear → Opciones de snap puedes elegir cuadrícula, ajuste entre piezas, paso de movimiento y paso de giro. Desactívalo para mover libremente.",
@@ -207,7 +210,7 @@ const sections: HelpSection[] = [
       "Cuando quieras enviar tus cambios, vuelve a tener conexión y desactiva el modo. La aplicación comprueba la cuenta y los permisos y sincroniza todos los pendientes, también los diseños que no tienes abiertos y los modelos no insertados.",
       "Si la sesión venció, puedes seguir usando y descargando el trabajo local. Para sincronizar debes entrar de nuevo en la misma cuenta. Mantén la aplicación abierta hasta que terminen los cambios pendientes.",
       "Para instalarla, usa Instalar 3D Space si aparece en Ajustes, o la opción de instalar del navegador. En iPhone o iPad, abre el menú Compartir de Safari y elige Añadir a pantalla de inicio.",
-      "Cuando aparezca Actualización disponible, pulsa Actualizar ahora. El aviso también aparece si una vista no pudo abrirse. Antes de aplicar la actualización, la aplicación comprueba el guardado en todas las pestañas; termina o cancela los trazados y guarda o cierra los modelos pendientes. Si no puede continuar, el aviso muestra el motivo y conserva tu trabajo. Puedes usar Recordar más tarde y actualizar después desde Ajustes → Actualizar aplicación. En modo sin conexión no se ofrece la actualización."
+      "Al abrir, la aplicación se actualiza automáticamente si no has comenzado a trabajar y no hay pendientes en ninguna pestaña. Si ya estás trabajando, Actualización disponible permite Actualizar ahora o Recordar más tarde; también puedes hacerlo desde Ajustes. Termina o cancela campos, colores y trazados y guarda los modelos antes de actualizar. Los pendientes ya guardados en el dispositivo se conservan sin exigir sincronizarlos. Volver desde segundo plano no recarga tu trabajo. En modo sin conexión no se buscan ni aplican actualizaciones."
     ],
     "note": "Prepara el dispositivo antes de quedarte sin internet. El navegador puede borrar datos o quedarse sin espacio: conserva una copia descargada de lo importante. Trabajar sin red no renueva el plazo de inactividad de la cuenta.",
     "image": {

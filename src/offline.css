@@ -17,7 +17,8 @@
 .offline-details dd { text-align: right; margin: 0; }
 .offline-progress { display: grid; gap: 6px; font-size: 13px; margin-top: 12px; }
 .offline-progress progress { width: 100%; accent-color: #536c42; }
-.app-update-overlay { position: fixed; inset: 0; z-index: 10000; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 16px; background: #f4f6eff5; padding: 24px; text-align: center; }
+.app-update-overlay { position: fixed; inset: 0; z-index: 10000; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 16px; background: #f4f6eff5; padding: 24px; text-align: center; width: 100vw; height: var(--app-height, 100dvh); max-width: none; max-height: none; margin: 0; border: 0; color: inherit; }
+.app-update-overlay:not([open]) { display: none; }
 .app-update-notice { position: fixed; right: max(12px, env(safe-area-inset-right)); bottom: max(12px, env(safe-area-inset-bottom)); z-index: 100; width: max-content; max-width: min(520px, calc(100vw - 24px)); padding: 8px 10px 8px 16px; border: 1px solid #b9c9ab; border-radius: 12px; background: #fafbf6; color: #34432e; box-shadow: 0 5px 24px #263b1626; font-size: 15px; }
 .app-update-notice-actions { display: flex; align-items: center; gap: 10px; }
 .app-update-notice-actions > span { flex: 1; }

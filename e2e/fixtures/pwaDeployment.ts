@@ -5,10 +5,11 @@ import { readFile } from 'node:fs/promises';
 /** Real workers/caches, one compiled application, and two deployment identities. No retired data/schema is emulated. */
 export async function pwaDeployment({ brokenSetup = false } = {}) {
   const [shell, worker] = await Promise.all(['index.html', 'service-worker.js'].map(file => readFile(new URL('../../dist/' + file, import.meta.url), 'utf8')));
-  assert.equal((worker.match(/const CACHE = '[^']+';/g) ?? []).length, 1);
+  assert.equal((worker.match(/const CACHE = ["'][^"']+["'];/g) ?? []).length, 1);
   let generation: 'old' | 'new' = 'old';
   // A deployed build has different immutable module URLs. Relative chunk imports retain this prefix.
-  const assetPaths = (source: string, version: string) => source.replaceAll('/assets/', `/__pwa_${version}/assets/`);
+  const originalBuild = JSON.parse(worker.match(/const BUILD = ([^;]+);/)![1]);
+  const assetPaths = (source: string, version: string) => source.replaceAll('/assets/', `/__pwa_${version}/assets/`).replaceAll(originalBuild, originalBuild + '-' + version);
   const requests: { path: string; generation: string }[] = [];
   const pages = new Set(['/', '/index.html', '/login', '/designs', '/editor', '/help', '/privacy', '/terms', '/embed']);
   const server = createServer((incoming, response) => {
@@ -16,7 +17,9 @@ export async function pwaDeployment({ brokenSetup = false } = {}) {
     requests.push({ path, generation });
     if (path === '/service-worker.js') {
       response.writeHead(200, { 'Content-Type': 'text/javascript', 'Cache-Control': 'no-store', 'Service-Worker-Allowed': '/' });
-      response.end(assetPaths(worker.replace(/const CACHE = '[^']+';/, `const CACHE = '3d-space-v3-static-update-test-${generation}';`), generation)); return;
+      const variant = assetPaths(worker.replace(/const CACHE = ["'][^"']+["'];/, `const CACHE = '3d-space-v3-static-update-test-${generation}';`), generation)
+        .replace("['/__pwa_" + generation + "/assets/',", "['/__pwa_old/assets/', '/__pwa_new/assets/',");
+      response.end(variant); return;
     }
     if (pages.has(path)) {
       response.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
