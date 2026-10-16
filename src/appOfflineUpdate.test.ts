@@ -7,13 +7,14 @@ import { planUpdateActivityReason } from './planDraft';
 
 const source = readFile(new URL('./appOffline.ts', import.meta.url), 'utf8').then(text => ts.transpileModule(text.replaceAll('import.meta.env?.PROD', 'true').replaceAll('import.meta.env?.VITE_BUILD_ID', '"test-build"'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText);
 
-async function app(options: { activeBuild?: string; waiting?: boolean; statusGate?: Promise<void>; versions?: string[]; uncontrolled?: boolean; legacy?: boolean; forced?: boolean; missingRegistration?: boolean } = {}) {
+async function app(options: { activeBuild?: string; waiting?: boolean; statusGate?: Promise<void>; versions?: string[]; uncontrolled?: boolean; legacy?: boolean; forced?: boolean; missingRegistration?: boolean; registrationError?: boolean; online?: boolean } = {}) {
   const listeners = new Map<string, Function>(), pending: { message: { type: string; id: string }; reply: (value: unknown) => void }[] = [];
   const exports: Record<string, any> = {};
-  let forced = !!options.forced, reloads = 0, idle = false, storedPending = false, activity = '', version = 'current';
+  let forced = !!options.forced, reloads = 0, idle = false, storedPending = false, activity = '', version = 'current', registrationReads = 0;
+  const workerRequests: string[] = [];
   let startupListener: (() => void) | undefined;
   const registration = {
-    active: { postMessage: (message: { type: string }, ports: { postMessage(value: unknown): void }[]) => { const reply = () => ports[0].postMessage({ ready: true, build: options.legacy ? undefined : options.activeBuild ?? 'test-build' }); if (message.type === 'SPACE_STATUS' && options.statusGate) void options.statusGate.then(reply); else reply(); } },
+    active: { postMessage: (message: { type: string }, ports: { postMessage(value: unknown): void }[]) => { workerRequests.push(message.type); const reply = () => ports[0].postMessage({ ready: true, build: options.legacy ? undefined : options.activeBuild ?? 'test-build' }); if (message.type === 'SPACE_STATUS' && options.statusGate) void options.statusGate.then(reply); else reply(); } },
     waiting: options.waiting === false ? null : { postMessage: (message: { type: string; id: string }, ports: { postMessage(value: unknown): void }[]) => pending.push({ message, reply: value => ports[0].postMessage(value) }) } as object | null,
     addEventListener() {},
   };
@@ -30,12 +31,12 @@ async function app(options: { activeBuild?: string; waiting?: boolean; statusGat
       port1: { onmessage?: (event: { data: unknown }) => void; close(): void } = { close() {} };
       port2 = { postMessage: (data: unknown) => this.port1.onmessage?.({ data }) };
     },
-    navigator: { onLine: true, serviceWorker: { get controller() { return options.uncontrolled ? null : registration.active; }, getRegistration: async () => options.missingRegistration ? undefined : registration, register: async () => registration, addEventListener: (type: string, callback: Function) => listeners.set(type, callback) } },
+    navigator: { onLine: options.online ?? true, serviceWorker: { get controller() { return options.uncontrolled ? null : registration.active; }, getRegistration: async () => { registrationReads++; return options.missingRegistration ? undefined : registration; }, register: async () => { if (options.registrationError) throw new Error('Worker check failed without connection'); return registration; }, addEventListener: (type: string, callback: Function) => listeners.set(type, callback) } },
     window: { matchMedia: () => ({ matches: false }), addEventListener() {}, location: { reload: () => { reloads++; } } },
   });
   await exports.registerAppOffline();
   return {
-    api: exports, pending, registration, version: () => version, idle: (value: boolean) => { idle = value; startupListener?.(); }, stored: (value: boolean) => { storedPending = value; }, editing: (value: string) => { activity = value; }, reloads: () => reloads, force: () => { forced = true; },
+    api: exports, pending, registration, workerRequests, registrationReads: () => registrationReads, version: () => version, idle: (value: boolean) => { idle = value; startupListener?.(); }, stored: (value: boolean) => { storedPending = value; }, editing: (value: string) => { activity = value; }, reloads: () => reloads, force: () => { forced = true; },
     message(type: string, id: string, automatic = false) { const replies: any[] = []; listeners.get('message')!({ data: { type, id, automatic }, ports: [{ postMessage(value: unknown) { replies.push(value); } }] }); return replies; },
     activate() { registration.waiting = null; listeners.get('controllerchange')!(); },
   };
@@ -52,6 +53,32 @@ test('update actions share one worker request without freezing editing during do
   assert.equal(value.api.getAppOfflineState().error, 'Download failed');
   const retry = value.api.updateAppOffline(); assert.equal(value.pending.length, 2);
   value.pending[1].reply({ ready: true }); await retry;
+});
+
+test('a late save handshake cannot erase the rejection already delivered through its update port', async () => {
+  const value = await app(), request = value.api.updateAppOffline(), id = value.pending[0].message.id;
+  value.pending[0].reply({ error: 'Guarda los cambios de las otras pestañas antes de continuar.' }); await request;
+  const replies = value.message('SPACE_SAVE_UPDATE', id);
+  await new Promise(resolve => setImmediate(resolve)); assert.equal(replies[0]?.ready, true);
+  value.message('SPACE_CANCEL_UPDATE', id);
+  assert.equal(value.api.getAppOfflineState().updating, false);
+  assert.equal(value.api.getAppOfflineState().error, 'Guarda los cambios de las otras pestañas antes de continuar.');
+  assert.equal(value.reloads(), 0);
+});
+
+test('a delayed healthy worker status never clears a newer update rejection', async () => {
+  const options: { statusGate?: Promise<void> } = {}, value = await app(options), request = value.api.updateAppOffline();
+  let release!: () => void; options.statusGate = new Promise<void>(resolve => { release = resolve; }); value.activate();
+  value.pending[0].reply({ error: 'Guarda el campo pendiente antes de continuar.' }); await request;
+  release(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(value.api.getAppOfflineState().error, 'Guarda el campo pendiente antes de continuar.');
+  assert.equal(value.api.getAppOfflineState().updating, false); assert.equal(value.reloads(), 0);
+});
+
+test('an explicit negative update acknowledgement always exposes a recovery reason', async () => {
+  const value = await app(), request = value.api.updateAppOffline();
+  value.pending[0].reply({ ready: false }); await request;
+  assert.match(value.api.getAppOfflineState().error, /Guarda/); assert.equal(value.reloads(), 0);
 });
 
 test('an update failure cannot release another update or mode freeze', async () => {
@@ -177,6 +204,25 @@ test('a controlled startup checks its worker version before allowing new edits',
   assert.deepEqual(versions, ['checking']); release(); const value = await starting; assert.equal(value.version(), 'current');
   const stale = await app({ activeBuild: 'different-build', waiting: false }); assert.equal(stale.version(), 'outdated'); assert.equal(stale.reloads(), 0); assert.equal(stale.api.getAppOfflineState().updating, false);
   const legacy = await app({ legacy: true }); assert.equal(legacy.version(), 'outdated');
+});
+
+test('a failed registration check uses the installed matching worker without requiring forced offline mode', async () => {
+  for (const missingRegistration of [false, true]) {
+    const versions: string[] = [], value = await app({ registrationError: true, online: false, waiting: false, missingRegistration, versions });
+    assert.deepEqual(versions, ['checking', 'current']); assert.equal(value.registrationReads(), 1);
+    assert.ok(value.workerRequests.includes('SPACE_STATUS')); assert.equal(value.api.getAppOfflineState().ready, true);
+    assert.equal(value.api.getAppOfflineState().update, false); assert.equal(value.api.getAppOfflineState().error, '');
+    assert.equal(value.reloads(), 0);
+  }
+});
+
+test('failed registration never permits a different or unverifiable installed build to edit', async () => {
+  for (const options of [{ activeBuild: 'different-build' }, { legacy: true }]) {
+    const value = await app({ registrationError: true, online: false, waiting: false, ...options });
+    assert.equal(value.version(), 'outdated'); assert.equal(value.registrationReads(), 1);
+    assert.ok(value.workerRequests.includes('SPACE_STATUS')); assert.equal(value.api.getAppOfflineState().update, true);
+    assert.equal(value.reloads(), 0);
+  }
 });
 
 test('a first visit without a controller remains editable while initial preparation runs', async () => {

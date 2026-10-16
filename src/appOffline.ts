@@ -66,7 +66,8 @@ export function registerAppOffline() {
       const kind = event.data.type === 'SPACE_SAVE_MODE' ? 'mode' : 'update';
       if (freeze && (freeze.kind !== kind || freeze.id !== id)) { event.ports[0].postMessage({ ready: false }); return; }
       freeze = { kind, id };
-      publish({ updating: true, error: '' });
+      // Delayed handshakes must not erase a rejection already delivered through another port.
+      publish({ updating: true });
       void (async () => {
         if (event.data.automatic && await hasStoredOfflineChanges()) throw new Error('Hay cambios pendientes. Actualiza cuando termines de trabajar.');
         await confirmLocalSaved();
@@ -86,16 +87,24 @@ export function registerAppOffline() {
       }
     });
     await refreshOfflineMode();
-    registration = offlineForced() ? await navigator.serviceWorker.getRegistration('/') : await navigator.serviceWorker.register('/service-worker.js', { scope: '/', updateViaCache: 'none' });
+    if (offlineForced()) registration = await navigator.serviceWorker.getRegistration('/');
+    else {
+      try { registration = await navigator.serviceWorker.register('/service-worker.js', { scope: '/', updateViaCache: 'none' }); }
+      catch (cause) {
+        // A failed network update check says nothing about the already installed worker's build.
+        registration = await navigator.serviceWorker.getRegistration('/').catch(() => undefined);
+        if (!registration) {
+          const controller = navigator.serviceWorker.controller;
+          if (!controller) throw cause;
+          await inspectController(controller); return;
+        }
+      }
+    }
     if (!registration) {
       if (navigator.serviceWorker.controller) { reloadRequired = true; setAppVersion('outdated'); publish({ update: true }); }
       return;
     }
-    const verify = async () => {
-      const active = registration?.active;
-      if (!active) return;
-      await inspectController(active);
-    };
+    const verify = () => inspectController();
     const check = () => {
       publish({ update: !!registration?.waiting || reloadRequired });
       void automaticUpdate();
@@ -136,7 +145,7 @@ async function inspectController(worker = navigator.serviceWorker.controller ?? 
   if (worker !== (navigator.serviceWorker.controller ?? registration?.active)) return;
   reloadRequired = !!(build && (result.build ? result.build !== build : navigator.serviceWorker.controller));
   setAppVersion(reloadRequired ? 'outdated' : 'current');
-  publish({ ready: !!result.ready, update: !!registration?.waiting || reloadRequired, ...(result.ready ? { error: '' } : {}) });
+  publish({ ready: !!result.ready, update: !!registration?.waiting || reloadRequired });
   void message(worker, 'SPACE_HELLO').catch(() => {});
   if (reloadRequired) void automaticUpdate();
 }
@@ -187,7 +196,7 @@ export function updateAppOffline(automatic = false): Promise<void> {
         } finally { unfreeze('update', id); }
       }
       const result = await message(worker, 'SPACE_UPDATE', crypto.randomUUID(), automatic);
-      if (result.error) throw new Error(result.error);
+      if (result.error || !result.ready) throw new Error(result.error || 'Guarda los cambios de las otras pestañas antes de continuar.');
     } catch (cause) { publish({ error: cause instanceof Error ? cause.message : 'No se pudo actualizar.' }); }
   })().finally(() => { updateRequest = undefined; });
   return updateRequest;

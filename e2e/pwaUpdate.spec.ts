@@ -8,7 +8,8 @@ import { pwaDeployment } from './fixtures/pwaDeployment';
 const headers = { Origin: 'http://127.0.0.1:5188', 'Content-Type': 'application/json' };
 async function sample(request: APIRequestContext) {
   const username = 'update_' + randomUUID().slice(0, 8), password = 'Update-test-4837';
-  const account = await request.post('/api/auth/register', { headers: { ...headers, 'X-Forwarded-For': '198.51.100.' + (test.info().workerIndex + 70) }, data: { username, password, confirmPassword: password, termsVersion: TERMS_VERSION } });
+  const ip = `2001:db8:${test.info().workerIndex.toString(16)}:${test.info().line.toString(16)}::1`;
+  const account = await request.post('/api/auth/register', { headers: { ...headers, 'X-Forwarded-For': ip }, data: { username, password, confirmPassword: password, termsVersion: TERMS_VERSION } });
   expect(account.status(), await account.text()).toBe(201);
   const project = createBlankProject('Diseño conservado');
   const created = await request.post('/api/rooms', { headers, data: { id: project.id, project } });
@@ -156,6 +157,38 @@ test('forced offline mode hides updates and makes no explicit worker checks or a
     expect(await page.evaluate(() => (window as unknown as { __explicitWorkerChecks: string[] }).__explicitWorkerChecks)).toEqual([]);
     await expect(build(page)).toHaveAttribute('content', 'old');
   } finally { await page.close(); await deployment.close(); }
+});
+
+test('a prepared cold opening stays editable without forced mode when the worker network check fails', async ({ page, context }) => {
+  let offlinePage: Page | undefined;
+  try {
+    const project = await sample(context.request); delete project.setupStep;
+    const snapshot = await (await context.request.get('/api/rooms/' + project.id)).json();
+    const seeded = await context.request.put('/api/rooms/' + project.id, { headers, data: { project, revision: snapshot.revision, operationId: randomUUID() } }); expect(seeded.status(), await seeded.text()).toBe(200);
+    await page.goto('/designs'); await expect(page.getByRole('heading', { name: 'Mis diseños', exact: true })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller)), { timeout: 60000 }).toBe(true);
+    await prepareDesigns(page);
+    offlinePage = await context.newPage();
+    await offlinePage.addInitScript(() => {
+      const calls = { failedRegistrations: 0, localRegistrations: 0 };
+      Object.defineProperty(window, '__offlineWorkerRecovery', { value: calls });
+      ServiceWorkerContainer.prototype.register = function () { calls.failedRegistrations++; return Promise.reject(new TypeError('Worker update check failed without connection')); };
+      const getRegistration = ServiceWorkerContainer.prototype.getRegistration;
+      ServiceWorkerContainer.prototype.getRegistration = function (...args) { calls.localRegistrations++; return getRegistration.apply(this, args); };
+    });
+    await page.close(); await context.setOffline(true);
+    await offlinePage.goto('/editor?room=' + project.id);
+    expect(await offlinePage.evaluate(() => navigator.onLine)).toBe(false);
+    const name = offlinePage.getByLabel('Nombre del proyecto', { exact: true }); await expect(name).toBeEditable();
+    const dialog = await settings(offlinePage);
+    await expect(dialog.getByRole('switch', { name: 'Modo sin conexión', exact: true })).toHaveAttribute('aria-checked', 'false');
+    await dialog.getByRole('button', { name: 'Cerrar ajustes', exact: true }).click();
+    await name.fill('Trabajo sin red conservado'); await name.press('Tab');
+    await expect(offlinePage.locator('.saved-status')).toHaveAttribute('title', 'Guardado en este dispositivo');
+    await offlinePage.reload(); await expect(name).toHaveValue('Trabajo sin red conservado'); await expect(name).toBeEditable();
+    expect(await offlinePage.evaluate(() => (window as unknown as { __offlineWorkerRecovery: { failedRegistrations: number; localRegistrations: number } }).__offlineWorkerRecovery)).toEqual({ failedRegistrations: 1, localRegistrations: 1 });
+    await expect(notice(offlinePage)).toHaveCount(0);
+  } finally { await offlinePage?.close(); await page.close(); await context.setOffline(false); }
 });
 
 
