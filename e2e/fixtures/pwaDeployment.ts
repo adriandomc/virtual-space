@@ -3,7 +3,7 @@ import { createServer, request as forwardRequest } from 'node:http';
 import { readFile } from 'node:fs/promises';
 
 /** Real workers/caches, one compiled application, and two deployment identities. No retired data/schema is emulated. */
-export async function pwaDeployment({ brokenSetup = false } = {}) {
+export async function pwaDeployment({ brokenSetup = false, beforeModelUpload }: { brokenSetup?: boolean; beforeModelUpload?: () => Promise<void> } = {}) {
   const [shell, worker] = await Promise.all(['index.html', 'service-worker.js'].map(file => readFile(new URL('../../dist/' + file, import.meta.url), 'utf8')));
   assert.equal((worker.match(/const CACHE = ["'][^"']+["'];/g) ?? []).length, 1);
   let generation: 'old' | 'new' = 'old';
@@ -12,9 +12,10 @@ export async function pwaDeployment({ brokenSetup = false } = {}) {
   const assetPaths = (source: string, version: string) => source.replaceAll('/assets/', `/__pwa_${version}/assets/`).replaceAll(originalBuild, originalBuild + '-' + version);
   const requests: { path: string; generation: string }[] = [];
   const pages = new Set(['/', '/index.html', '/login', '/designs', '/editor', '/help', '/privacy', '/terms', '/embed']);
-  const server = createServer((incoming, response) => {
+  const server = createServer(async (incoming, response) => {
     const path = new URL(incoming.url ?? '/', 'http://127.0.0.1').pathname;
     requests.push({ path, generation });
+    if (path === '/api/models' && incoming.method === 'POST' && beforeModelUpload) await beforeModelUpload();
     if (path === '/service-worker.js') {
       response.writeHead(200, { 'Content-Type': 'text/javascript', 'Cache-Control': 'no-store', 'Service-Worker-Allowed': '/' });
       const variant = assetPaths(worker.replace(/const CACHE = ["'][^"']+["'];/, `const CACHE = '3d-space-v3-static-update-test-${generation}';`), generation)

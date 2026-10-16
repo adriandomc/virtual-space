@@ -189,3 +189,41 @@ test('another tab with incomplete text prevents a manual update until that field
     await expect(page.getByLabel('Nombre del diseño', { exact: true })).toHaveValue('Trabajo conservado');
   } finally { await other?.close(); await page.close(); await deployment.close(); }
 });
+
+test('saving an unchanged existing model blocks another tab update until the copy is fully saved', async ({ page, context }) => {
+  let uploading = false, release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const deployment = await pwaDeployment({ beforeModelUpload: async () => { uploading = true; await held; } });
+  let other: Page | undefined;
+  try {
+    const project = await sample(context.request); delete project.setupStep;
+    project.levels[0].furniture.push({ id: randomUUID(), levelId: project.activeLevelId, type: 'nightstand', variant: 'nightstand-classic', material: 'wood', color: '#b8a084', x: -.9, z: -.5, width: .5, depth: .42, height: .55, rotation: 0 });
+    const snapshot = await (await context.request.get('/api/rooms/' + project.id)).json();
+    const seeded = await context.request.put('/api/rooms/' + project.id, { headers, data: { project, revision: snapshot.revision, operationId: randomUUID() } }); expect(seeded.status(), await seeded.text()).toBe(200);
+    await oldApplication(page, deployment.origin); await page.getByRole('link', { name: /Diseño conservado/ }).click();
+    await expect(page.getByLabel('Nombre del proyecto', { exact: true })).toHaveValue(project.name);
+    await page.getByRole('button', { name: 'Elementos', exact: true }).click(); await page.locator('.tree-item').filter({ hasText: 'Buró' }).click();
+    await page.getByRole('button', { name: 'Editar modelo', exact: true }).click();
+    const workshop = page.getByRole('dialog', { name: 'Editar modelo', exact: true });
+    await expect(workshop.getByRole('button', { name: 'Guardar copia', exact: true })).toBeEnabled({ timeout: 30000 });
+    await expect(workshop.getByRole('button', { name: 'Deshacer', exact: true })).toBeDisabled();
+    await workshop.getByRole('button', { name: 'Guardar copia', exact: true }).click();
+    await expect.poll(() => uploading, { timeout: 30000 }).toBe(true);
+    await expect(workshop.getByRole('button', { name: 'Guardando', exact: true })).toBeDisabled();
+    await expect(workshop.getByRole('button', { name: 'Cerrar editor de modelo', exact: true })).toBeDisabled();
+    expect(await page.evaluate(() => !window.dispatchEvent(new Event('beforeunload', { cancelable: true })))).toBe(true);
+    deployment.deploy(); other = await context.newPage(); await oldApplication(other, deployment.origin);
+    await expect(notice(other)).toContainText('Actualización disponible', { timeout: 60000 });
+    await notice(other).getByRole('button', { name: 'Actualizar ahora', exact: true }).click();
+    await expect(notice(other)).toContainText(/Guarda|Espera/); await expect(build(other)).toHaveAttribute('content', 'old'); await expect(build(page)).toHaveAttribute('content', 'old');
+    await expect(workshop).toBeVisible(); release();
+    await expect(workshop).toHaveCount(0); await expect(page.locator('.saved-status')).toHaveAttribute('title', 'Guardado');
+    const current = await (await context.request.get('/api/rooms/' + project.id)).json(), copy = current.project.levels[0].furniture.find((item: { type: string }) => item.type === 'custom');
+    expect(current.project.levels[0].furniture).toHaveLength(2); expect(copy?.assetId).toBeTruthy();
+    const models = await (await context.request.get('/api/models?room=' + project.id)).json(); expect(models.models.map((model: { id: string }) => model.id)).toEqual([copy.assetId]);
+    await notice(other).getByRole('button', { name: 'Actualizar ahora', exact: true }).click();
+    await expect(build(other)).toHaveAttribute('content', 'new', { timeout: 60000 }); await expect(build(page)).toHaveAttribute('content', 'new', { timeout: 60000 });
+    await expect(page.getByLabel('Nombre del proyecto', { exact: true })).toHaveValue(project.name);
+    const restored = await (await context.request.get('/api/rooms/' + project.id)).json(); expect(restored.project.levels[0].furniture.find((item: { type: string }) => item.type === 'custom')?.assetId).toBe(copy.assetId);
+  } finally { release(); await other?.close(); await page.close(); await deployment.close(); }
+});

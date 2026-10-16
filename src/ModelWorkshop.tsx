@@ -22,7 +22,7 @@ import type { WorkshopBooleanOperation } from './workshopBoolean';
 import { alignWorkshopPiece, snapWorkshopPiece, type WorkshopAxis, type WorkshopAlignment } from './workshopAlignment';
 import { applySelectionTransform, captureSelectionTransform, createSelectionProxy, duplicateWorkshopPieces, groupWorkshopPieces, ungroupWorkshopPieces, workshopGroup, workshopSelectionUnit, type WorkshopSelectionTransform } from './workshopGrouping';
 import './modelWorkshop.css';
-import { registerBeforeAppUpdate, registerAppActivity } from './appOffline';
+import { beginAppActivity, registerBeforeAppUpdate, registerAppActivity } from './appOffline';
 
 type Props = { item?: FurnitureItem; roomId: string; onSaved: (asset: ModelAsset) => boolean | void; onClose: () => void };
 type Panel = 'add' | 'model' | 'pieces' | 'alignment' | 'geometry';
@@ -97,8 +97,9 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
   const initialName = useRef(item?.name ?? t('Mi modelo'));
   const colorPreview = useRef<Map<THREE.MeshStandardMaterial, THREE.Color> | null>(null);
   const dirtyState = useRef(false);
-  useEffect(() => registerBeforeAppUpdate(async () => { if (dirtyState.current || runtime.current?.transform.dragging) throw new Error('Guarda o cierra el modelo antes de actualizar la aplicación.'); }), []);
-  useEffect(() => registerAppActivity(() => dirtyState.current || runtime.current?.transform.dragging ? 'Guarda o cierra el modelo antes de actualizar la aplicación.' : false), []);
+  const savingModel = useRef(false);
+  useEffect(() => registerBeforeAppUpdate(async () => { if (dirtyState.current || savingModel.current || runtime.current?.transform.dragging) throw new Error('Guarda o cierra el modelo antes de actualizar la aplicación.'); }), []);
+  useEffect(() => registerAppActivity(() => dirtyState.current || savingModel.current || runtime.current?.transform.dragging ? 'Guarda o cierra el modelo antes de actualizar la aplicación.' : false), []);
   const [selected, setSelected] = useState<string | null>(null), [panel, setPanel] = useState<Panel>(item ? 'model' : 'add'), [tool, setTool] = useState<Tool>('translate'), [geometryTool, setGeometryTool] = useState<GeometryTool>('vertices');
   const [selectedIds, setSelectedIds] = useState<string[]>([]), [multiSelect, setMultiSelect] = useState(false);
   const [palette, setPalette] = useState<'primitives' | 'prefabs' | 'furniture'>('prefabs'), [second, setSecond] = useState(''), [operation, setOperation] = useState<WorkshopBooleanOperation>('union');
@@ -111,7 +112,7 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
   const [name, setName] = useState(item?.name ?? t('Mi modelo'));
   dirtyState.current = history.current.canUndo || name !== initialName.current || computing || previewing;
   useEffect(() => {
-    const warn = (event: BeforeUnloadEvent) => { if (dirtyState.current || runtime.current?.transform.dragging) { event.preventDefault(); event.returnValue = ''; } };
+    const warn = (event: BeforeUnloadEvent) => { if (dirtyState.current || savingModel.current || runtime.current?.transform.dragging) { event.preventDefault(); event.returnValue = ''; } };
     window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn);
   }, []);
   const [panelOpen, setPanelOpen] = useState(true);
@@ -131,7 +132,7 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
   const reference = pieces.find(piece => piece.uuid === alignmentReference && !selectedIds.includes(piece.uuid));
 
   function closeWorkshop() {
-    if (saving) return;
+    if (savingModel.current) return;
     if (dirtyState.current || runtime.current?.transform.dragging) setConfirmDiscard(true);
     else onClose();
   }
@@ -498,11 +499,14 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
   }
   async function save() {
     const active = runtime.current, modelName = parseName(name);
-    if (!active || active.transform.dragging || saving || computing || previewing) return;
+    if (!active || active.transform.dragging || savingModel.current || computing || previewing) return;
     if (!modelName) { setError('Escribe el nombre del modelo.'); return; }
+    const release = beginAppActivity('Guarda o cierra el modelo antes de actualizar la aplicación.');
+    savingModel.current = true;
     setSaving(true); setError('');
-    try { const bytes = await exportWorkshopGLB(active.content), file = new File([bytes], `${modelName}.glb`, { type: 'model/gltf-binary' }); const asset = await uploadModel(file, roomId); if (onSaved(asset) === false) { setError('El modelo está guardado en Modelos propios. No se pudo añadir al diseño.'); setSaving(false); } }
-    catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo guardar el modelo."); setSaving(false); }
+    try { const bytes = await exportWorkshopGLB(active.content), file = new File([bytes], `${modelName}.glb`, { type: 'model/gltf-binary' }); const asset = await uploadModel(file, roomId); if (onSaved(asset) === false) setError('El modelo está guardado en Modelos propios. No se pudo añadir al diseño.'); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo guardar el modelo."); }
+    finally { savingModel.current = false; release(); setSaving(false); }
   }
   function setVertexCoordinate(axis: number, value: number) {
     if (!mesh || !vertex) return;
