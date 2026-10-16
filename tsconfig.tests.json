@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": { "types": ["vite/client", "node"] },
+  "include": ["src/**/*.test.ts", "tests/**/*.ts", "e2e/**/*.ts"],
+  "exclude": []
+}

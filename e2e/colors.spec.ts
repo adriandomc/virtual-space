@@ -1,8 +1,8 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
-import { createDefaultProject, type ProjectDocument } from '../src/projectDocument';
-import { deleteWall } from '../src/projectOperations';
-import { TERMS_VERSION } from '../src/legalPolicy';
+import { createDefaultProject, type ProjectDocument } from '../src/domain/project/projectDocument';
+import { deleteWall } from '../src/domain/project/projectOperations';
+import { TERMS_VERSION } from '../src/domain/policies/legalPolicy';
 
 const headers = { Origin: 'http://127.0.0.1:5188', 'Content-Type': 'application/json' };
 async function sample(request: APIRequestContext, setup = false, shared = false) {

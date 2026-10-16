@@ -120,28 +120,27 @@ Run **one application instance per data directory**. Sharing the same SQLite sto
 
 | Location | Responsibility |
 | --- | --- |
-| `src/main.tsx`, `src/routes.ts` | Application bootstrap and public/account routes. |
-| `src/AccountApp.tsx`, `src/Onboarding.tsx`, `src/App.tsx` | Authentication, library, optional setup and room editor. |
-| `src/RoomScene.tsx`, `src/materials.ts`, `src/postProcessing.ts` | Three.js scene, TSL materials and rendering effects. |
-| `src/projectDocument.ts` | Canonical version-3 document, shared validation, budgets and internal level projections. |
-| `src/projectOperations.ts`, `src/projectGeometry.ts`, `src/architecturalNavigation.ts` | Atomic construction commands/history, real stairs/roofs/slab geometry and connected walkthrough support. |
-| `src/PlanEditor.tsx`, `src/ConstructionPanel.tsx`, `src/LevelSelector.tsx` | Additive plan drawing, level controls, stairs and roof editing shared by setup and editor. |
-| `src/model.ts`, `src/types.ts` | Internal flat level helpers and editor selection types; never a storage/import format. |
-| `src/graphicsSettings.ts`, `src/GraphicsSettings.tsx` | Device-local profiles, user overrides and bounded automatic performance tuning. |
-| `src/ModelWorkshop.tsx`, `src/workshop*.ts` | Model construction, booleans, alignment, grouping and history. |
-| `src/offline/`, `src/offlineStorage.ts`, `src/offlineProject.ts` | Repository, preparation, one durable synchronization queue and transactional project packages; `offlineService.ts` is their public facade. |
-| `src/appActivity.ts`, `src/appOffline.ts`, `src/serviceWorkerSource.ts` | Cross-tab safe updates, unfinished-field/activity guards and versioned service-worker caches. |
-| `src/server.ts`, `src/auth.ts`, `src/collaborationServer.ts` | HTTP and WebSocket adapters, account/session protection and access control. `projectCommandService.ts` owns shared revision-checked transactions and receipts. |
-| `src/ColorPicker.tsx`, `src/Popover.tsx`, `src/furnitureRendering.ts` | Shared transient controls, color previews and scene-independent catalog model creation. |
-| `src/databaseSchema.ts`, `src/backups.ts`, `src/operations.ts` | Atomic database initialization, backups and operator-only maintenance. |
-| `src/i18n.ts`, `src/locales/` | Shared translation entry point and language catalogs. |
-| `src/Help.tsx`, `public/help/{es,en}/` | Localized tutorial and real application screenshots. |
-| `src/*.test.ts`, `e2e/` | Unit/integration and production-browser regression tests. |
+| `src/app/` | Bootstrap, route selection and application recovery. Shared route definitions are in `src/shared/routes.ts`. |
+| `src/features/accounts/`, `editor/`, `onboarding/`, `landing/`, `embed/` | Screens and local orchestration. Editor and setup share construction and viewer features. |
+| `src/features/construction/` | Additive drawing, levels, stairs, roofs and construction history. |
+| `src/features/viewer/` | Three.js runtime, level/project reconciliation, camera, environment, selection, resources, materials and model instances. `RoomScene.tsx` binds them to React and input. |
+| `src/features/workshop/`, `models/` | Model construction, booleans, alignment, grouping, history, catalog and library controls. |
+| `src/features/settings/`, `collaboration/`, `help/`, `legal/` | Device settings, sharing/notifications, localized help and legal screens. |
+| `src/domain/project/` | Canonical v3 document, validation, atomic construction operations, geometry, protocol and internal level projections. |
+| `src/domain/models/`, `collaboration/`, `policies/` | Shared asset contracts and byte validators, global model budgets, Yjs document helpers and service policies. |
+| `src/client/api/`, `models/`, `projects/` | Account requests, model access, project sessions, versioned sketches, durable rejected drafts and project packages. |
+| `src/client/offline/` | IndexedDB records/binaries, identity/mode, preparation and one durable synchronization queue. `offlineService.ts` exposes application operations. |
+| `src/client/pwa/`, `graphics/` | Cross-tab safe updates, service-worker generations, activity guards and device-local graphics preferences. |
+| `src/server/` | Node entry points and grouped HTTP, authentication, project commands, collaboration, models, quotas, SQLite and maintenance. |
+| `src/shared/ui/`, `i18n/` | Shared controls, draft fields, transient previews, translations and language catalogs. |
+| `src/**/*.test.ts`, `tests/`, `e2e/` | Colocated unit tests, cross-area integration tests/shared fixtures and production-browser regressions. |
 | `public/materials/`, `public/environments/` | Bundled visual assets and provenance documents. |
+
+See [Architecture](docs/architecture.md) for dependency rules, lifecycle ownership and where to put new features. `npm run check` checks those rules and separately type-checks browser code, build tools and tests. `npm run build:server` compiles the Node-only dependency graph. `npm test` discovers nested colocated tests and cross-area tests; it does not rely on files being directly in `src/`.
 
 ## Data and synchronization
 
-The only persisted contract is **`ProjectDocument.version: 3`**, validated by `src/projectDocument.ts`. It contains stable IDs for levels, shared plan points, walls and both wall finishes, surfaces and holes, wall-anchored openings, furniture, lights, stairs and roofs. Floor slabs have independent top and underside finishes; changing a lower ceiling does not recolor the floor above it. Level elevations derive from preceding level heights. A `Room` is a disposable internal projection of one level, including explicit interior wall segments; it is never persisted, exported or accepted by the API as a project. Defaults are created explicitly, and every visible furniture item belongs to stored project data.
+The only persisted contract is **`ProjectDocument.version: 3`**, validated by `src/domain/project/projectDocument.ts`. It contains stable IDs for levels, shared plan points, walls and both wall finishes, surfaces and holes, wall-anchored openings, furniture, lights, stairs and roofs. Floor slabs have independent top and underside finishes; changing a lower ceiling does not recolor the floor above it. Level elevations derive from preceding level heights. A `Room` is a disposable internal projection of one level, including explicit interior wall segments; it is never persisted, exported or accepted by the API as a project. Defaults are created explicitly, and every visible furniture item belongs to stored project data.
 
 Structural commands validate the complete candidate before committing. A failed split, invalid roof solid or incompatible hole preserves the previous document. Construction history includes generated openings and all affected levels in one undo step. Stairs use connected support surfaces for continuous movement; navigation never selects a different story or spiral turn solely from X/Z coordinates. Floors and roof undersides used for rendering also define the actual openings and headroom.
 
@@ -151,7 +150,7 @@ The server stores accounts and service metadata in `DATA_DIR/accounts.sqlite`. T
 
 Confirmed documents use a revision-checked cache bounded to 32 projects and 16 MiB of encoded data. Ordinary edits read, encode and write the changed scopes without loading other levels' documents or collaboration BLOBs. Cache publication follows the database commit; rollback preserves the last confirmed state, and committed deletions invalidate cached content.
 
-Global document limits apply across the whole building, rather than multiplying by the number of levels: 64 furniture items, 24 lights, 96 wall openings, 1,536 plan points, 1,536 walls, 192 surfaces and 96 slab openings with at most 2,048 hole vertices. Per-instance custom-model part overrides are capped at 2,048 across all levels before expensive geometry validation. Custom models have additional project-wide budgets for rendered instances, triangles, texture pixels and bytes. See `PROJECT_LIMITS` and `src/modelBudget.ts` before changing limits.
+Global document limits apply across the whole building, rather than multiplying by the number of levels: 64 furniture items, 24 lights, 96 wall openings, 1,536 plan points, 1,536 walls, 192 surfaces and 96 slab openings with at most 2,048 hole vertices. Per-instance custom-model part overrides are capped at 2,048 across all levels before expensive geometry validation. Custom models have additional project-wide budgets for rendered instances, triangles, texture pixels and bytes. See `PROJECT_LIMITS` and `src/domain/models/modelBudget.ts` before changing limits.
 
 Private projects use durable account-scoped IndexedDB records and a pending queue. Preparation verifies all dependencies before marking content available. Explicit offline mode suppresses data requests, uploads, notifications and collaboration even when the network is available. Leaving offline mode checks the account, current permissions and revisions before syncing all pending projects and models. Conflicts preserve local work for recovery rather than silently overwriting server changes. Shared projects require independent personal copies for offline editing.
 
@@ -217,7 +216,7 @@ docker run --rm --network none \
   --mount "type=volume,source=${DATA_VOLUME},target=/data,readonly" \
   --mount "type=bind,source=${RECOVERY_PARENT},target=/recovery" \
   "$APP_IMAGE" \
-  node server-dist/maintenance.js restore \
+  node server-dist/server/maintenance.js restore \
   "/data/backups/${BACKUP_FILE}" /recovery/restored /data/erasures.json
 ```
 
@@ -229,9 +228,9 @@ Accounts are retained for at least **three calendar months** after their last su
 
 Destructive operator tools require the app to be stopped, the confirmed image and data volume, explicit command confirmations, and a one-shot offline container. They reject unsafe paths, active SQLite recovery files, symbolic links and unexpected files rather than forcing deletion.
 
-- Account cancellation: `node server-dist/operations.js cancel-account /data USERNAME --confirm=USERNAME`. Verify the request and account ownership first; use the same normalized username twice.
-- One-time prelaunch test reset: `node server-dist/operations.js reset-prelaunch /data --confirm=reset-3d-space-test-data`. This explicitly removes recognized test accounts, designs, models and backups, then initializes the current empty schema. Stop the service and verify the exact test volume first. Never use this for a normal upgrade; incompatible database startup does not invoke it.
-- Permanent service closure: `node server-dist/operations.js close-service /data --confirm=erase-all`. This erases recognized service data and backups. Disable automatic deployments and remove the application afterwards so it cannot recreate an empty service.
+- Account cancellation: `node server-dist/server/operations.js cancel-account /data USERNAME --confirm=USERNAME`. Verify the request and account ownership first; use the same normalized username twice.
+- One-time prelaunch test reset: `node server-dist/server/operations.js reset-prelaunch /data --confirm=reset-3d-space-test-data`. This explicitly removes recognized test accounts, designs, models and backups, then initializes the current empty schema. Stop the service and verify the exact test volume first. Never use this for a normal upgrade; incompatible database startup does not invoke it.
+- Permanent service closure: `node server-dist/server/operations.js close-service /data --confirm=erase-all`. This erases recognized service data and backups. Disable automatic deployments and remove the application afterwards so it cannot recreate an empty service.
 
 If SQLite recovery files remain after every process using the confirmed volume has stopped, do not delete them by hand. Use SQLite itself in an isolated maintenance container to checkpoint and close the database; switching that stopped database to `PRAGMA journal_mode=DELETE` lets SQLite safely retire its WAL and shared-memory files. A busy database must be investigated, never forced.
 
@@ -241,9 +240,9 @@ These operations do not erase copies outside the selected service directory, fil
 
 ## Localization and documentation contributions
 
-Localization uses **i18next** and **react-i18next**. Use **`src/i18n.ts`** as the application translation entry point and **`src/locales/es/` / `src/locales/en/`** for centralized catalogs. Translate complete messages with named interpolation, including errors, accessibility labels, dynamic feedback and help. Keep locale catalogs in parity. Avoid translating user-authored project names or persisted identifiers. The language choice belongs to application settings and is also available in the landing-page header.
+Localization uses **i18next** and **react-i18next**. Use **`src/shared/i18n/i18n.ts`** as the application translation entry point and **`src/shared/i18n/locales/es/` / `src/shared/i18n/locales/en/`** for centralized catalogs. Translate complete messages with named interpolation, including errors, accessibility labels, dynamic feedback and help. Keep locale catalogs in parity. Avoid translating user-authored project names or persisted identifiers. The language choice belongs to application settings and is also available in the landing-page header.
 
-To add a language, create the matching catalogs under `src/locales/<code>/`, register its code and native display name in `src/translations.ts`, and add its catalogs to `translationCatalogs` there. Supply localized help screenshots under `public/help/<code>/` and cover the new locale with the catalog-parity checks. Components use `t()` and `useLocale()` rather than per-language branches.
+To add a language, create the matching catalogs under `src/shared/i18n/locales/<code>/`, register its code and native display name in `src/shared/i18n/translations.ts`, and add its catalogs to `translationCatalogs` there. Supply localized help screenshots under `public/help/<code>/` and cover the new locale with the catalog-parity checks. Components use `t()` and `useLocale()` rather than per-language branches.
 
 **Every change that affects app behavior or UI must review and update the help documentation in the same change.** Update both help catalogs, actual localized screenshots in `public/help/{es,en}/` when visible steps change, and relevant tests. The help must match button names, permission rules, mobile controls and offline/recovery behavior. Capture only isolated sample data, without real credentials or private content. See [`AGENTS.md`](AGENTS.md).
 

@@ -1,6 +1,6 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
-import { TERMS_VERSION } from '../src/legalPolicy';
+import { TERMS_VERSION } from '../src/domain/policies/legalPolicy';
 
 const origin = 'http://127.0.0.1:5188';
 

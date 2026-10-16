@@ -1,10 +1,10 @@
 import { expect, test, type APIRequestContext, type Locator, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
-import { TERMS_VERSION } from '../src/legalPolicy';
-import { createDefaultProject, type ProjectDocument } from '../src/projectDocument';
-import { addLevel, addRoom, addRoof, addStair, deleteWall } from '../src/projectOperations';
-import { buildStairGeometry } from '../src/projectGeometry';
+import { TERMS_VERSION } from '../src/domain/policies/legalPolicy';
+import { createDefaultProject, type ProjectDocument } from '../src/domain/project/projectDocument';
+import { addLevel, addRoom, addRoof, addStair, deleteWall } from '../src/domain/project/projectOperations';
+import { buildStairGeometry } from '../src/domain/project/projectGeometry';
 
 const origin = 'http://127.0.0.1:5188';
 const headers = { Origin: origin, 'Content-Type': 'application/json' };

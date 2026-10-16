@@ -1,0 +1,1 @@
+export const modelAssetUrl = (id: string, roomId?: string, publicOnly = false) => `/api/models/${encodeURIComponent(id)}${roomId ? '?room=' + encodeURIComponent(roomId) : ''}${publicOnly ? (roomId ? '&' : '?') + 'public=1' : ''}`;

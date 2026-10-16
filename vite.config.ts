@@ -1,10 +1,10 @@
 import { defineConfig, type Plugin } from 'vite';
-import { createServiceWorkerSource } from './src/serviceWorkerSource';
+import { createServiceWorkerSource } from './src/client/pwa/serviceWorkerSource';
 import react from '@vitejs/plugin-react';
 import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { languages, translationCatalogs, type Locale } from './src/translations';
+import { languages, translationCatalogs, type Locale } from './src/shared/i18n/translations';
 const buildId = process.env.APP_BUILD_ID ?? Date.now().toString(36);
 
 async function localizedManifest(locale: Locale) {

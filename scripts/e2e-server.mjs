@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createServer } from '../server-dist/server.js';
+import { createServer } from '../server-dist/server/server.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const temporary = mkdtempSync(join(tmpdir(), '3d-space-e2e-'));

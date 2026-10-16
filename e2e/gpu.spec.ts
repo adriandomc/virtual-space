@@ -1,9 +1,9 @@
 import { expect, test, type Locator } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
-import { createDefaultProject } from '../src/projectDocument';
-import { addLevel } from '../src/projectOperations';
-import { TERMS_VERSION } from '../src/legalPolicy';
+import { createDefaultProject } from '../src/domain/project/projectDocument';
+import { addLevel } from '../src/domain/project/projectOperations';
+import { TERMS_VERSION } from '../src/domain/policies/legalPolicy';
 
 test('hardware browser keeps resources stable through twenty level switches and twenty walkthroughs at one, four and twelve storeys', async ({ page, context, browser }, testInfo) => {
   test.setTimeout(360000);
