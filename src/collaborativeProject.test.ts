@@ -24,6 +24,19 @@ test('a canonical JSON roundtrip preserves unchanged roof map identities during 
   } finally { doc.destroy(); }
 });
 
+test('every persisted entity collection rejects raw JSON arrays instead of accepting a destructive map conversion', () => {
+  const project = createDefaultProject(), scopes = projectScopes(project);
+  for (const key of ['furniture', 'openings', 'lights', 'walls', 'surfaces', 'points', 'stairs', 'roofs']) {
+    const doc = new Y.Doc(), value = ['stairs', 'roofs'].includes(key) ? scopes.meta : scopes[project.activeLevelId];
+    try {
+      writeProjectScope(doc, value);
+      assert.deepEqual(readProjectScope(doc), value);
+      doc.getMap('data').set(key, structuredClone(value[key]));
+      assert.throws(() => readProjectScope(doc), /Los cambios no son válidos/, key + ' must retain its keyed Y.Map contract');
+    } finally { doc.destroy(); }
+  }
+});
+
 test('simultaneous roof and stair finishes on different levels merge by persistent entity ID', () => {
   let project = addLevel(addLevel(createDefaultProject(), { copy: true }), { copy: true });
   project = addRoof(project, project.levels[0].id);

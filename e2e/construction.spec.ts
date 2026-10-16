@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import { TERMS_VERSION } from '../src/legalPolicy';
 import { createDefaultProject, type ProjectDocument } from '../src/projectDocument';
-import { addLevel, addRoom, addStair, deleteWall } from '../src/projectOperations';
+import { addLevel, addRoom, addRoof, addStair, deleteWall } from '../src/projectOperations';
 import { buildStairGeometry } from '../src/projectGeometry';
 
 const origin = 'http://127.0.0.1:5188';
@@ -203,6 +203,61 @@ test('roof templates and free-form drafts apply atomically and cancel safely', a
   await page.locator('.roof-mesh-dialog').getByRole('button', { name: 'Cancelar', exact: true }).click(); await page.getByRole('button', { name: 'Descartar cambios', exact: true }).click(); expect(JSON.stringify((await snapshot(context.request, project.id)).roofs[0])).toBe(stored);
   await page.getByRole('button', { name: 'Editar vértices y caras', exact: true }).click(); const y = Number(await page.getByLabel('Coordenada Y del vértice', { exact: true }).inputValue()); await field(page, 'Coordenada Y del vértice', String(y + .01));
   await page.getByRole('button', { name: 'Aplicar forma', exact: true }).click(); await expect(page.locator('.roof-mesh-dialog')).toHaveCount(0);
+});
+
+test('concurrent roof and stair finishes on different levels survive collaboration and reload', async ({ page, context }) => {
+  await account(context.request);
+  let project = createDefaultProject('Concurrent architectural finishes');
+  for (let index = 1; index < 3; index++) project = addLevel(project, { copy: true, name: 'Level ' + (index + 1) });
+  project = addRoof(project, project.levels[0].id);
+  for (let index = 0; index < 2; index++) project = addStair(project, { fromLevelId: project.levels[index].id, toLevelId: project.levels[index + 1].id });
+  expect((await context.request.post('/api/rooms', { headers, data: { id: project.id, project } })).status()).toBe(201);
+  expect((await context.request.post('/api/rooms/' + project.id + '/share', { headers, data: { enabled: true } })).status()).toBe(200);
+  const other = await context.newPage(), pages = [page, other];
+  const held: (() => void)[][] = [[], []]; let paused = false;
+  // Hold only real outgoing updates so both UI edits are based on the same server state.
+  // The application and Yjs documents remain untouched by the test.
+  for (const [index, target] of pages.entries()) await target.routeWebSocket('**/api/rooms/' + project.id + '/live', socket => {
+    const server = socket.connectToServer();
+    socket.onMessage(message => {
+      if (paused && typeof message === 'string' && JSON.parse(message).type === 'update') held[index].push(() => server.send(message));
+      else server.send(message);
+    });
+  });
+  try {
+    await Promise.all(pages.map((target, index) => target.goto('/editor?room=' + project.id + '&level=' + project.levels[index ? 2 : 0].id)));
+    for (const [index, target] of pages.entries()) {
+      await expect(target.getByLabel('Nombre del proyecto', { exact: true })).toBeEditable();
+      await target.getByLabel('Nivel activo', { exact: true }).selectOption(project.levels[index ? 2 : 0].id);
+      await expect(target.getByLabel('Nivel activo', { exact: true })).toHaveValue(project.levels[index ? 2 : 0].id);
+      await openRoom(target); await expand(target, 'Cubiertas'); await expand(target, 'Acabado exterior');
+    }
+    async function simultaneousFinish(summary: string, colors: string[]) {
+      const inputs = pages.map(target => target.locator('details.construction-finish').filter({ has: target.locator('summary').filter({ hasText: new RegExp('^' + summary + '$') }) }).getByLabel('Código hexadecimal del acabado', { exact: true }));
+      await Promise.all(inputs.map((input, index) => input.fill(colors[index]))); paused = true;
+      try {
+        await Promise.all(inputs.map(input => input.press('Tab')));
+        await expect.poll(() => held.map(queue => queue.length)).toEqual([1, 1]);
+      } finally { paused = false; for (const queue of held) for (const send of queue.splice(0)) send(); }
+      for (const target of pages) await expect(target.locator('.saved-status')).toHaveAttribute('title', 'Guardado');
+    }
+    await simultaneousFinish('Acabado exterior', ['#123456', '#abcdef']);
+    const roofIds = [0, 2].map(index => project.roofs.find(roof => roof.levelId === project.levels[index].id)!.id);
+    await expect.poll(async () => { const saved = await snapshot(context.request, project.id); return roofIds.map(id => saved.roofs.find(roof => roof.id === id)!.finish.color); }).toEqual(['#123456', '#abcdef']);
+    for (const target of pages) { await expand(target, 'Escaleras'); await expand(target, 'Acabado de escalera'); }
+    await simultaneousFinish('Acabado de escalera', ['#334455', '#fedcba']);
+    await expect.poll(async () => (await snapshot(context.request, project.id)).stairs.map(stair => stair.finish.color)).toEqual(['#334455', '#fedcba']);
+    await Promise.all(pages.map(target => target.reload()));
+    for (const [index, target] of pages.entries()) {
+      await expect(target.getByLabel('Nombre del proyecto', { exact: true })).toBeEditable();
+      await target.getByLabel('Nivel activo', { exact: true }).selectOption(project.levels[index ? 2 : 0].id);
+      await expect(target.getByLabel('Nivel activo', { exact: true })).toHaveValue(project.levels[index ? 2 : 0].id);
+      await openRoom(target); await expand(target, 'Cubiertas'); await expand(target, 'Acabado exterior');
+      await expect(target.locator('details.construction-finish').filter({ has: target.locator('summary').filter({ hasText: /^Acabado exterior$/ }) }).getByLabel('Código hexadecimal del acabado', { exact: true })).toHaveValue(index ? '#abcdef' : '#123456');
+      await expand(target, 'Escaleras'); await expand(target, 'Acabado de escalera');
+      await expect(target.locator('details.construction-finish').filter({ has: target.locator('summary').filter({ hasText: /^Acabado de escalera$/ }) }).getByLabel('Código hexadecimal del acabado', { exact: true })).toHaveValue(index ? '#fedcba' : '#334455');
+    }
+  } finally { paused = false; for (const queue of held) for (const send of queue.splice(0)) send(); await other.close(); }
 });
 
 test('English mobile settings retain local manual graphics choices and reset independently', async ({ page, context }) => {

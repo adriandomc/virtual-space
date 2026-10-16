@@ -94,6 +94,8 @@ test('manifest, installation assets and mobile settings remain usable', async ({
 
 test('preparation includes unopened designs, croquis and models; forced mode sends no data', async ({ page, context }) => {
   const request = context.request;
+  const pageErrors: string[] = [];
+  page.on('pageerror', error => pageErrors.push(error.message));
   const streams = new Set<Request>();
   page.on('request', value => { if (value.url().endsWith('/api/notifications/events')) streams.add(value); });
   page.on('requestfinished', value => streams.delete(value)); page.on('requestfailed', value => streams.delete(value));
@@ -115,7 +117,29 @@ test('preparation includes unopened designs, croquis and models; forced mode sen
   const observeSockets = (value: Page) => value.on('websocket', socket => sockets.push(socket.url()));
   observeSockets(page); context.on('page', observeSockets);
   await page.getByRole('link', { name: /Con croquis y modelo/ }).click();
-  await expect(page.getByLabel('Nombre del proyecto', { exact: true })).toHaveValue(first.project.name);
+  try { await expect(page.getByLabel('Nombre del proyecto', { exact: true })).toHaveValue(first.project.name); }
+  catch (cause) {
+    const state = await page.evaluate(async roomId => {
+      const locks = navigator.locks ? await navigator.locks.query() : null;
+      const storage = new Promise<unknown>((accept, reject) => {
+        const request = indexedDB.open('3d-space-v3', 1);
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          const database = request.result, tx = database.transaction(['meta', 'projects'], 'readonly'), identity = tx.objectStore('meta').get('identity');
+          let mode: IDBRequest | undefined, project: IDBRequest | undefined;
+          identity.onsuccess = () => {
+            const accountId = identity.result?.id;
+            if (accountId) { mode = tx.objectStore('meta').get('mode:' + accountId); project = tx.objectStore('projects').get(accountId + ':' + roomId); }
+          };
+          tx.oncomplete = () => { database.close(); const record = project?.result; accept({ identity: identity.result, mode: mode?.result, project: record && { id: record.id, accountId: record.accountId, authorized: record.authorized, prepared: record.prepared, deleted: record.deleted, name: record.snapshot?.project?.name, levelRefs: record.levelRefs } }); };
+          tx.onabort = () => { database.close(); reject(tx.error); };
+        };
+      });
+      return { readyState: document.readyState, body: document.body.innerText.slice(0, 3000), locks, storage: await Promise.race([storage, new Promise(accept => setTimeout(() => accept('diagnostic storage read timed out'), 4000))]) };
+    }, first.id).catch(error => ({ diagnosticError: String(error) }));
+    await test.info().attach('offline-startup-diagnostics', { body: JSON.stringify({ pageErrors, requests, sockets, state }, null, 2), contentType: 'application/json' });
+    throw cause;
+  }
   await page.getByRole('tab', { name: 'Planta', exact: true }).click();
   await expect(page.locator('.plan-editor image')).toHaveAttribute('href', /^blob:/);
   await context.setOffline(true);

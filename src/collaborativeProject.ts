@@ -34,6 +34,7 @@ function write(map: Y.Map<unknown>, next: Record<string, unknown>, previous: Rec
   }
 }
 function read(value: unknown, key?: string): any {
+  if (key && collections.includes(key) && !(value instanceof Y.Map)) throw new Error('Los cambios no son válidos.');
   if (!(value instanceof Y.Map)) { if (value instanceof Y.AbstractType) throw new Error('Los cambios no son válidos.'); return value; }
   if (value._start || value.has('__proto__')) throw new Error('Los cambios no son válidos.');
   if (key && collections.includes(key)) {

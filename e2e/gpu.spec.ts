@@ -13,13 +13,13 @@ test('hardware browser keeps resources stable through twenty level switches and 
   await page.goto('/designs');
   const hardware = await page.evaluate(() => {
     const canvas = document.createElement('canvas'), gl = canvas.getContext('webgl2');
-    if (!gl) return { renderer: '', vendor: '' };
+    if (!gl) return { renderer: '', vendor: '', identified: false };
     const debug = gl.getExtension('WEBGL_debug_renderer_info');
-    const result = { renderer: String(debug ? gl.getParameter(debug.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)), vendor: String(debug ? gl.getParameter(debug.UNMASKED_VENDOR_WEBGL) : gl.getParameter(gl.VENDOR)) };
+    const result = { renderer: String(debug ? gl.getParameter(debug.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)), vendor: String(debug ? gl.getParameter(debug.UNMASKED_VENDOR_WEBGL) : gl.getParameter(gl.VENDOR)), identified: Boolean(debug) };
     gl.getExtension('WEBGL_lose_context')?.loseContext(); return result;
   });
   const devicePath = testInfo.outputPath('gpu-device.json'); await writeFile(devicePath, JSON.stringify({ ...hardware, browser: browser.version() }, null, 2)); await testInfo.attach('gpu-device.json', { path: devicePath, contentType: 'application/json' });
-  test.skip(!hardware.renderer || /swiftshader|llvmpipe|lavapipe|software|microsoft basic|warp/i.test(hardware.renderer), 'A hardware graphics backend is not available in this browser.');
+  test.skip(!hardware.identified || !hardware.renderer || /swiftshader|llvmpipe|lavapipe|software|microsoft basic|warp/i.test(hardware.renderer), 'An identifiable hardware graphics backend is not available in this browser.');
   const results: unknown[] = [], errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   async function metrics(canvas: Locator, after: number, levelId: string, walk: boolean) {
     await expect.poll(async () => {

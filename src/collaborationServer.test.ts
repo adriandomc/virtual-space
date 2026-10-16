@@ -150,6 +150,18 @@ test('invitaciones, permisos y colaboración durable sin sobrescribir cambios aj
       const hiddenRejected = await ownerLive.next('error');
       assert.equal(hiddenRejected.status, 400); assert.equal(hiddenRejected.requestId, hiddenId);
       assert.equal((await (await request(path, 'owner')).json()).revision, 3);
+      for (const key of ['furniture', 'openings', 'lights', 'walls', 'surfaces', 'points', 'stairs', 'roofs']) {
+        const scope = ['stairs', 'roofs'].includes(key) ? 'meta' : room.activeLevelId, malformed = new Y.Doc();
+        try {
+          Y.applyUpdate(malformed, Buffer.from(hiddenRejected.states[scope], 'base64'));
+          const before = readProjectScope(malformed), vector = Y.encodeStateVector(malformed), operationId = randomUUID();
+          malformed.getMap('data').set(key, structuredClone(before[key]));
+          ownerLive.socket.send(JSON.stringify({ type: 'update', id: operationId, scope, update: Buffer.from(Y.encodeStateAsUpdate(malformed, vector)).toString('base64') }));
+          const rejected = await ownerLive.next('error'); assert.equal(rejected.status, 400, key); assert.equal(rejected.requestId, operationId);
+          const unchanged = await (await request(path, 'owner')).json(); assert.equal(unchanged.revision, 3, key);
+          assert.deepEqual(unchanged.project, hiddenRejected.project, 'a malformed collection cannot partially change ' + key);
+        } finally { malformed.destroy(); }
+      }
       ownerLive.send(edit(ownerDoc, value => ({ ...value, name: 'Diseño colaborativo' })));
       const ack = await ownerLive.next('ack'); assert.equal(ack.revision, 4);
       const remote = await editorLive.next('update'); Y.applyUpdate(editorDoc, Buffer.from(remote.update, 'base64'));
