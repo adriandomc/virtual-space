@@ -1,0 +1,12 @@
+{
+  "date": "2026-10-16",
+  "environment": "Linux Docker Node 24 build stage, one CPU and 512 MiB memory",
+  "codeRevision": "668feaa321fac37c4e725d984b4c1a30892be1ee",
+  "command": "npm exec --offline -- tsx --test src/operations.test.ts src/backups.test.ts src/databaseSchema.test.ts",
+  "isolation": { "network": "none", "productionVolumeMounted": false },
+  "tests": 21,
+  "passed": 21,
+  "failed": 0,
+  "skipped": 0,
+  "durationMs": 2600.298686
+}
