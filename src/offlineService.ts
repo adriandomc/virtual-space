@@ -13,7 +13,7 @@ import { flushOfflineAssets, type OfflineAssetRecord } from './offlineAssets';
 import { offlineModelMetadata } from './offlineModelValidation';
 import { offlineFetch, offlineForced, subscribeOfflineMode } from './offlineMode';
 
-export type OfflineProgress = { done: number; total: number; label: string };
+export type OfflineProgress = { done: number; total: number; label: string; labelIsKey: boolean };
 export type OfflineSummary = { accountId: string | null; forced: boolean; prepared: boolean; preparing: boolean; pending: number; syncing: boolean; error: string; progress: OfflineProgress | null; bytes: number; quota: number | null };
 let preparing = false, syncing = false, error = '';
 let progress: OfflineProgress | null = null;
@@ -271,10 +271,10 @@ export async function prepareOffline(onProgress?: (progress: OfflineProgress) =>
       }
     }
     let done = 0; const total = models.length + privateRooms.length;
-    const report = (label: string) => { progress = { done, total, label }; onProgress?.(progress); signal(); };
+    const report = (label: string, labelIsKey = false) => { progress = { done, total, label, labelIsKey }; onProgress?.(progress); signal(); };
     for (const asset of models) { report(asset.name); await cacheAsset(user.id, asset); done++; }
     for (const room of privateRooms) {
-      report('Preparando diseño');
+      report('Preparando diseño', true);
       await projectLock(user.id, room.id, async () => {
       let complete = false;
       for (let attempt = 0; attempt < 3 && !complete; attempt++) {
@@ -299,7 +299,7 @@ export async function prepareOffline(onProgress?: (progress: OfflineProgress) =>
     // A remote deletion cannot resurrect an old, clean local design.
     for (const record of await listOffline<OfflineProjectRecord>('projects')) if (record.accountId === user.id && !record.localOnly && !rooms.some(room => room.id === record.id)) await removeCleanProject(user.id, record.id);
     await writeOffline('meta', 'prepared:' + user.id, { accountId: user.id, complete: true, roomIds: privateRooms.map(room => room.id), at: Date.now() });
-    report('Listo');
+    report('Listo', true);
   } catch (cause) { error = cause instanceof Error ? cause.message : 'No se pudo preparar.'; throw cause; }
   finally { preparing = false; signal(); }
   return offlineSummary();
@@ -361,7 +361,7 @@ export async function importOfflineProject(id: string, backup: ProjectBackup) {
   writes.push(...await projectWrites(record));
   await atomicOffline(record.accountId, writes);
 }
-export async function copyDesign(id: string) {
+export async function copyDesign(id: string, suffix = ' (copia)') {
   const user = await identity();
   let backup: ProjectBackup;
   try { backup = await exportOfflineProject(id); }
@@ -369,7 +369,7 @@ export async function copyDesign(id: string) {
     if (!(cause instanceof AccountRequestError && [403, 404].includes(cause.status)) || !await readOfflineProject(id)) throw cause;
     backup = await exportOfflineProject(id, true);
   }
-  const copy = { ...backup, room: { ...backup.room, name: backup.room.name.slice(0, 92) + ' (copia)' } };
+  const copy = { ...backup, room: { ...backup.room, name: backup.room.name.slice(0, 100 - suffix.length) + suffix } };
   const result = await createDesignLocal({ ...copy.room, furniture: [] });
   try { await importOfflineProject(result.id, copy); }
   catch (cause) { await removeOffline('projects', offlineProjectKey(user.id, result.id)); throw cause; }

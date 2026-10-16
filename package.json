@@ -17,9 +17,11 @@
     "test:e2e:webkit": "npm run build && playwright test --project=webkit"
   },
   "dependencies": {
+    "i18next": "^26.4.7",
     "lucide-react": "^0.468.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "react-i18next": "^17.0.20",
     "three": "^0.180.0",
     "three-bvh-csg": "^0.0.18",
     "three-mesh-bvh": "^0.9.7",

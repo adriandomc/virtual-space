@@ -34,6 +34,20 @@ test('offline GLB validation rejects external dependencies, cycles, memory bombs
   assert.deepEqual(metadata.nodes, [{ key: '0', name: 'Tabla', mesh: true }]);
 });
 
+test('offline metadata uses original GLB names and marks only generated labels', async () => {
+  const metadata = (change: (document: any) => void) => offlineModelMetadata(new Blob([fixture(change)]), 'id', 'room', 'Model.glb');
+  for (const name of [undefined, '', '   ']) {
+    const result = await metadata(document => { document.nodes[0].name = name; });
+    assert.deepEqual(result.nodes, [{ key: '0', name: 'Parte 1', mesh: true, generatedName: true }]);
+  }
+  for (const name of ['Parte 1', 'Tabla', 'My shelf [1]: left']) {
+    const result = await metadata(document => { document.nodes[0].name = name; document.nodes[0].generatedName = true; document.nodes[0].extras = { generatedName: true }; });
+    assert.deepEqual(result.nodes, [{ key: '0', name, mesh: true }]);
+  }
+  const hierarchy = await metadata(document => { document.nodes = [{ mesh: 0 }, { children: [0] }]; document.scenes[0].nodes = [1]; });
+  assert.deepEqual(hierarchy.nodes.map(({ key, name, generatedName }) => ({ key, name, generatedName })), [{ key: '1', name: 'Parte 2', generatedName: true }, { key: '0', name: 'Parte 1', generatedName: true }]);
+});
+
 test('cached model bytes recover on transport failure but not on permission denial or a different account', async () => {
   await clearOffline(); await allow();
   const original = globalThis.fetch, bytes = fixture();

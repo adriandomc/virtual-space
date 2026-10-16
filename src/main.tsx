@@ -1,4 +1,5 @@
 import React from 'react';
+import { t } from './i18n';
 import ReactDOM from 'react-dom/client';
 import { LoaderCircle } from 'lucide-react';
 import { siteRoute } from './routes';
@@ -13,6 +14,7 @@ const Embed = React.lazy(() => import('./Embed'));
 const AccountApp = React.lazy(() => import('./AccountApp'));
 const Privacy = React.lazy(() => import('./Privacy'));
 const Terms = React.lazy(() => import('./Terms'));
+const Help = React.lazy(() => import('./Help'));
 const route = siteRoute(new URL(window.location.href));
 if (route.page !== 'embed') registerAppOffline();
 else document.body.classList.add('embed-page');
@@ -26,10 +28,10 @@ import.meta.hot?.dispose(() => { viewport?.removeEventListener('resize', syncVie
 if (route.redirect) window.location.replace(route.redirect);
 else {
  const root = ReactDOM.createRoot(document.getElementById('root')!);
- root.render(<main className="project-loading" aria-label="Cargando"><LoaderCircle size={25} className="saving-spinner" /></main>);
+ root.render(<main className="project-loading" aria-label={t('Cargando')}><LoaderCircle size={25} className="saving-spinner" /></main>);
  void (route.page === 'embed' ? Promise.resolve() : bootstrapOfflineMode()).then(() => root.render(
-  <React.StrictMode><AppRecovery><AppFrame><React.Suspense fallback={<main className="project-loading" aria-label="Cargando"><LoaderCircle size={25} className="saving-spinner" /></main>}>
-    {route.page === 'embed' ? <Embed /> : route.page === 'landing' ? <Landing /> : route.page === 'privacy' ? <Privacy /> : route.page === 'terms' ? <Terms /> : <AccountApp page={route.page} />}
+  <React.StrictMode><AppRecovery><AppFrame><React.Suspense fallback={<main className="project-loading" aria-label={t('Cargando')}><LoaderCircle size={25} className="saving-spinner" /></main>}>
+    {route.page === 'embed' ? <Embed /> : route.page === 'landing' ? <Landing /> : route.page === 'privacy' ? <Privacy /> : route.page === 'terms' ? <Terms /> : route.page === 'help' ? <Help /> : <AccountApp page={route.page} />}
   </React.Suspense></AppFrame></AppRecovery></React.StrictMode>,
- )).catch(() => root.render(<main className="project-loading"><p>No se pudo abrir el almacenamiento de este dispositivo.</p><button className="primary-button" onClick={() => window.location.reload()}>Reintentar</button></main>));
+ )).catch(() => root.render(<main className="project-loading"><p>{t('No se pudo abrir el almacenamiento de este dispositivo.')}</p><button className="primary-button" onClick={() => window.location.reload()}>{t('Reintentar')}</button></main>));
 }

@@ -114,7 +114,7 @@ export function inspectOfflineGlb(bytes: ArrayBuffer): { document: Json; texture
 }
 
 export async function offlineModelMetadata(file: Blob, id: string, roomId: string, name: string): Promise<ModelAsset> {
-  const bytes = await file.arrayBuffer(), { texturePixels } = inspectOfflineGlb(bytes);
+  const bytes = await file.arrayBuffer(), { texturePixels, document } = inspectOfflineGlb(bytes);
   const manager = new THREE.LoadingManager();
   manager.setURLModifier(url => { if (!url.startsWith('blob:')) invalid(); return url; });
   let gltf;
@@ -128,7 +128,11 @@ export async function offlineModelMetadata(file: Blob, id: string, roomId: strin
     gltf.scene.traverse(object => {
       if (!object.matrixWorld.elements.every(Number.isFinite)) invalid();
       const association = gltf.parser.associations.get(object) as { nodes?: number } | undefined;
-      if (association?.nodes !== undefined) nodes.push({ key: String(association.nodes), name: object.name.slice(0, 80) || `Parte ${nodes.length + 1}`, mesh: object instanceof THREE.Mesh || object.children.some(child => child instanceof THREE.Mesh) });
+      if (association?.nodes !== undefined) {
+        const name = document.nodes[association.nodes].name;
+        const generatedName = typeof name !== 'string' || !name.trim();
+        nodes.push({ key: String(association.nodes), name: generatedName ? `Parte ${association.nodes + 1}` : name.slice(0, 80), mesh: object instanceof THREE.Mesh || object.children.some(child => child instanceof THREE.Mesh), ...(generatedName ? { generatedName: true as const } : {}) });
+      }
       if (!(object instanceof THREE.Mesh)) return;
       const geometry = object.geometry;
       const position = geometry.getAttribute('position');

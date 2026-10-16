@@ -1,9 +1,10 @@
-export type SitePage = 'landing' | 'login' | 'designs' | 'editor' | 'embed' | 'privacy' | 'terms';
+export type SitePage = 'landing' | 'login' | 'designs' | 'editor' | 'embed' | 'privacy' | 'terms' | 'help';
 
 export const LOGIN_PATH = '/login';
 export const DESIGNS_PATH = '/designs';
 export const PRIVACY_PATH = '/privacy';
 export const TERMS_PATH = '/terms';
+export const HELP_PATH = '/help';
 
 export function editorPath(id: string, setup = false) {
   const query = new URLSearchParams({ room: id });
@@ -19,9 +20,10 @@ export function embedAddress(source: URL, id: string) {
   return new URL('/embed?' + new URLSearchParams({ room: id }), source.origin).href;
 }
 
-export function embedCode(source: URL, id: string) {
+export function embedCode(source: URL, id: string, title = '3D Space') {
   const address = embedAddress(source, id).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
-  return `<iframe src="${address}" title="Visor 3D" width="100%" height="560" style="border:0" loading="lazy" allowfullscreen referrerpolicy="no-referrer"></iframe>`;
+  const label = title.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return `<iframe src="${address}" title="${label}" width="100%" height="560" style="border:0" loading="lazy" allowfullscreen referrerpolicy="no-referrer"></iframe>`;
 }
 
 export function siteRoute(url: URL): { page: SitePage; redirect?: string } {
@@ -33,6 +35,7 @@ export function siteRoute(url: URL): { page: SitePage; redirect?: string } {
   if (path === DESIGNS_PATH) return { page: 'designs' };
   if (path === PRIVACY_PATH) return { page: 'privacy' };
   if (path === TERMS_PATH) return { page: 'terms' };
+  if (path === HELP_PATH) return { page: 'help' };
   return path === '/' ? { page: 'landing' } : { page: 'landing', redirect: '/' };
 }
 

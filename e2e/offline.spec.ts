@@ -142,8 +142,8 @@ test('new local designs and an edited GLB survive cold offline reload and all sy
   await page.getByRole('button', { name: 'Crear elemento', exact: true }).click();
   const workshop = page.getByRole('dialog', { name: 'Crear modelo', exact: true });
   await workshop.getByRole('button', { name: 'Formas', exact: true }).click();
-  await expect(workshop.getByRole('button', { name: 'Agregar cubo', exact: true })).toBeEnabled({ timeout: 30000 });
-  await workshop.getByRole('button', { name: 'Agregar cubo', exact: true }).click();
+  await expect(workshop.getByRole('button', { name: 'Agregar Cubo', exact: true })).toBeEnabled({ timeout: 30000 });
+  await workshop.getByRole('button', { name: 'Agregar Cubo', exact: true }).click();
   await workshop.getByLabel('Nombre del modelo', { exact: true }).fill('Cubo sin conexión');
   await workshop.getByLabel('Nombre del modelo', { exact: true }).press('Tab');
   await workshop.getByRole('button', { name: 'Guardar modelo', exact: true }).click();

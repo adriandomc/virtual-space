@@ -34,6 +34,19 @@ test('self-contained GLB validation returns physical bounds and stable node keys
   assert.deepEqual([result.width, result.height, result.depth], [2, 3, 4]);
 });
 
+test('server metadata marks generated node names without interpreting authored names', () => {
+  for (const name of [undefined, '', '   ']) {
+    const result = validateGlb(glbFixture(document => { document.nodes[0].name = name; }));
+    assert.deepEqual(result.nodes, [{ key: '0', name: 'Parte 1', mesh: true, generatedName: true }]);
+  }
+  for (const name of ['Parte 1', 'Tabla', 'My shelf [1]: left']) {
+    const result = validateGlb(glbFixture(document => { document.nodes[0].name = name; document.nodes[0].generatedName = true; document.nodes[0].extras = { generatedName: true }; }));
+    assert.deepEqual(result.nodes, [{ key: '0', name, mesh: true }]);
+  }
+  const hierarchy = validateGlb(glbFixture(document => { document.nodes = [{ mesh: 0 }, { children: [0] }]; document.scenes[0].nodes = [1]; }));
+  assert.deepEqual(hierarchy.nodes, [{ key: '1', name: 'Parte 2', mesh: false, generatedName: true }, { key: '0', name: 'Parte 1', mesh: true, generatedName: true }]);
+});
+
 test('models cannot fetch external resources, data URLs, compressed decoders, or animations', () => {
   for (const uri of ['https://example.com/private.png', 'data:image/png;base64,aGVsbG8=', 'file:///etc/passwd', 'javascript:alert(1)', '/api/auth/logout', 'blob:unknown']) assert.throws(() => validateGlb(glbFixture(document => { document.buffers[0].uri = uri; })), /sin enlaces externos/);
   assert.throws(() => validateGlb(glbFixture(document => { document.meshes[0].primitives[0].extensions = { KHR_draco_mesh_compression: { bufferView: 0 } }; })), /sin compresión/);

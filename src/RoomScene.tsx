@@ -1,3 +1,4 @@
+import { t, useLocale } from './i18n';
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -742,6 +743,7 @@ function startViewTransition(runtime: Runtime, room: Room, mode: ViewMode) {
 }
 
 export default function RoomScene(props: Props) {
+  const locale = useLocale();
   const container = useRef<HTMLDivElement>(null);
   const runtime = useRef<Runtime | null>(null);
   const [preview, setPreview] = useState<Room | null>(null);
@@ -760,6 +762,9 @@ export default function RoomScene(props: Props) {
   const [notice, setNotice] = useState('');
   const [walkTarget, setWalkTarget] = useState<Selection | null>(null);
   const walkTargetRef = useRef<Selection | null>(null);
+  useEffect(() => {
+    runtime.current?.renderer.domElement.setAttribute('aria-label', t('Visor 3D del cuarto. Arrastra para mirar. En recorrido: WASD o flechas para moverte, Q y E para girar, R y F para mirar arriba y abajo. Toca puertas y focos, o mira hacia ellos y pulsa Enter o espacio.'));
+  }, [locale, ready]);
 
   const changeWalkTarget = (target: Selection | null) => {
     if (target === null && walkTargetRef.current === null || sameSelection(target, walkTargetRef.current)) return;
@@ -809,7 +814,7 @@ export default function RoomScene(props: Props) {
         const camera = new THREE.PerspectiveCamera(43, 1, 0.025, 250);
         const canvas = renderer.domElement;
         canvas.tabIndex = 0;
-        canvas.setAttribute('aria-label', 'Visor 3D del cuarto. Arrastra para mirar. En recorrido: WASD o flechas para moverte, Q y E para girar, R y F para mirar arriba y abajo. Toca puertas y focos, o mira hacia ellos y pulsa Enter o espacio.');
+        canvas.setAttribute('aria-label', t('Visor 3D del cuarto. Arrastra para mirar. En recorrido: WASD o flechas para moverte, Q y E para girar, R y F para mirar arriba y abajo. Toca puertas y focos, o mira hacia ellos y pulsa Enter o espacio.'));
         mount.append(canvas);
         const transform = new TransformControls(camera, canvas);
         transform.enabled = false;
@@ -917,7 +922,7 @@ export default function RoomScene(props: Props) {
             updateSelection(active, current.current);
             if (next !== state.room) state.onChange(next);
             setNotice('');
-          } catch (cause) { setNotice(cause instanceof Error ? cause.message : 'No se puede colocar aquí.'); }
+          } catch (cause) { setNotice(cause instanceof Error ? cause.message : t("No se puede colocar aquí.")); }
         };
         const finishDrag = () => {
           commitProxy(true);
@@ -1104,7 +1109,7 @@ export default function RoomScene(props: Props) {
           catch (cause) {
             console.error('Room renderer:', cause);
             void active.renderer.setAnimationLoop(null);
-            setError('No se pudo mostrar el cuarto. Actualiza el navegador o activa la aceleración gráfica.');
+            setError(t("No se pudo mostrar el cuarto. Actualiza el navegador o activa la aceleración gráfica."));
           }
         });
         if (cancelled) return;
@@ -1126,7 +1131,7 @@ export default function RoomScene(props: Props) {
         }
         try { renderer?.dispose(); } catch { /* a rejected backend might not be initialized */ }
         renderer?.domElement.remove();
-        if (!cancelled) setError('Este navegador no pudo iniciar el visor 3D. Actualiza el navegador o activa la aceleración gráfica.');
+        if (!cancelled) setError(t("Este navegador no pudo iniciar el visor 3D. Actualiza el navegador o activa la aceleración gráfica."));
       }
     };
     void initialize();
@@ -1224,12 +1229,12 @@ export default function RoomScene(props: Props) {
   };
   const targetDoor = walkTarget?.kind === 'opening' ? effectiveRoom.openings.find(opening => opening.id === walkTarget.id && opening.type === 'door' && opening.doorStyle !== 'frame') : null;
   const targetLight = walkTarget?.kind === 'light' ? effectiveRoom.lights.find(light => light.id === walkTarget.id) : null;
-  const interactionLabel = targetDoor ? targetDoor.open === false ? 'Abrir puerta' : 'Cerrar puerta' : targetLight ? `${targetLight.enabled ? 'Apagar' : 'Encender'} ${targetLight.name}` : null;
+  const interactionLabel = targetDoor ? targetDoor.open === false ? t("Abrir puerta") : t("Cerrar puerta") : targetLight ? t(targetLight.enabled ? 'Apagar {{name}}' : 'Encender {{name}}', { name: targetLight.name }) : null;
 
   return <div className="room-scene" ref={container}>
-    {!ready && !error && <div className="scene-loading"><LoaderCircle size={24} /><span>Cargando…</span></div>}
-    {error && <div className="scene-error" role="alert"><strong>No pudimos iniciar el visor</strong><p>{error}</p></div>}
-    {notice && !error && <div className="scene-notice" role="status">{notice}</div>}
-    {ready && !error && !transitioning && props.mode === 'walk' && <><div className="walk-hint">{walkBlocked ? 'No queda espacio libre para caminar. Mueve algún mueble.' : 'Arrastra para mirar · Toca puertas y focos'}</div>{interactionLabel && <button type="button" className="walk-interaction" aria-pressed={targetDoor ? targetDoor.open !== false : targetLight?.enabled} onClick={() => interact(walkTargetRef.current)}>{targetDoor ? targetDoor.open === false ? <DoorOpen size={20} /> : <DoorClosed size={20} /> : <Lightbulb size={20} />}<span>{interactionLabel}</span></button>}<div className="walk-joystick"><button type="button" tabIndex={-1} className="joystick-base" aria-label="Joystick de movimiento: arrastra para caminar. Con teclado usa WASD en el visor." onPointerDown={event => { event.preventDefault(); event.stopPropagation(); joystickPointer.current = event.pointerId; event.currentTarget.setPointerCapture(event.pointerId); moveJoystick(event); }} onPointerMove={event => { if (joystickPointer.current === event.pointerId) { event.stopPropagation(); moveJoystick(event); } }} onPointerUp={releaseJoystick} onPointerCancel={releaseJoystick} onLostPointerCapture={releaseJoystick}><span className="joystick-knob" style={{ transform: `translate(${stick.x * 34}px, ${stick.z * 34}px)` }} /></button></div></>}
+    {!ready && !error && <div className="scene-loading"><LoaderCircle size={24} /><span>{t("Cargando…")}</span></div>}
+    {error && <div className="scene-error" role="alert"><strong>{t("No pudimos iniciar el visor")}</strong><p>{t(error)}</p></div>}
+    {notice && !error && <div className="scene-notice" role="status">{t(notice)}</div>}
+    {ready && !error && !transitioning && props.mode === 'walk' && <><div className="walk-hint">{walkBlocked ? t("No queda espacio libre para caminar. Mueve algún mueble.") : t("Arrastra para mirar · Toca puertas y focos")}</div>{interactionLabel && <button type="button" className="walk-interaction" aria-pressed={targetDoor ? targetDoor.open !== false : targetLight?.enabled} onClick={() => interact(walkTargetRef.current)}>{targetDoor ? targetDoor.open === false ? <DoorOpen size={20} /> : <DoorClosed size={20} /> : <Lightbulb size={20} />}<span>{interactionLabel}</span></button>}<div className="walk-joystick"><button type="button" tabIndex={-1} className="joystick-base" aria-label={t("Joystick de movimiento: arrastra para caminar. Con teclado usa WASD en el visor.")} onPointerDown={event => { event.preventDefault(); event.stopPropagation(); joystickPointer.current = event.pointerId; event.currentTarget.setPointerCapture(event.pointerId); moveJoystick(event); }} onPointerMove={event => { if (joystickPointer.current === event.pointerId) { event.stopPropagation(); moveJoystick(event); } }} onPointerUp={releaseJoystick} onPointerCancel={releaseJoystick} onLostPointerCapture={releaseJoystick}><span className="joystick-knob" style={{ transform: `translate(${stick.x * 34}px, ${stick.z * 34}px)` }} /></button></div></>}
   </div>;
 }

@@ -6,5 +6,7 @@ export function BrandMark() {
 }
 
 export default function Brand({ className = 'account-brand' }: { className?: string }) {
-  return <div className={className}><BrandMark /><strong>3D Space</strong></div>;
+  useLocale();
+  return <div className={className}><BrandMark /><strong>{t('3D Space')}</strong></div>;
 }
+import { t, useLocale } from './i18n';
