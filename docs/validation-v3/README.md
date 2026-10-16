@@ -2,7 +2,7 @@
 
 Recorded on 2026-10-16. These checks use isolated accounts, temporary databases and test volumes. They do not modify the production service.
 
-The final Node suite completed **456 tests: 454 passed, two Windows symlink tests skipped, zero failures**. This includes current schema, persistence/cache, authorization, geometry, navigation, project packages, offline synchronization, localization and dependency-guard checks. The final codec regressions verify concurrent roof/stair finishes through two authenticated live clients, persistence after server restart, and rejection of raw arrays replacing ID-based Yjs collections.
+The multilevel release Node suite completed **456 tests: 454 passed, two Windows symlink tests skipped, zero failures**. This includes current schema, persistence/cache, authorization, geometry, navigation, project packages, offline synchronization, localization and dependency-guard checks. The final codec regressions verify concurrent roof/stair finishes through two authenticated live clients, persistence after server restart, and rejection of raw arrays replacing ID-based Yjs collections. The later PWA recovery checks are recorded separately below.
 
 ## Browser coverage
 
@@ -72,3 +72,23 @@ Normal startup never invokes the destructive reset. Backup restoration and test 
 ## Visual references
 
 The illustrated guide uses actual application captures in [`public/help/es`](../../public/help/es) and [`public/help/en`](../../public/help/en), six native JPEGs per locale at 1280 × 800. Additional native captures show [mobile onboarding](mobile-onboarding.jpg) and the [desktop editor](desktop-editor.jpg). Mobile layout was also checked at 390 × 844; automated bounds assert visible setup geometry, collapsed advanced stairs and touch targets of at least 44 CSS pixels. These images and bounds checks complement interaction tests; they do not replace physical-device checks.
+
+## PWA update recovery after release
+
+Application revision `3e4976d` adds the visible guarded-update notice, its recovery-screen action and a clear rejection of retired v2 writes. The Node suite completed **462 tests: 460 passed, two Windows symlink tests skipped, zero failures**. TypeScript and the production build passed. The ES/EN offline-guide images were replaced with isolated application captures before the final build.
+
+The final production artifact passed **six lifecycle cases: three Chromium and three WebKit**, in 37.0 seconds:
+
+- An unfinished wall trace refuses activation and preserves its points. After cancelling the trace, the update reloads safely and later full library/editor navigations retain the new worker.
+- A cached unusable setup module reaches the actual recovery screen; the update notice activates the replacement worker and opens the same saved design.
+- Forced offline mode hides the notice and performs no API or worker checks after focus and Settings interaction. At 390 × 844, the notice remains within the viewport and its actions are at least 44 CSS pixels.
+
+The fixture uses real workers and caches, two deployment identities and separately versioned immutable module URLs around one compiled current application. It does not emulate or convert retired project data. The server regression separately checks actual v2 write payloads, current-project preservation and unchanged authentication, origin and ownership boundaries.
+
+Five production-source unit regressions additionally cover shared in-flight update requests without freezing during downloads, preserving other operations' update/mode freezes after a failed request, clearing transient waiting state after first activation, refusing updates in forced offline mode, and refusing the later activation handshake if forced mode was selected during a download.
+
+Six existing regression cases also passed on that same final artifact: **three Chromium in 32.4 seconds and three WebKit in 46.5 seconds**. They cover the English mobile setup/editor/workshop flow, bilingual illustrated help and a cold offline reopen, and preparing 12 levels with model/reference dependencies before zero-request forced offline use. Both help cases explicitly check that fresh activation leaves no false update notice. Each engine uses a fresh temporary server/database so the combined upload fixtures do not exceed the application's unchanged per-IP upload budget.
+
+```sh
+npx playwright test e2e/pwaUpdate.spec.ts --project=chromium --project=webkit
+```

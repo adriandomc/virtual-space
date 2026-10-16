@@ -162,13 +162,14 @@ test('illustrated help translates search and screenshots and opens offline in bo
   await expect(page.getByRole('heading', { name: 'Tu primer diseño', exact: true })).toHaveCount(0);
   const search = page.getByRole('searchbox', { name: 'Search help', exact: true });
   await search.fill('not-a-help-topic-58921');
-  await expect(page.getByRole('status')).toHaveText('No topics found. Try another word.');
+  await expect(page.locator('.help-no-results')).toHaveText('No topics found. Try another word.');
   await expect(page.locator('.help-section')).toHaveCount(0);
   await search.fill('OFFLINE');
   await expect(page.getByRole('heading', { name: 'Prepare and work offline', exact: true })).toBeVisible();
   await search.clear();
   await screenshots(page, 'en');
   await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller), { timeout: 60000 }).toBe(true);
+  await expect(page.locator('.app-update-notice')).toHaveCount(0);
   const requests: string[] = [];
   context.on('request', request => { if (new URL(request.url()).pathname.startsWith('/api/')) requests.push(request.url()); });
   await context.setOffline(true);

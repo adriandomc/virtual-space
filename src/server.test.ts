@@ -90,10 +90,32 @@ test('current projects and per-level sketches persist with permissions, receipts
     });
     await t.test('retired flat formats, mismatched project identities and oversized payloads are rejected', async () => {
       assert.equal((await send('/api/rooms/not-a-uuid')).status, 400); assert.equal((await send('/api/rooms/' + randomUUID())).status, 404);
-      for (const body of [{ ...createBody, project: null }, { id: randomUUID(), room: projectToRoom(project) }, { id: randomUUID(), project }, { id: randomUUID(), project: { ...project, version: 2 } }]) assert.equal((await send('/api/rooms', 'POST', body)).status, 400);
+      for (const body of [{ ...createBody, project: null }, { id: randomUUID(), room: projectToRoom(project) }, { id: randomUUID(), project }]) assert.equal((await send('/api/rooms', 'POST', body)).status, 400);
       assert.equal((await fetch(base + '/api/rooms', { method: 'POST', headers, body: '{broken' })).status, 400);
       assert.equal((await fetch(base + '/api/rooms', { method: 'POST', headers, body: ' '.repeat(4 * 1024 * 1024 + 1) })).status, 413);
       assert.equal((await fetch(base + '/api/rooms', { method: 'POST', headers: { Cookie: cookie, Origin: base }, body: JSON.stringify(createBody) })).status, 415);
+    });
+    await t.test('retired v2 clients receive an update instruction without changing current designs or bypassing permissions', async () => {
+      const before = await (await send(path)).json(), beforeLibrary = await (await send('/api/rooms')).json();
+      const oldRoom = { ...projectToRoom(changed), version: 2 }, message = 'La aplicación está desactualizada. Ve a Ajustes → Actualizar aplicación y vuelve a intentarlo.';
+      for (const document of [{ room: oldRoom }, { project: { ...changed, version: 2 } }]) {
+        const created = await send('/api/rooms', 'POST', { id: randomUUID(), ...document });
+        assert.equal(created.status, 426); assert.deepEqual(await created.json(), { error: message });
+        // The released v2 client saved { room, revision } without an operation ID.
+        const saved = await send(path, 'PUT', { ...document, revision: 2 });
+        assert.equal(saved.status, 426); assert.deepEqual(await saved.json(), { error: message });
+        assert.equal((await send('/api/rooms', 'POST', { id: randomUUID(), ...document }, false)).status, 401);
+        assert.equal((await send(path, 'PUT', { ...document, revision: 2 }, false)).status, 401);
+        assert.equal((await fetch(base + path, { method: 'PUT', headers: { ...headers, Cookie: otherCookie }, body: JSON.stringify({ ...document, revision: 2 }) })).status, 403);
+        assert.equal((await fetch(base + path, { method: 'PUT', headers: { ...headers, Origin: 'https://attacker.invalid' }, body: JSON.stringify({ ...document, revision: 2 }) })).status, 403);
+      }
+      for (const invalid of [null, {}, { ...changed, version: '2' }, { ...changed, version: 1 }, { ...changed, version: 4 }, { ...changed, name: '' }]) {
+        assert.equal((await send('/api/rooms', 'POST', { id: randomUUID(), room: oldRoom, project: invalid })).status, 400, 'invalid canonical data is not an old client');
+        assert.equal((await send(path, 'PUT', { room: oldRoom, project: invalid, revision: 2, operationId: randomUUID() })).status, 400);
+      }
+      assert.deepEqual(await (await send(path)).json(), before);
+      assert.deepEqual(await (await send('/api/rooms')).json(), beforeLibrary);
+      assert.equal((await (await send('/api/auth/session')).json()).user.username, 'owner');
     });
     await t.test('per-level binary sketches use revisions, stable receipts and conditional reads', async () => {
       assert.equal((await send(sketchPath)).status, 404); assert.equal((await send(path + '/sketch')).status, 404);

@@ -62,6 +62,13 @@ function projectValue(value: unknown): ProjectDocument {
   catch (error) { throw new HttpError(400, error instanceof Error ? error.message : 'El proyecto no es válido.'); }
 }
 
+function requireCurrentClient(body: Record<string, unknown>) {
+  const document = body.project === undefined ? body.room : body.project;
+  if (document && typeof document === 'object' && !Array.isArray(document) && 'version' in document && document.version === 2) {
+    throw new HttpError(426, 'La aplicación está desactualizada. Ve a Ajustes → Actualizar aplicación y vuelve a intentarlo.');
+  }
+}
+
 function imageMatches(data: Buffer, mime: string) {
   if (mime === 'image/png') return data.length >= 8 && data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
   if (mime === 'image/jpeg') return data.length >= 3 && data[0] === 255 && data[1] === 216 && data[2] === 255;
@@ -218,6 +225,7 @@ export function createServer({ dataDir = process.env.DATA_DIR ?? './data', stati
         user = auth.requireUser(request);
         if (request.headers['x-offline-write'] === '1' && request.headers['x-account-id'] !== user.id) throw new HttpError(403, 'La cuenta activa cambió. Conserva tu copia y vuelve a iniciar sesión.');
         if (typeof body.id !== 'string' || !UUID.test(body.id)) throw new HttpError(400, 'La identidad del proyecto no es válida.');
+        requireCurrentClient(body);
         const project = projectValue(body.project);
         if (project.id !== body.id) throw new HttpError(400, 'La identidad del proyecto no es válida.');
         modelAssets.validateProjectReferences(project, user.id, body.id);
@@ -305,6 +313,7 @@ export function createServer({ dataDir = process.env.DATA_DIR ?? './data', stati
           requireEditor(request, row);
           if (request.headers['x-offline-write'] === '1') requireOffline(request, id);
           if (!Number.isSafeInteger(body.revision) || (body.revision as number) < 1) throw new HttpError(400, 'La versión del proyecto no es válida.');
+          requireCurrentClient(body);
           const project = projectValue(body.project);
           const changed = live.putProject(id, project, body.revision as number, auth.requireUser(request).id, String(body.operationId ?? ''));
           sendJson(response, 200, { ...snapshot(rowFor(id, auth.requireUser(request)), auth.requireUser(request)), ...changed });
