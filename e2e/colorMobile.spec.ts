@@ -12,14 +12,19 @@ test('mobile color editing reveals the scene and restores the properties panel a
   await page.goto('/editor?room=' + project.id); await expect(page.getByLabel('Nombre del proyecto', { exact: true })).toBeEditable();
   await page.getByRole('button', { name: 'Materiales', exact: true }).click();
   const properties = page.locator('.properties-panel'), backdrop = page.locator('.mobile-backdrop'), trigger = page.getByRole('button', { name: 'Color', exact: true }), picker = page.getByRole('dialog', { name: 'Color', exact: true });
+  const canvas = page.locator('.room-scene canvas'); await expect(canvas).toBeVisible(); const fullHeight = (await canvas.boundingBox())!.height;
   for (const action of ['cancel', 'escape']) {
     await trigger.click(); await expect(picker).toBeVisible();
     await expect(properties).toHaveCSS('visibility', 'hidden');
     await expect(backdrop).toHaveCSS('backdrop-filter', 'none'); await expect(backdrop).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
-    const box = (await picker.boundingBox())!; expect(box.height).toBeLessThanOrEqual(549); expect(box.y).toBeGreaterThan(260);
+    const box = (await picker.boundingBox())!; expect(box.height).toBeLessThanOrEqual(465); expect(box.y).toBeGreaterThan(350);
+    await expect.poll(async () => { const scene = (await canvas.boundingBox())!, sheet = (await picker.boundingBox())!; return scene.y + scene.height <= sheet.y + 2; }).toBe(true);
+    const visibleScene = (await canvas.boundingBox())!; expect(visibleScene.height).toBeGreaterThanOrEqual(100); expect(visibleScene.height).toBeLessThan(fullHeight * .6);
+    await expect.poll(async () => JSON.parse(await canvas.getAttribute('data-scene-metrics') ?? '{}').drawCalls ?? 0).toBeGreaterThan(0);
     await picker.getByLabel('Código hexadecimal', { exact: true }).fill('#123456');
     if (action === 'cancel') await picker.getByRole('button', { name: 'Cancelar', exact: true }).click(); else await page.keyboard.press('Escape');
     await expect(picker).toHaveCount(0); await expect(properties).toHaveCSS('visibility', 'visible'); await expect(trigger).toBeFocused();
+    await expect.poll(async () => (await canvas.boundingBox())!.height).toBeGreaterThan(fullHeight - 2);
     const response = await context.request.get('/api/rooms/' + project.id); expect((await response.json()).project.levels[0].walls[0].left.color).toBe('#ffffff');
   }
 });

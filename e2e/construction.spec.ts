@@ -136,6 +136,7 @@ test('additive plan tools create junctions, rooms and holes, with atomic undo', 
   for (const point of [{ x: -2.5, z: 0 }, { x: 2.5, z: 0 }]) { const screen = await planPoint(page, point.x, point.z); await page.mouse.click(screen.x, screen.y); }
   await plan.getByRole('button', { name: 'Terminar', exact: true }).click(); await expect.poll(async () => (await snapshot(context.request, project.id)).levels[0].walls.length).toBe(7);
   await plan.getByRole('button', { name: 'Cancelar', exact: true }).click(); await plan.getByRole('button', { name: 'Habitación', exact: true }).click(); await plan.getByRole('menuitem', { name: 'Rectángulo', exact: true }).click();
+  await expect(plan.getByText('Toca dos esquinas opuestas.', { exact: true })).toBeVisible();
   for (const point of [{ x: -.8, z: -.8 }, { x: .8, z: .8 }]) { const screen = await planPoint(page, point.x, point.z); await page.mouse.click(screen.x, screen.y); }
   await expect.poll(async () => (await snapshot(context.request, project.id)).levels[0].surfaces.length).toBe(2);
   const current = await snapshot(context.request, project.id); for (const wall of project.levels[0].walls) expect(current.levels[0].walls.some(w => w.id === wall.id)).toBe(true);
@@ -340,6 +341,7 @@ for (const native of [true, false]) test(`plan menus dismiss, restore focus and 
   await page.keyboard.press('ArrowDown'); await expect(plan.getByRole('menuitem', { name: 'Trazado libre', exact: true })).toBeFocused();
   await page.keyboard.press('Escape'); await expect(room).toBeFocused(); await expect(room).toHaveAttribute('aria-expanded', 'false');
   await room.click(); await plan.getByRole('menuitem', { name: 'Rectángulo', exact: true }).click(); await expect(room).toHaveAttribute('aria-expanded', 'false');
+  await expect(plan.locator('.plan-canvas > svg')).toHaveClass('drawing');
   await plan.getByRole('button', { name: 'Cancelar', exact: true }).click();
   const level = page.getByRole('button', { name: 'Opciones del nivel', exact: true }); await level.click(); await expect(page.getByLabel('Nombre del nivel', { exact: true })).toBeVisible();
   const point = await planPoint(page, 0, 0); await page.mouse.click(point.x, point.y); await expect(level).toHaveAttribute('aria-expanded', 'false');

@@ -2,6 +2,20 @@
 
 Reviewed on 2026-10-16 against the working tree for the PWA and interaction update. This records the changes and remaining limits found in this review; it is not a claim that the application has no other defects.
 
+## Editor, PWA and offline changes verified
+
+| Finding | Implemented protection |
+| --- | --- |
+| Plan lights moved twice on release; selection reflow and SVG margins changed pointer mapping | One absolute preview transform and shared SVG CTM conversions preserve the grab point. Tests compare the visible light center with the pointer during and after mouse/touch movements, including mobile setup and letterboxed two-finger gestures. |
+| Transient controls disagreed on dismissal and Safari could unmount a menu before its click | Shared native Popover/fallback behavior handles outside clicks, Escape, keyboard focus and screen bounds. A blur with no destination does not discard a pending Safari pointer action. Closing over a canvas does not also select or draw. |
+| Native color controls saved intermediate edits and lacked previous-color comparison | One HSV/HEX/RGB picker provides presentation-only previews and explicit Apply/Cancel. Canonical revision checks reject stale targets while ignoring identical acknowledgements; mobile sizing preserves a visible preview. The workshop confirms dirty closure. |
+| An update could interrupt text, a tool or an asynchronous operation | Synchronous activity checks precede any inert/modal freeze, then flush/durable phases recheck activity. All editor tabs acknowledge a stable census. Only untouched startup with no stored pending work qualifies for automatic activation; resumed/used sessions retain Update/Later. Embeds and static-file tabs are not editors. |
+| Old workers could delete the waiting worker's cache; natural activation could lose prepared resources | A worker retires only generations recorded at its own installation and only after clients identify the current build. Previously prepared installations stage the full successor before activation. A failed installation keeps the previous complete generation. |
+| Offline persistence and transport responsibilities were coupled | The existing public facade now delegates to repository, preparation, synchronization and package modules while keeping one durable queue. Model factories no longer depend on the room runtime, and HTTP/WebSocket command persistence shares one authority. |
+| Failed copies left normalized local records; browser GLB files could have no MIME type | Copy failures remove only their own levels, binaries and metadata. Account identity is checked across asynchronous copying. GLB exports use the canonical MIME type without replacing byte validation. |
+
+Illustrated help, onboarding, editor, demo and workshop controls were reviewed together in Spanish and English. Screenshots use isolated sample content. Browser test results and physical-device limitations are recorded with the release; software rendering is not a hardware performance guarantee.
+
 ## Backend changes verified
 
 | Finding | Implemented protection |
@@ -28,8 +42,11 @@ Measurements below are local Windows/Node.js 24 checks, not production capacity 
 | Same snapshot check during the complete test suite | Synchronous blocking was 221 ms. Worker elapsed time was 518 ms; the measured main-loop maximum interval gap was 18 ms. |
 | Twelve parallel downloads of an approximately 3 MB prepared JavaScript asset, otherwise idle | Concurrent session API response: 7 ms. Download p95: 85 ms. |
 | Same static test during the complete suite | Concurrent session API response: 14 ms. Download p95: 151 ms. |
+| Receipt-budget SQL check with 100,000 existing receipts in an in-memory Windows/Node.js 24 database | Five reads took 11.9–16.8 ms. This is not a disk-backed production latency measurement. |
 
-Focused coverage includes slow/aborted binary and JSON requests, early quota rejection, unchanged prior images after failed replacement, owner/guest isolation, receipt retries, invalid images and GLBs, scoped twelve-level updates, restoration after erasures, static conditional requests, frame protections and worker failures. The full Windows suite completed with **495 tests: 493 passed, 2 skipped, 0 failed**. The two skipped cases require Unix-style symbolic-link support; Linux container checks are reported separately.
+Focused coverage includes slow/aborted binary and JSON requests, early quota rejection, unchanged prior images after failed replacement, owner/guest isolation, receipt retries, invalid images and GLBs, scoped twelve-level updates, restoration after erasures, static conditional requests, frame protections and worker failures. The full Windows suite completed with **508 tests: 506 passed, 2 skipped, 0 failed**. Linux container checks also exercise the symbolic-link cases skipped on Windows.
+
+The existing Dockerfile built successfully. Isolated production-image checks used no network access, a read-only root filesystem, and ephemeral `/data` and `/tmp` mounts. Checks covered startup, static gzip/ETag/frame policies, account registration, v3 creation, confirmation retries, reference-image and GLB bytes, populated backup restoration, restored-session invalidation, and `ACCOUNT_MAX_RECEIPTS=1` rejection/retry/reduction/deletion behavior. No production volume or account was accessed. Containers were removed after verification.
 
 ## Receipt-budget behavior and remaining physical-storage limit
 
