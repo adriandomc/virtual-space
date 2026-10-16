@@ -10,9 +10,9 @@ import * as Y from 'yjs';
 import { restoreBackup, runBackup, verifyBackup } from './backups';
 import { applyErasures, initializeErasures, recordErasure, wasErased } from './erasures';
 import { roomRole } from './collaborationServer';
-import { createDefaultRoom } from './model';
-import { seedYRoom } from './collaborativeRoom';
-import type { Room } from './types';
+import { createDefaultProject } from './projectDocument';
+import { writeProjectScope } from './collaborativeProject';
+import { patchProject } from './projectTestFixture';
 
 const time = Date.parse('2026-10-13T19:00:00Z');
 
@@ -23,9 +23,9 @@ function fixture() {
   const owner = randomUUID(), editor = randomUUID(), room = randomUUID(), otherRoom = randomUUID(), member = randomUUID(), asset = randomUUID(), retainedAsset = randomUUID();
   for (const [id, username] of [[owner, 'fixture_owner'], [editor, 'fixture_editor']]) insertTestUser(database, id, username, time);
   insertTestSession(database, 'old-session', editor, time + 30 * 24 * 60 * 60_000);
-  const sharedRoom: Room = { ...createDefaultRoom(), furniture: [{ id: randomUUID(), type: 'custom', material: null, color: null, assetId: asset, name: 'Modelo eliminado', x: 0, z: 0, width: 1, height: 1, depth: 1, rotation: 0 }, { id: randomUUID(), type: 'custom', material: null, color: null, assetId: retainedAsset, name: 'Modelo conservado', x: 1.5, z: 0, width: .5, height: .5, depth: .5, rotation: 0 }] };
-  const doc = new Y.Doc(); seedYRoom(doc, sharedRoom); const state = Y.encodeStateAsUpdate(doc); doc.destroy();
-  for (const id of [room, otherRoom]) insertTestRoom(database, id, owner, { room: JSON.stringify(sharedRoom), revision: 8, sketch: Buffer.from([137, 80, 0, 255]), sketch_mime: 'image/png', sketch_version: 1, updated_at: time, y_state: state });
+  const sharedRoom = patchProject(createDefaultProject(), { furniture: [{ id: randomUUID(), type: 'custom', material: null, color: null, assetId: asset, name: 'Modelo eliminado', x: 0, z: 0, width: 1, height: 1, depth: 1, rotation: 0 }, { id: randomUUID(), type: 'custom', material: null, color: null, assetId: retainedAsset, name: 'Modelo conservado', x: 1.5, z: 0, width: .5, height: .5, depth: .5, rotation: 0 }] });
+  const doc = new Y.Doc(); writeProjectScope(doc, sharedRoom.levels[0]); const state = Y.encodeStateAsUpdate(doc); doc.destroy();
+  for (const id of [room, otherRoom]) { insertTestRoom(database, id, owner, { room: JSON.stringify(sharedRoom), revision: 8, sketch: Buffer.from([137, 80, 0, 255]), sketch_mime: 'image/png', sketch_version: 1, updated_at: time, }); database.prepare('UPDATE project_levels SET y_state=? WHERE room_id=?').run(state, id); }
   database.prepare('INSERT INTO room_members VALUES (?, ?, ?, ?, ?, ?, ?)').run(member, room, editor, owner, 'editor', time, time);
   for (const [id, name] of [[asset, 'erased.glb'], [retainedAsset, 'retained.glb']]) database.prepare('INSERT INTO model_assets (id, owner_id, room_id, name, metadata, data, size, created_at) VALUES (?, ?, ?, ?, ?, ?, 6, 0)').run(id, owner, room, name, JSON.stringify({ width: 1, height: 1, depth: 1 }), Buffer.from([103, 108, 84, 70, 0, 255]));
   const ledger = initializeErasures(directory);
@@ -49,7 +49,7 @@ test('restoring an older backup does not revive revoked collaboration or deleted
       assert.equal(recovered.prepare('SELECT COUNT(*) AS total FROM room_members WHERE id = ?').get(sample.member)!.total, 0);
       assert.equal(recovered.prepare('SELECT COUNT(*) AS total FROM model_assets WHERE id = ?').get(sample.asset)!.total, 0);
       assert.deepEqual(recovered.prepare('SELECT data FROM model_assets WHERE id = ?').get(sample.retainedAsset)!.data, new Uint8Array([103, 108, 84, 70, 0, 255]));
-      for (const row of recovered.prepare('SELECT room, y_state FROM rooms').all()) {
+      for (const row of recovered.prepare('SELECT document AS room, y_state FROM project_levels').all()) {
         const room = JSON.parse(String(row.room));
         assert.deepEqual(room.furniture.map((item: { assetId: string }) => item.assetId), [sample.retainedAsset]);
         assert.equal(row.y_state, null, 'old collaborative state cannot reintroduce deleted model references');

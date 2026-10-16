@@ -1,14 +1,17 @@
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { HttpError } from './auth.js';
-import type { Room } from './types.js';
+import type { ProjectDocument } from './projectDocument.js';
+import { readProject } from './projectRepository.js';
+import { validateModelBudget } from './modelBudget.js';
+import { preflightGlb } from './glbPreflight.js';
 
 export const MODEL_MAX_BYTES = 20 * 1024 * 1024;
 export const MODEL_ACCOUNT_BYTES = 100 * 1024 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 type Json = Record<string, any>;
 export type ModelNode = { key: string; name: string; mesh: boolean; generatedName?: true };
-export type ModelAsset = { id: string; roomId?: string; name: string; size: number; createdAt: string; width: number; height: number; depth: number; triangles: number; texturePixels: number; nodes: ModelNode[] };
+export type ModelAsset = { id: string; roomId?: string; name: string; size: number; createdAt: string; width: number; height: number; depth: number; triangles: number; texturePixels: number; meshInstances: number; materials: number; nodes: ModelNode[] };
 type GeometryInfo = Omit<ModelAsset, 'id' | 'roomId' | 'name' | 'size' | 'createdAt'>;
 const invalid = (message = 'El modelo GLB no es válido.') => { throw new HttpError(400, message); };
 const integer = (value: unknown, min = 0, max = Number.MAX_SAFE_INTEGER): number => typeof value === 'number' && Number.isSafeInteger(value) && value >= min && value <= max ? value : invalid();
@@ -67,6 +70,8 @@ function nodeMatrix(node: Json): Matrix {
 /** Static, self-contained GLB: never let an uploaded document make secondary network requests. */
 export function validateGlb(data: Buffer): GeometryInfo {
   if (data.length > MODEL_MAX_BYTES) throw new HttpError(413, 'El modelo debe pesar como máximo 20 MB.');
+  let preflight: ReturnType<typeof preflightGlb>;
+  try { preflight = preflightGlb(data); } catch (cause) { throw new HttpError(400, cause instanceof Error ? cause.message : 'El modelo GLB no es válido.'); }
   if (data.length < 28 || data.readUInt32LE(0) !== 0x46546c67 || data.readUInt32LE(4) !== 2 || data.readUInt32LE(8) !== data.length) invalid();
   const jsonSize = data.readUInt32LE(12);
   if (!jsonSize || jsonSize > 1024 * 1024 || jsonSize % 4 || data.readUInt32LE(16) !== 0x4e4f534a || 20 + jsonSize + 8 > data.length) invalid();
@@ -232,7 +237,7 @@ export function validateGlb(data: Buffer): GeometryInfo {
   if (!triangles || !min.every(Number.isFinite)) invalid('El modelo no contiene superficies.');
   const dimensions = max.map((value, component) => Math.max(0.01, value - min[component]));
   if (dimensions.some(value => value > 10000)) invalid('Las dimensiones del modelo no son válidas.');
-  return { width: dimensions[0], height: dimensions[1], depth: dimensions[2], triangles, texturePixels, nodes: activeNodes };
+  return { width: dimensions[0], height: dimensions[1], depth: dimensions[2], triangles: preflight.triangles, texturePixels, meshInstances: preflight.primitiveInstances, materials: preflight.materials, nodes: activeNodes };
 }
 
 type AssetRow = { id: string; owner_id: string; room_id: string; name: string; size: number; created_at: number; metadata: string; data?: Uint8Array };
@@ -247,7 +252,7 @@ export function createModelAssets(database: DatabaseSync, { now = Date.now, canV
   const roomAssets = (roomId: string): Set<string> => {
     if (!UUID.test(roomId)) throw new HttpError(400, 'El proyecto no es válido.');
     const row = database.prepare('SELECT room FROM rooms WHERE id = ?').get(roomId) as { room: string } | undefined;
-    return new Set(row ? (JSON.parse(row.room) as Room).furniture.filter(item => item.type === 'custom').map(item => item.assetId!) : []);
+    return new Set(row ? readProject(database, roomId).levels.flatMap(level => level.furniture).filter(item => item.type === 'custom').map(item => item.assetId!) : []);
   };
   const permitted = (id: string, userId: string | null, roomId?: string): AssetRow => {
     if (!UUID.test(id)) throw new HttpError(404, 'Este modelo no existe.');
@@ -299,29 +304,21 @@ export function createModelAssets(database: DatabaseSync, { now = Date.now, canV
       const row = permitted(id, ownerId);
       if (row.owner_id !== ownerId) throw new HttpError(403, 'Solo puedes eliminar tus modelos.');
       if (roomId && row.room_id !== roomId) throw new HttpError(409, 'El modelo pertenece a otro diseño.');
-      const used = database.prepare("SELECT rooms.id FROM rooms, json_each(rooms.room, '$.furniture') item WHERE json_extract(item.value, '$.assetId') = ? LIMIT 1").get(id);
+      const used = database.prepare("SELECT rooms.id FROM project_levels levels, rooms, json_each(levels.document, '$.furniture') item WHERE levels.room_id=rooms.id AND json_extract(item.value, '$.assetId') = ? LIMIT 1").get(id);
       if (used) throw new HttpError(409, 'El modelo está en un diseño. Retíralo antes de eliminarlo.');
       const erase = () => { database.prepare('DELETE FROM model_assets WHERE id = ?').run(id); };
       if (recordAssetErasure) recordAssetErasure(id, erase); else erase();
     },
-    validateRoomReferences(room: Room, userId: string, roomId?: string) {
-      if (room.furniture.some(item => item.type === 'custom') && (!roomId || !canEditRoom(roomId, userId))) throw new HttpError(400, 'El modelo no está disponible en este diseño.');
-      const ids = new Set(room.furniture.filter(item => item.type === 'custom').map(item => item.assetId!));
-      if (ids.size > 30) throw new HttpError(400, 'El diseño admite hasta 30 modelos personalizados distintos.');
-      let totalTriangles = 0, totalBytes = 0, totalTexturePixels = 0;
-      const seenTextures = new Set<string>();
-      for (const item of room.furniture.filter(item => item.type === 'custom')) {
-        if (!item.assetId || !UUID.test(item.assetId)) throw new HttpError(400, 'El modelo no es válido.');
-        const row = find.get(item.assetId) as AssetRow | undefined;
+    validateProjectReferences(project: ProjectDocument, userId: string, roomId?: string) {
+      const items = project.levels.flatMap(level => level.furniture);
+      if (items.some(item => item.type === 'custom') && (!roomId || !canEditRoom(roomId, userId))) throw new HttpError(400, 'El modelo no está disponible en este diseño.');
+      const models = new Map<string, ModelAsset>();
+      for (const item of items) if (item.type === 'custom') {
+        const row = find.get(item.assetId!) as AssetRow | undefined;
         if (!row || row.room_id !== roomId) throw new HttpError(400, 'El modelo no está disponible en este diseño.');
-        const info = JSON.parse(row.metadata) as GeometryInfo;
-        if (Object.keys(item.parts ?? {}).some(key => !info.nodes.some(node => node.key === key))) throw new HttpError(400, 'El modelo contiene una parte no válida.');
-        totalTriangles += info.triangles;
-        totalBytes += row.size;
-        if (!seenTextures.has(row.id)) { seenTextures.add(row.id); totalTexturePixels += info.texturePixels; }
+        models.set(row.id, describe(row));
       }
-      if (totalTriangles > 1000000 || totalBytes > 100 * 1024 * 1024) throw new HttpError(400, 'El diseño tiene demasiados modelos personalizados.');
-      if (totalTexturePixels > 16 * 1024 * 1024) throw new HttpError(400, 'El diseño tiene demasiadas texturas en sus modelos personalizados.');
+      try { validateModelBudget(items, models); } catch (cause) { throw new HttpError(400, cause instanceof Error ? cause.message : 'El modelo no es válido.'); }
     },
   };
 }

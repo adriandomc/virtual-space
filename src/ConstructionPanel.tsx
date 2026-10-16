@@ -1,0 +1,77 @@
+import { useEffect, useState } from 'react';
+import { Plus, Trash2 } from 'lucide-react';
+import { t, useLocale } from './i18n';
+import NumberInput from './NumberInput';
+import { bounds } from './model';
+import { projectLevel, validateProjectDocument, type ProjectDocument, type ProjectStair, type ProjectRoof, type ParametricRoof, type SurfaceFinish, type MeshRoof } from './projectDocument';
+import { addRoof, updateRoof, deleteRoof, convertRoofToMesh, addStair, updateStair, deleteStair } from './projectOperations';
+import RoofMeshEditor from './RoofMeshEditor';
+import type { Selection } from './types';
+import './construction.css';
+
+const ROOFS = [['flat', 'Plana'], ['shed', 'Una agua'], ['gable', 'Dos aguas'], ['hip', 'Cuatro aguas']] as const;
+const STAIRS = [['straight', 'Recta'], ['landing', 'Recta con descanso'], ['l', 'En L'], ['u', 'En U'], ['spiral', 'En caracol']] as const;
+const FINISHES = [['wood', 'Madera'], ['tile-grid', 'Loseta'], ['tile-brick', 'Loseta trabada'], ['tile-checker', 'Damero'], ['marble', 'Mármol'], ['concrete', 'Concreto']] as const;
+function Measure({ label, value, min, max, unit = 'm', step = .1, onChange, error }: { label: string; value: number; min: number; max: number; unit?: string; step?: number; onChange: (value: number) => boolean | void; error: (message: string) => void }) {
+  return <label className="construction-field"><span>{t(label)}</span><div><NumberInput label={t(label)} value={value} min={min} max={max} step={step} onChange={onChange} onInvalid={() => error('Se conservó el último valor válido.')} onEdit={() => error('')} /><span>{unit}</span></div></label>;
+}
+function Finish({ finish, label, onChange }: { finish: SurfaceFinish; label: string; onChange: (finish: SurfaceFinish) => boolean | void }) {
+  const [text, setText] = useState(finish.color);
+  useEffect(() => setText(finish.color), [finish.color]);
+  return <details className="construction-finish"><summary>{t(label)}</summary><div className="construction-grid"><label>{t('Material')}<select aria-label={t(label)} value={finish.material} onChange={event => onChange({ ...finish, material: event.target.value as SurfaceFinish['material'] })}>{FINISHES.map(([value, name]) => <option key={value} value={value}>{t(name)}</option>)}</select></label><label>{t('Color')}<input aria-label={t('Elegir color de acabado')} type="color" value={finish.color} onChange={event => onChange({ ...finish, color: event.target.value })} /><input aria-label={t('Código hexadecimal del acabado')} value={text} maxLength={7} onChange={event => setText(event.target.value)} onBlur={() => { const value = text.startsWith('#') ? text : '#' + text; if (/^#[a-f\d]{6}$/i.test(value)) onChange({ ...finish, color: value.toLowerCase() }); else setText(finish.color); }} /></label></div></details>;
+}
+
+export default function ConstructionPanel({ project, activeLevelId, onChange, selection, onSelect, readOnly = false, only }: { project: ProjectDocument; activeLevelId: string; onChange: (project: ProjectDocument) => boolean | void; selection?: Selection | null; onSelect?: (selection: Selection | null) => void; readOnly?: boolean; only?: 'roof' | 'stairs' }) {
+  useLocale(); const level = projectLevel(project, activeLevelId);
+  const [error, setError] = useState(''), [roofId, setRoofId] = useState(''), [stairId, setStairId] = useState(''), [newType, setNewType] = useState<ProjectStair['type']>('straight'), [editingRoof, setEditingRoof] = useState<MeshRoof | null>(null);
+  const roofs = project.roofs.filter(roof => roof.levelId === activeLevelId), stairs = project.stairs.filter(stair => stair.fromLevelId === activeLevelId || stair.toLevelId === activeLevelId);
+  const roof = roofs.find(roof => roof.id === (selection?.kind === 'roof' ? selection.id : roofId)) ?? roofs[0];
+  const stair = stairs.find(stair => stair.id === (selection?.kind === 'stair' ? selection.id : stairId)) ?? stairs[0];
+  const index = project.levels.findIndex(item => item.id === activeLevelId), from = project.levels[Math.min(index, project.levels.length - 2)], to = project.levels[Math.min(index + 1, project.levels.length - 1)];
+  useEffect(() => { setError(''); }, [activeLevelId, roof?.id]);
+  const currentEditingRoof = editingRoof && project.roofs.find(item => item.id === editingRoof.id && item.type === 'mesh') as MeshRoof | undefined;
+  const apply = (operation: () => ProjectDocument) => { if (readOnly) return false; try { const next = operation(); if (onChange(next) === false) return false; setError(''); return true; } catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudo aplicar la construcción.'); return false; } };
+  const patchStair = (patch: Partial<ProjectStair>) => stair ? apply(() => updateStair(project, stair.id, patch)) : false;
+  const patchRoof = (patch: Partial<ProjectRoof>) => roof ? apply(() => updateRoof(project, roof.id, patch)) : false;
+  function createStair() {
+    if (!from || !to || from.id === to.id) return;
+    try { const next = addStair(project, { fromLevelId: from.id, toLevelId: to.id, type: newType }); if (apply(() => next)) { setStairId(next.stairs.at(-1)!.id); onSelect?.({ kind: 'stair', id: next.stairs.at(-1)!.id }); } } catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudo añadir la escalera.'); }
+  }
+  function template(type: ParametricRoof['type']) {
+    if (!roof) return;
+    if (roof.type !== 'mesh') { patchRoof({ type, pitch: type === 'flat' ? 0 : roof.pitch || 25 }); return; }
+    if (!window.confirm(t('¿Reemplazar la forma editada por una plantilla?'))) return;
+    const footprint = level.outline.map(id => { const point = level.points.find(point => point.id === id)!; return { x: point.x, z: point.z }; });
+    const replacement: ParametricRoof = { id: roof.id, levelId: roof.levelId, type, footprint, baseHeight: level.height, pitch: type === 'flat' ? 0 : 25, overhang: 0, rotation: 0, thickness: roof.thickness, finish: roof.finish, undersideFinish: roof.undersideFinish };
+    apply(() => validateProjectDocument({ ...project, roofs: project.roofs.map(item => item.id === roof.id ? replacement : item) }));
+  }
+  function resizeRoof(axis: 'x' | 'z', size: number) {
+    if (!roof || roof.type === 'mesh') return false;
+    const box = bounds(roof.footprint), center = axis === 'x' ? (box.minX + box.maxX) / 2 : (box.minZ + box.maxZ) / 2, scale = size / (axis === 'x' ? box.width : box.depth);
+    return patchRoof({ footprint: roof.footprint.map(point => ({ ...point, [axis]: center + (point[axis] - center) * scale })) });
+  }
+  return <div className="construction-panel">
+    {only !== 'stairs' && <details className="property-section" open={only === 'roof' || selection?.kind === 'roof'}><summary>{t('Cubiertas')}</summary><fieldset disabled={readOnly} className="section-body">
+      <div className="construction-actions"><select aria-label={t('Cubierta activa')} value={roof?.id ?? ''} onChange={event => { setRoofId(event.target.value); onSelect?.({ kind: 'roof', id: event.target.value }); }}><option value="" disabled>{t('Sin cubierta')}</option>{roofs.map((roof, index) => <option key={roof.id} value={roof.id}>{t('Cubierta {{number}}', { number: index + 1 })}</option>)}</select><button type="button" aria-label={t('Añadir cubierta')} onClick={() => { const next = addRoof(project, activeLevelId); if (apply(() => next)) setRoofId(next.roofs.at(-1)!.id); }}><Plus size={18} /></button></div>
+      {roof && <><label>{t('Forma')}<select aria-label={t('Forma de cubierta')} value={roof.type} onChange={event => template(event.target.value as ParametricRoof['type'])}>{roof.type === 'mesh' && <option value="mesh">{t('Forma editada')}</option>}{ROOFS.map(([type, label]) => <option key={type} value={type}>{t(label)}</option>)}</select></label>
+        {roof.type !== 'mesh' && <><div className="construction-grid"><Measure label={t("Ancho de cubierta")} value={bounds(roof.footprint).width} min={.5} max={50} onChange={size => resizeRoof('x', size)} error={setError} /><Measure label={t("Largo de cubierta")} value={bounds(roof.footprint).depth} min={.5} max={50} onChange={size => resizeRoof('z', size)} error={setError} /><Measure label={t("Altura de cubierta")} value={roof.baseHeight} min={.3} max={level.height + 8} onChange={baseHeight => patchRoof({ baseHeight })} error={setError} />{roof.type !== 'flat' && <Measure label={t("Pendiente")} value={roof.pitch} min={0} max={75} unit="°" onChange={pitch => patchRoof({ pitch })} error={setError} />}</div><details><summary>{t('Más opciones')}</summary><div className="construction-grid"><Measure label={t("Alero")} value={roof.overhang} min={0} max={2} onChange={overhang => patchRoof({ overhang })} error={setError} /><Measure label={t("Orientación")} value={roof.rotation} min={0} max={360} unit="°" onChange={rotation => patchRoof({ rotation })} error={setError} /><Measure label={t("Espesor de cubierta")} value={roof.thickness} min={.03} max={.6} onChange={thickness => patchRoof({ thickness })} error={setError} /></div></details><button type="button" className="outline-button" onClick={() => { try { const next = convertRoofToMesh(project, roof.id); if (apply(() => next)) setEditingRoof(next.roofs.find(item => item.id === roof.id) as MeshRoof); } catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudo aplicar la construcción.'); } }}>{t('Editar forma')}</button></>}
+        {roof.type === 'mesh' && <button type="button" className="outline-button" onClick={() => setEditingRoof(structuredClone(roof))}>{t('Editar vértices y caras')}</button>}
+        <Finish finish={roof.finish} label={t("Acabado exterior")} onChange={finish => patchRoof({ finish })} /><Finish finish={roof.undersideFinish} label={t("Acabado interior")} onChange={undersideFinish => patchRoof({ undersideFinish })} />
+        <button type="button" className="outline-button" onClick={() => apply(() => deleteRoof(project, roof.id))}><Trash2 size={17} />{t('Eliminar cubierta')}</button></>}
+    </fieldset></details>}
+    {only !== 'roof' && <details className="property-section" open={selection?.kind === 'stair'}><summary>{t('Escaleras')}</summary><fieldset disabled={readOnly} className="section-body">
+      <div className="construction-actions"><select aria-label={t('Tipo de nueva escalera')} value={newType} onChange={event => setNewType(event.target.value as ProjectStair['type'])}>{STAIRS.map(([type, label]) => <option key={type} value={type}>{t(label)}</option>)}</select><button type="button" disabled={project.levels.length < 2} onClick={createStair}><Plus size={17} />{t('Añadir')}</button></div>
+      {project.levels.length < 2 && <p>{t('Añade un nivel superior para conectar una escalera.')}</p>}
+      {stairs.length > 0 && <label>{t('Escalera')}<select aria-label={t('Escalera activa')} value={stair?.id ?? ''} onChange={event => { setStairId(event.target.value); onSelect?.({ kind: 'stair', id: event.target.value }); }}>{stairs.map((stair, index) => <option key={stair.id} value={stair.id}>{t('Escalera {{number}}', { number: index + 1 })}</option>)}</select></label>}
+      {stair && <><label>{t('Forma')}<select aria-label={t('Forma de escalera')} value={stair.type} onChange={event => patchStair({ type: event.target.value as ProjectStair['type'] })}>{STAIRS.map(([type, label]) => <option key={type} value={type}>{t(label)}</option>)}</select></label>
+        <p>{t('{{from}} → {{to}}', { from: projectLevel(project, stair.fromLevelId).name, to: projectLevel(project, stair.toLevelId).name })}</p>
+        <div className="construction-grid"><Measure label={t("Ancho de escalera")} value={stair.width} min={.6} max={4} onChange={width => patchStair({ width })} error={setError} /><Measure label={t("Número de escalones")} value={stair.stepCount} min={3} max={64} step={1} unit="" onChange={stepCount => patchStair({ stepCount, run: stair.run * stepCount / stair.stepCount })} error={setError} />{stair.type !== 'spiral' && <Measure label={t("Huella")} value={stair.run / stair.stepCount} min={.2} max={1} onChange={value => patchStair({ run: value * stair.stepCount })} error={setError} />}<Measure label={t("Posición X")} value={stair.x} min={-50} max={50} onChange={x => patchStair({ x })} error={setError} /><Measure label={t("Posición Z")} value={stair.z} min={-50} max={50} onChange={z => patchStair({ z })} error={setError} /><Measure label={t("Giro")} value={stair.rotation} min={0} max={360} unit="°" onChange={rotation => patchStair({ rotation })} error={setError} /></div>
+        <output>{t('Altura total: {{height}} m · Contrahuella: {{riser}} m', { height: Number((projectLevel(project, stair.toLevelId).elevation - projectLevel(project, stair.fromLevelId).elevation).toFixed(3)), riser: Number(((projectLevel(project, stair.toLevelId).elevation - projectLevel(project, stair.fromLevelId).elevation) / stair.stepCount).toFixed(3)) })}</output>
+        <details><summary>{t('Más opciones')}</summary><div className="construction-grid"><Measure label={t("Descanso")} value={stair.landingDepth} min={.6} max={4} onChange={landingDepth => patchStair({ landingDepth })} error={setError} /><Measure label={t("Espesor de escalón")} value={stair.thickness} min={.03} max={.5} onChange={thickness => patchStair({ thickness })} error={setError} />{stair.type === 'spiral' && <><Measure label={t("Radio interior")} value={stair.innerRadius} min={.1} max={4} onChange={innerRadius => patchStair({ innerRadius })} error={setError} /><Measure label={t("Radio exterior")} value={stair.innerRadius + stair.width} min={stair.innerRadius + .6} max={stair.innerRadius + 4} onChange={value => patchStair({ width: value - stair.innerRadius })} error={setError} /><Measure label={t("Ángulo de desarrollo")} value={stair.turns * 360} min={90} max={1080} unit="°" onChange={value => patchStair({ turns: value / 360 })} error={setError} /></>}<label>{t('Barandales')}<select aria-label={t('Barandales')} value={stair.rails} onChange={event => patchStair({ rails: event.target.value as ProjectStair['rails'] })}><option value="none">{t('Sin barandal')}</option><option value="left">{t('Izquierda')}</option><option value="right">{t('Derecha')}</option><option value="both">{t('Ambos lados')}</option></select></label><label><input type="checkbox" checked={stair.clockwise} onChange={event => patchStair({ clockwise: event.target.checked })} />{t('Sentido horario')}</label></div></details>
+        <Finish finish={stair.finish} label={t("Acabado de escalera")} onChange={finish => patchStair({ finish })} />
+        <button type="button" className="outline-button" onClick={() => apply(() => deleteStair(project, stair.id))}><Trash2 size={17} />{t('Eliminar escalera')}</button></>}
+    </fieldset></details>}
+    {editingRoof && <RoofMeshEditor key={editingRoof.id} project={project} roof={currentEditingRoof ?? editingRoof} readOnly={readOnly || !currentEditingRoof} onNotice={setError} onApply={next => apply(() => next)} onCancel={() => setEditingRoof(null)} />}
+    {error && <p className="construction-error" role="alert">{t(error)}</p>}
+  </div>;
+}

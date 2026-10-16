@@ -2,7 +2,8 @@ import 'fake-indexeddb/auto';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { AccountRequestError } from './accountApi';
-import { createDefaultRoom } from './model';
+import { createDefaultProject } from './projectDocument';
+import { snapshotFixture, patchProject } from './projectTestFixture';
 import { loadModelBlob, type OfflineAssetRecord } from './offlineAssets';
 import { offlineModelMetadata } from './offlineModelValidation';
 import { clearOffline, getOfflineAccess, readOffline, setOfflineAccess, writeOffline } from './offlineStorage';
@@ -63,33 +64,33 @@ test('authoritative model denials revoke automatic access while retaining comple
 
 test('a denied design can still export its pending design and retained GLB as a complete recovery copy', async () => {
   const model = await cachedModel(), fetch = globalThis.fetch;
-  const snapshot: ProjectSnapshot = { id: roomId, accountId: owner, offlineAllowed: true, role: 'owner', canEdit: true, canManage: true, shared: false, revision: 1, hasSketch: false, sketchVersion: 0, sketchMutationId: null, room: createDefaultRoom() };
-  const draft = { ...snapshot.room, name: 'Conservar borrador', furniture: [{ id: 'custom', type: 'custom' as const, name: 'Tabla', material: null, color: null, assetId: modelId, width: 1, depth: 1, height: 1, x: 0, z: 0, rotation: 0 }] };
+  const snapshot: ProjectSnapshot = snapshotFixture(roomId, owner);
+  const draft = patchProject(snapshot.project, { name: 'Conservar borrador', furniture: [{ id: 'custom', type: 'custom' as const, name: 'Tabla', material: null, color: null, assetId: modelId, width: 1, depth: 1, height: 1, x: 0, z: 0, rotation: 0 }] });
   await persistOfflineProject({ id: roomId, accountId: owner, snapshot, draft, authorized: false, updatedAt: Date.now() });
   setOfflineAccess(roomId, null);
   try {
     globalThis.fetch = async () => { throw new Error('Recovery of complete local drafts must not need network access.'); };
     const backup = await exportOfflineProject(roomId);
-    assert.equal(backup.room.name, draft.name); assert.equal(backup.assets.length, 1); assert.equal(backup.assets[0].id, modelId);
+    assert.equal(backup.project.name, draft.name); assert.equal(backup.assets.length, 1); assert.equal(backup.assets[0].id, modelId);
     assert.deepEqual(await backup.assets[0].blob.arrayBuffer(), await model.blob.arrayBuffer());
   } finally { globalThis.fetch = fetch; }
 });
 
 function projectHarness(localOnly = false) {
-  let server: ProjectSnapshot = { id: roomId, accountId: owner, offlineAllowed: true, role: 'owner', canEdit: true, canManage: true, shared: false, revision: localOnly ? 0 : 1, hasSketch: false, sketchVersion: 0, sketchMutationId: null, room: createDefaultRoom() };
+  let server: ProjectSnapshot = { ...snapshotFixture(roomId, owner), revision: localOnly ? 0 : 1 };
   const state = { status: 'saved' as SoloStatus, writes: [] as OfflineProjectRecord[], puts: 0, creates: 0, loseCreation: false };
-  const record: OfflineProjectRecord = { id: roomId, accountId: owner, snapshot: structuredClone(server), draft: localOnly ? { ...server.room, name: 'Mi borrador' } : null, localOnly: localOnly || undefined, authorized: true, updatedAt: Date.now() };
+  const record: OfflineProjectRecord = { id: roomId, accountId: owner, snapshot: structuredClone(server), draft: localOnly ? { ...server.project, name: 'Mi borrador' } : null, localOnly: localOnly || undefined, authorized: true, updatedAt: Date.now() };
   const project = new SoloProject(record, {
     persist: async value => { state.writes.push(structuredClone(value)); },
     get: async () => structuredClone(server),
     create: async () => {
       state.creates++;
-      if (state.creates === 1) server = { ...server, revision: 1 };
+      if (state.creates === 1) { const { levels, ...metadata } = server.project; server = { ...server, revision: 1, project: { ...metadata, levels } }; }
       if (state.loseCreation) { state.loseCreation = false; throw new AccountRequestError('Acknowledgement lost'); }
       return structuredClone(server);
     },
     assets: async room => room,
-    put: async room => { state.puts++; server = { ...server, room, revision: server.revision + 1 }; return { room, revision: server.revision }; },
+    put: async room => { state.puts++; server = { ...server, project: room, revision: server.revision + 1 }; return structuredClone(server); },
     sketch: async () => { throw new Error('Unexpected sketch upload'); },
     changed: (_record, status) => { state.status = status; },
     collaborative: () => { throw new Error('Unexpected collaboration'); },
@@ -103,8 +104,8 @@ test('lost creation acknowledgements never adopt remote advances as permission t
     try {
       await f.project.initialize(true); f.state.loseCreation = true; await f.project.retry();
       assert.equal(f.state.status, 'offline'); assert.equal(f.project.record.localOnly, true);
-      if (remoteChange === 'room') f.server = { ...f.server, revision: 2, room: { ...f.server.room, name: 'Otra persona' } };
-      else f.server = { ...f.server, sketchVersion: 1, hasSketch: true, sketchMutationId: crypto.randomUUID() };
+      if (remoteChange === 'room') f.server = { ...f.server, revision: 2, project: { ...f.server.project, name: 'Otra persona' } };
+      else f.server = { ...f.server, sketches: { [f.server.project.activeLevelId]: { version: 1, hasSketch: true, mutationId: crypto.randomUUID() } } };
       await f.project.retry();
       assert.equal(f.state.status, 'conflict', remoteChange); assert.equal(f.state.puts, 0, remoteChange);
       assert.equal(f.project.record.draft!.name, 'Mi borrador');
@@ -124,19 +125,19 @@ test('idle reconnect checks do not repeatedly rewrite an unchanged local design'
 
 test('new remote sketch versions invalidate old bytes and late image responses cannot restore them', async () => {
   const f = projectHarness();
-  f.project.record.snapshot.hasSketch = true; f.project.record.snapshot.sketchVersion = 1;
-  f.project.record.sketchBlob = new Blob(['old']); f.project.record.sketchBlobVersion = 1;
+  const levelId = f.server.project.activeLevelId; f.project.record.snapshot.sketches[levelId] = { hasSketch: true, version: 1, mutationId: null };
+  f.project.record.sketchBlobs = { [levelId]: { blob: new Blob(['old']), version: 1 } };
   f.server = structuredClone(f.project.record.snapshot);
   try {
     await f.project.initialize(true);
-    f.server = { ...f.server, sketchVersion: 2, sketchMutationId: crypto.randomUUID() }; await f.project.retry();
-    assert.equal(f.project.record.sketchBlob, undefined); assert.equal(f.project.record.sketchBlobVersion, undefined);
+    f.server = { ...f.server, sketches: { [levelId]: { hasSketch: true, version: 2, mutationId: crypto.randomUUID() } } }; await f.project.retry();
+    assert.equal(f.project.record.sketchBlobs?.[levelId], undefined);
     const writes = f.state.writes.length;
-    await f.project.cacheSketch(new Blob(['late old response']), 1);
-    assert.equal(f.project.record.sketchBlob, undefined); assert.equal(f.state.writes.length, writes);
-    await f.project.cacheSketch(new Blob(['current']), 2);
-    assert.equal(await (f.project.record as OfflineProjectRecord).sketchBlob?.text(), 'current');
-    f.server = { ...f.server, sketchVersion: 3, hasSketch: false }; await f.project.retry();
-    assert.equal(f.project.record.sketchBlob, undefined); assert.equal(f.project.record.sketchBlobVersion, undefined);
+    await f.project.cacheSketch(new Blob(['late old response']), 1, levelId);
+    assert.equal(f.project.record.sketchBlobs?.[levelId], undefined); assert.equal(f.state.writes.length, writes);
+    await f.project.cacheSketch(new Blob(['current']), 2, levelId);
+    assert.equal(await (f.project.record as OfflineProjectRecord).sketchBlobs?.[levelId]?.blob.text(), 'current');
+    f.server = { ...f.server, sketches: { [levelId]: { hasSketch: false, version: 3, mutationId: null } } }; await f.project.retry();
+    assert.equal(f.project.record.sketchBlobs?.[levelId], undefined);
   } finally { f.project.destroy(); }
 });

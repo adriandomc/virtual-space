@@ -31,9 +31,11 @@ function appOffline(): Plugin {
       await visit('public');
       const hash = createHash('sha256');
       for (const [name, content] of [...files].sort(([a], [b]) => a.localeCompare(b))) hash.update(name).update(content);
-      const source = `const CACHE = '3d-space-v2-static-${hash.digest('hex').slice(0, 20)}';
+      const source = `const CACHE = '3d-space-v3-static-${hash.digest('hex').slice(0, 20)}';
 const FILES = ${JSON.stringify([...files.keys()])};
 const ALLOWED = new Set(FILES);
+const CORE = FILES.filter(path => !path.startsWith('/environments/') && !(path.startsWith('/materials/') && !path.endsWith('.json')));
+let preparing;
 const PAGES = new Set(['/', '/editor', '/designs', '/login', '/privacy', '/terms', '/help']);
 function valid(response, path) {
   if (!response.ok) return false;
@@ -43,18 +45,28 @@ function valid(response, path) {
   if (path.endsWith('.html')) return /text\\/html/.test(type);
   return !/text\\/html/.test(type);
 }
-self.addEventListener('install', event => event.waitUntil((async () => {
+async function cacheFiles(paths) {
   const cache = await caches.open(CACHE);
-  try {
-    await Promise.all(FILES.map(async path => {
+  let index = 0;
+  await Promise.all(Array.from({length: 4}, async () => {
+    while (index < paths.length) {
+      const path = paths[index++];
+      if (await cache.match(path)) continue;
       const response = await fetch(path, {cache: 'reload', credentials: 'omit'});
       if (!valid(response, path)) throw new Error('Static resource unavailable: ' + path);
       await cache.put(path, response);
-    }));
-  } catch (error) { await caches.delete(CACHE); throw error; }
+    }
+  }));
+}
+function prepare() {
+  return preparing ??= cacheFiles(FILES).finally(() => {preparing = undefined;});
+}
+self.addEventListener('install', event => event.waitUntil((async () => {
+  try { await cacheFiles(CORE); }
+  catch (error) { await caches.delete(CACHE); throw error; }
 })()));
 self.addEventListener('activate', event => event.waitUntil((async () => {
-  for (const key of await caches.keys()) if ((key.startsWith('3d-space-static-') || key.startsWith('3d-space-v2-static-')) && key !== CACHE) await caches.delete(key);
+  for (const key of await caches.keys()) if ((key.startsWith('3d-space-static-') || key.startsWith('3d-space-v2-static-') || key.startsWith('3d-space-v3-static-')) && key !== CACHE) await caches.delete(key);
   await self.clients.claim();
 })()));
 async function saveClients(clients, type, id) {
@@ -73,6 +85,10 @@ function releaseClients(clients, type, id) {
 }
 self.addEventListener('message', event => {
   const port = event.ports[0], id = event.data?.id;
+  if (event.data?.type === 'SPACE_PREPARE') event.waitUntil((async () => {
+    try { await prepare(); port?.postMessage({ready: true}); }
+    catch (error) { port?.postMessage({error: error.message}); }
+  })());
   if (event.data?.type === 'SPACE_STATUS') event.waitUntil((async () => {
     const cache = await caches.open(CACHE);
     const complete = await Promise.all(FILES.map(path => cache.match(path)));
@@ -97,7 +113,8 @@ self.addEventListener('message', event => {
     let clients = [];
     try {
       const cache = await caches.open(CACHE);
-      if (!(await Promise.all(FILES.map(path => cache.match(path)))).every(Boolean)) throw new Error('La actualización está incompleta. Descárgala de nuevo antes de actualizar.');
+      if (!(await Promise.all(CORE.map(path => cache.match(path)))).every(Boolean)) throw new Error('La actualización está incompleta. Descárgala de nuevo antes de actualizar.');
+      await prepare();
       clients = await self.clients.matchAll({type: 'window', includeUncontrolled: true});
       await saveClients(clients, 'SPACE_SAVE_UPDATE', id);
       port?.postMessage({ready: true}); await self.skipWaiting();

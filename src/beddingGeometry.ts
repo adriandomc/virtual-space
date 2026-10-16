@@ -5,8 +5,8 @@ const smoothEdge = (value: number, start: number) => {
   return t * t * (3 - 2 * t);
 };
 
-export function createDuvetGeometry(width: number, depth: number, height: number) {
-  const segments = 48;
+export function createDuvetGeometry(width: number, depth: number, height: number, detail: 'low' | 'medium' | 'high' = 'high') {
+  const segments = detail === 'low' ? 12 : detail === 'medium' ? 24 : 48;
   const positions: number[] = [], uvs: number[] = [], indices: number[] = [];
   for (let row = 0; row <= segments; row++) for (let col = 0; col <= segments; col++) {
     const u = col / segments, v = row / segments, x = (u - 0.5) * width * 0.96;
@@ -29,8 +29,8 @@ export function createDuvetGeometry(width: number, depth: number, height: number
   return geometry;
 }
 
-export function createPillowGeometry(width: number, height: number, depth: number) {
-  const geometry = new SphereGeometry(1, 40, 24);
+export function createPillowGeometry(width: number, height: number, depth: number, detail: 'low' | 'medium' | 'high' = 'high') {
+  const geometry = new SphereGeometry(1, detail === 'low' ? 12 : detail === 'medium' ? 24 : 40, detail === 'low' ? 8 : detail === 'medium' ? 16 : 24);
   const position = geometry.getAttribute('position');
   for (let i = 0; i < position.count; i++) {
     const x = position.getX(i), y = position.getY(i), z = position.getZ(i);

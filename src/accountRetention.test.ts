@@ -7,7 +7,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { TERMS_VERSION } from './legalPolicy';
-import { createDefaultRoom } from './model';
+import { createDefaultProject } from './projectDocument';
 import { inactivityDeadline } from './retention';
 import { createServer } from './server';
 
@@ -39,8 +39,9 @@ async function fixture(setup?: (dataDir: string) => void) {
     send(path: string, method = 'GET', body?: unknown, cookie = '') {
       return fetch(base + path, { method, headers: { Origin: base, 'Content-Type': 'application/json', ...(cookie ? { Cookie: cookie } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
     },
-    sketch(id: string, cookie: string, png: Buffer) {
-      return fetch(base + '/api/rooms/' + id + '/sketch', { method: 'PUT', headers: { Origin: base, 'Content-Type': 'image/png', Cookie: cookie }, body: new Uint8Array(png) });
+    async sketch(id: string, cookie: string, png: Buffer) {
+      const snapshot = await (await fetch(base + '/api/rooms/' + id, { headers: { Cookie: cookie } })).json(), levelId = snapshot.project.activeLevelId;
+      return fetch(base + '/api/rooms/' + id + '/levels/' + levelId + '/sketch', { method: 'PUT', headers: { Origin: base, 'Content-Type': 'image/png', Cookie: cookie, 'X-Room-Revision': String(snapshot.revision), 'X-Sketch-Version': String(snapshot.sketches[levelId].version), 'X-Sketch-Request-Id': randomUUID() }, body: new Uint8Array(png) });
     },
     async restart(afterStop?: () => void) { await close(server); afterStop?.(); await start(); },
     async dispose() {
@@ -80,7 +81,7 @@ test('only successful authenticated use renews activity; public views, invalid m
     const registered = await sample.send('/api/auth/register', 'POST', credentials);
     assert.equal(registered.status, 201);
     const cookie = cookieFor(registered), id = randomUUID(), path = '/api/rooms/' + id;
-    assert.equal((await sample.send('/api/rooms', 'POST', { id, room: createDefaultRoom() }, cookie)).status, 201);
+    assert.equal((await sample.send('/api/rooms', 'POST', { id, project: createDefaultProject(undefined, undefined, id) }, cookie)).status, 201);
     assert.equal((await sample.send(path + '/share', 'POST', { enabled: true }, cookie)).status, 200);
     const activity = () => sample.read('SELECT last_active_at FROM users')[0].last_active_at;
     sample.time(started + day);
@@ -113,7 +114,7 @@ test('expiry denies login before hourly purge; restart cascades expired accounts
     const activeCookie = cookieFor(active), activeId = (await active.json()).user.id;
     const id = randomUUID(), activeRoomId = randomUUID();
     for (const [roomId, accountCookie] of [[id, cookie], [activeRoomId, activeCookie]]) {
-      assert.equal((await sample.send('/api/rooms', 'POST', { id: roomId, room: createDefaultRoom() }, accountCookie)).status, 201);
+      assert.equal((await sample.send('/api/rooms', 'POST', { id: roomId, project: createDefaultProject(undefined, undefined, roomId) }, accountCookie)).status, 201);
     }
     assert.equal((await sample.send('/api/rooms/' + id + '/share', 'POST', { enabled: true }, cookie)).status, 200);
     const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aGz0AAAAASUVORK5CYII=', 'base64');
@@ -143,7 +144,7 @@ test('startup completes durable erasures after an interrupted database commit an
     const registered = await sample.send('/api/auth/register', 'POST', credentials);
     assert.equal(registered.status, 201);
     const cookie = cookieFor(registered), deletedId = randomUUID(), sharedId = randomUUID();
-    for (const id of [deletedId, sharedId]) assert.equal((await sample.send('/api/rooms', 'POST', { id, room: createDefaultRoom() }, cookie)).status, 201);
+    for (const id of [deletedId, sharedId]) assert.equal((await sample.send('/api/rooms', 'POST', { id, project: createDefaultProject(undefined, undefined, id) }, cookie)).status, 201);
     assert.equal((await sample.send('/api/rooms/' + sharedId + '/share', 'POST', { enabled: true }, cookie)).status, 200);
     sample.time(started + 2);
     await sample.restart(() => {
@@ -158,7 +159,7 @@ test('startup completes durable erasures after an interrupted database commit an
     assert.equal((await sample.send('/api/rooms/' + sharedId)).status, 404);
     const shared = await sample.send('/api/rooms/' + sharedId, 'GET', undefined, cookie);
     assert.equal(shared.status, 200); assert.equal((await shared.json()).shared, false);
-    const reused = await sample.send('/api/rooms', 'POST', { id: deletedId, room: createDefaultRoom() }, cookie);
+    const reused = await sample.send('/api/rooms', 'POST', { id: deletedId, project: createDefaultProject(undefined, undefined, deletedId) }, cookie);
     assert.equal(reused.status, 409);
     assert.equal(sample.read('SELECT COUNT(*) AS count FROM rooms WHERE id = ?', deletedId)[0].count, 0);
   } finally { await sample.dispose(); }
@@ -170,7 +171,7 @@ test('a crash followed by downtime longer than backup retention still completes 
     const registered = await sample.send('/api/auth/register', 'POST', credentials);
     assert.equal(registered.status, 201);
     const cookie = cookieFor(registered), deletedId = randomUUID(), sharedId = randomUUID();
-    for (const id of [deletedId, sharedId]) assert.equal((await sample.send('/api/rooms', 'POST', { id, room: createDefaultRoom() }, cookie)).status, 201);
+    for (const id of [deletedId, sharedId]) assert.equal((await sample.send('/api/rooms', 'POST', { id, project: createDefaultProject(undefined, undefined, id) }, cookie)).status, 201);
     assert.equal((await sample.send('/api/rooms/' + sharedId + '/share', 'POST', { enabled: true }, cookie)).status, 200);
     sample.time(started + 8 * day);
     await sample.restart(() => {

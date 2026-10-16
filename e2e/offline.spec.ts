@@ -1,9 +1,11 @@
 import { expect, test, type APIRequestContext, type Page, type Request } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
-import { createBlankRoom } from '../src/onboardingModel';
+import { createBlankProject } from '../src/onboardingModel';
 import { addCustomFurniture } from '../src/model';
 import { TERMS_VERSION } from '../src/legalPolicy';
-import type { Room } from '../src/types';
+import { projectToRoom, updateProjectRoom } from '../src/projectDocument';
+import { addLevel } from '../src/projectOperations';
+import { parseProjectBackup } from '../src/projectBackup';
 
 const origin = 'http://127.0.0.1:5188';
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=', 'base64');
@@ -22,12 +24,17 @@ async function account(request: APIRequestContext) {
   const response = await request.post('/api/auth/register', { headers: { ...jsonHeaders, 'X-Forwarded-For': '198.51.100.' + (test.info().workerIndex + 10) }, data: { username, password: 'E2e-password-4837', confirmPassword: 'E2e-password-4837', termsVersion: TERMS_VERSION } });
   expect(response.status(), await response.text()).toBe(201);
 }
-async function design(request: APIRequestContext, name: string) {
-  const { setupStep: _step, ...empty } = createBlankRoom();
-  const id = randomUUID(), room: Room = { ...empty, name };
-  const response = await request.post('/api/rooms', { headers: jsonHeaders, data: { id, room } });
-  expect(response.status(), await response.text()).toBe(201);
-  return { id, room };
+async function design(request: APIRequestContext, name: string, levelCount = 1) {
+  const { setupStep: _step, ...empty } = createBlankProject();
+  const id = randomUUID(); let project = { ...empty, id, name };
+  while (project.levels.length < levelCount) project = addLevel(project, { copy: true, name: 'Planta ' + (project.levels.length + 1) });
+  const response = await request.post('/api/rooms', { headers: jsonHeaders, data: { id, project } }); expect(response.status(), await response.text()).toBe(201);
+  return { id, project };
+}
+async function uploadSketch(request: APIRequestContext, id: string, levelId: string) {
+  const snapshot = await (await request.get('/api/rooms/' + id)).json();
+  const response = await request.put('/api/rooms/' + id + '/levels/' + levelId + '/sketch', { headers: { Origin: origin, 'Content-Type': 'image/png', 'X-Room-Revision': String(snapshot.revision), 'X-Sketch-Version': String(snapshot.sketches[levelId].version), 'X-Sketch-Request-Id': randomUUID() }, data: png });
+  expect(response.status(), await response.text()).toBe(200);
 }
 async function settings(page: Page) {
   await page.getByRole('button', { name: 'Ajustes de la aplicación', exact: true }).click();
@@ -51,6 +58,8 @@ async function createLocal(page: Page, name: string) {
   await page.getByLabel('Nombre del diseño', { exact: true }).fill(name);
   await page.getByLabel('Nombre del diseño', { exact: true }).press('Tab');
   await page.getByRole('button', { name: 'Continuar', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Cubierta', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Omitir', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Colores', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Omitir', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Decoración', exact: true })).toBeVisible();
@@ -85,16 +94,19 @@ test('manifest, installation assets and mobile settings remain usable', async ({
 
 test('preparation includes unopened designs, croquis and models; forced mode sends no data', async ({ page, context }) => {
   const request = context.request;
+  const pageErrors: string[] = [];
+  page.on('pageerror', error => pageErrors.push(error.message));
   const streams = new Set<Request>();
   page.on('request', value => { if (value.url().endsWith('/api/notifications/events')) streams.add(value); });
   page.on('requestfinished', value => streams.delete(value)); page.on('requestfailed', value => streams.delete(value));
   await account(request);
-  const first = await design(request, 'Con croquis y modelo'), second = await design(request, 'Sin abrir');
+  const first = await design(request, 'Con croquis y modelo'), second = await design(request, 'Sin abrir', 12);
   const uploaded = await request.post('/api/models?room=' + first.id, { headers: { Origin: origin, 'Content-Type': 'model/gltf-binary', 'X-Model-Name': encodeURIComponent('Pieza.glb') }, data: triangleModel() });
   expect(uploaded.status(), await uploaded.text()).toBe(201);
   const { model } = await uploaded.json();
-  expect((await request.put('/api/rooms/' + first.id, { headers: jsonHeaders, data: { room: addCustomFurniture(first.room, model), revision: 1 } })).status()).toBe(200);
-  expect((await request.put('/api/rooms/' + first.id + '/sketch', { headers: { Origin: origin, 'Content-Type': 'image/png' }, data: png })).status()).toBe(200);
+  expect((await request.put('/api/rooms/' + first.id, { headers: jsonHeaders, data: { project: updateProjectRoom(first.project, first.project.activeLevelId, addCustomFurniture(projectToRoom(first.project), model)), revision: 1, operationId: randomUUID() } })).status()).toBe(200);
+  await uploadSketch(request, first.id, first.project.activeLevelId);
+  for (const level of second.project.levels) await uploadSketch(request, second.id, level.id);
   await page.goto('/designs');
   await expect(page.getByRole('link', { name: /Sin abrir/ })).toBeVisible();
   await expect.poll(() => streams.size).toBe(1);
@@ -105,7 +117,29 @@ test('preparation includes unopened designs, croquis and models; forced mode sen
   const observeSockets = (value: Page) => value.on('websocket', socket => sockets.push(socket.url()));
   observeSockets(page); context.on('page', observeSockets);
   await page.getByRole('link', { name: /Con croquis y modelo/ }).click();
-  await expect(page.getByLabel('Nombre del proyecto', { exact: true })).toHaveValue(first.room.name);
+  try { await expect(page.getByLabel('Nombre del proyecto', { exact: true })).toHaveValue(first.project.name); }
+  catch (cause) {
+    const state = await page.evaluate(async roomId => {
+      const locks = navigator.locks ? await navigator.locks.query() : null;
+      const storage = new Promise<unknown>((accept, reject) => {
+        const request = indexedDB.open('3d-space-v3', 1);
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          const database = request.result, tx = database.transaction(['meta', 'projects'], 'readonly'), identity = tx.objectStore('meta').get('identity');
+          let mode: IDBRequest | undefined, project: IDBRequest | undefined;
+          identity.onsuccess = () => {
+            const accountId = identity.result?.id;
+            if (accountId) { mode = tx.objectStore('meta').get('mode:' + accountId); project = tx.objectStore('projects').get(accountId + ':' + roomId); }
+          };
+          tx.oncomplete = () => { database.close(); const record = project?.result; accept({ identity: identity.result, mode: mode?.result, project: record && { id: record.id, accountId: record.accountId, authorized: record.authorized, prepared: record.prepared, deleted: record.deleted, name: record.snapshot?.project?.name, levelRefs: record.levelRefs } }); };
+          tx.onabort = () => { database.close(); reject(tx.error); };
+        };
+      });
+      return { readyState: document.readyState, body: document.body.innerText.slice(0, 3000), locks, storage: await Promise.race([storage, new Promise(accept => setTimeout(() => accept('diagnostic storage read timed out'), 4000))]) };
+    }, first.id).catch(error => ({ diagnosticError: String(error) }));
+    await test.info().attach('offline-startup-diagnostics', { body: JSON.stringify({ pageErrors, requests, sockets, state }, null, 2), contentType: 'application/json' });
+    throw cause;
+  }
   await page.getByRole('tab', { name: 'Planta', exact: true }).click();
   await expect(page.locator('.plan-editor image')).toHaveAttribute('href', /^blob:/);
   await context.setOffline(true);
@@ -119,12 +153,18 @@ test('preparation includes unopened designs, croquis and models; forced mode sen
   await page.getByRole('button', { name: 'Descargar copia', exact: true }).click();
   const stream = await (await download).createReadStream(), chunks: Buffer[] = [];
   for await (const chunk of stream!) chunks.push(chunk);
-  const backup = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-  expect(backup).toMatchObject({ format: '3d-space-project', version: 2 });
-  expect(backup.assets).toHaveLength(1); expect(backup.sketch.base64).toBe(png.toString('base64'));
+  const backup = await parseProjectBackup(new Blob([new Uint8Array(Buffer.concat(chunks))]));
+  expect(backup.project.version).toBe(3); expect(backup.assets).toHaveLength(1);
+  expect(backup.sketches).toHaveLength(1); expect(Buffer.from(await backup.sketches[0].blob.arrayBuffer())).toEqual(png);
   await page.getByRole('button', { name: 'Mis diseños', exact: true }).click();
   await page.getByRole('link', { name: /Sin abrir/ }).click();
-  await expect(page.getByLabel('Nombre del proyecto', { exact: true })).toHaveValue(second.room.name);
+  await expect(page.getByLabel('Nombre del proyecto', { exact: true })).toHaveValue(second.project.name);
+  await expect(page.getByRole('combobox', { name: 'Nivel activo', exact: true }).locator('option')).toHaveCount(12);
+  await page.getByRole('tab', { name: 'Planta', exact: true }).click();
+  for (const level of [second.project.levels[0], second.project.levels[11]]) {
+    await page.getByRole('combobox', { name: 'Nivel activo', exact: true }).selectOption(level.id);
+    await expect(page.locator('.plan-editor image')).toHaveAttribute('href', /^blob:/);
+  }
   await context.setOffline(false);
   await page.reload();
   await expect(page.getByLabel('Nombre del proyecto', { exact: true })).toBeEditable();
@@ -165,10 +205,10 @@ test('new local designs and an edited GLB survive cold offline reload and all sy
   const dialog = await settings(page);
   await dialog.getByRole('switch', { name: 'Modo sin conexión' }).click();
   await expect.poll(async () => (await (await request.get('/api/rooms')).json()).rooms.map((room: { id: string }) => room.id), { timeout: 30000 }).toEqual(expect.arrayContaining([first, second]));
-  await expect.poll(async () => (await (await request.get('/api/rooms/' + first)).json()).room.furniture.length, { timeout: 30000 }).toBe(1);
+  await expect.poll(async () => (await (await request.get('/api/rooms/' + first)).json()).project.levels.flatMap((level: { furniture: unknown[] }) => level.furniture).length, { timeout: 30000 }).toBe(1);
   const models = await (await request.get('/api/models?room=' + first)).json();
   expect(models.models).toHaveLength(1); expect(models.models[0].name).toBe('Cubo sin conexión');
-  await expect.poll(async () => (await (await request.get('/api/rooms/' + second)).json()).room.setupStep).toBeUndefined();
+  await expect.poll(async () => (await (await request.get('/api/rooms/' + second)).json()).project.setupStep).toBeUndefined();
 });
 
 test('shared designs make independent private copies and pending local changes block logout', async ({ page, context }) => {
@@ -190,7 +230,7 @@ test('shared designs make independent private copies and pending local changes b
   await expect(page.getByRole('alert')).toContainText(/sin conexión|pendientes/);
   await expect(page.getByRole('link', { name: /Con pendientes/ })).toBeVisible();
   const remote = await (await request.get('/api/rooms/' + original.id)).json();
-  expect(remote.shared).toBe(true); expect(remote.room).toEqual(original.room);
+  expect(remote.shared).toBe(true); expect(remote.project).toEqual(original.project);
 });
 
 test('preparing from the plan editor saves the design and continues in the library', async ({ page, context }) => {
@@ -215,5 +255,5 @@ test('preparing from the plan editor saves the design and continues in the libra
   await context.setOffline(true);
   await page.getByRole('link', { name: /Croquis actualizado/ }).click();
   await expect(page.getByLabel('Nombre del proyecto', { exact: true })).toHaveValue('Croquis actualizado');
-  expect((await (await request.get('/api/rooms/' + initial.id)).json()).room.name).toBe('Croquis actualizado');
+  expect((await (await request.get('/api/rooms/' + initial.id)).json()).project.name).toBe('Croquis actualizado');
 });

@@ -1,3 +1,5 @@
+import architectureEs from './locales/es/architecture.json';
+import architectureEn from './locales/en/architecture.json';
 import commonEs from './locales/es/common.json';
 import commonEn from './locales/en/common.json';
 import editorEs from './locales/es/editor.json';
@@ -20,6 +22,6 @@ export function supportedLocale(value: string | null | undefined): Locale | null
   return languages.find(language => language.code === base)?.code ?? null;
 }
 export const translationCatalogs = {
-  es: { ...commonEs, ...editorEs, ...modelsEs, ...helpEs, ...legalEs, ...errorsEs, ...messagesEs },
-  en: { ...commonEn, ...editorEn, ...modelsEn, ...helpEn, ...legalEn, ...errorsEn, ...messagesEn },
+  es: { ...architectureEs, ...commonEs, ...editorEs, ...modelsEs, ...helpEs, ...legalEs, ...errorsEs, ...messagesEs },
+  en: { ...architectureEn, ...commonEn, ...editorEn, ...modelsEn, ...helpEn, ...legalEn, ...errorsEn, ...messagesEn },
 };

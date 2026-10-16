@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { t, useLocale } from './i18n';
 import { parseNumber } from './fieldDraft';
-import { wallLength } from './model';
+import { wallCount, wallLength } from './model';
 import type { Opening, Room } from './types';
 
 export type OpeningValues = { wall: number; width: number; height: number; sill: number; doorStyle?: 'right' | 'left' | 'frame' };
@@ -30,7 +30,7 @@ export default function OpeningForm({ room, type, initialWall = 0, onCreate, onC
   }
 
   return <form className="opening-create-form" onSubmit={submit}>
-    <label className="select-field">{t("Pared")}<select aria-label={t("Pared del nuevo elemento")} value={wall} onChange={event => { setWall(Number(event.target.value)); setError(''); }}>{room.vertices.map((_, index) => <option key={index} value={index}>{t('Pared {{number}}', { number: index + 1 })}</option>)}</select></label>
+    <label className="select-field">{t("Pared")}<select aria-label={t("Pared del nuevo elemento")} value={wall} onChange={event => { setWall(Number(event.target.value)); setError(''); }}>{Array.from({ length: wallCount(room) }, (_, index) => <option key={index} value={index}>{t('Pared {{number}}', { number: index + 1 })}</option>)}</select></label>
     <div className="dimensions-grid">
       <label className="number-field"><span>{t("Ancho")}</span><div className="number-input"><input aria-label={t("Ancho del nuevo elemento")} type="text" inputMode="decimal" required value={width} onChange={event => { setWidth(event.target.value); setError(''); }} /><span>m</span></div></label>
       <label className="number-field"><span>{t("Altura")}</span><div className="number-input"><input aria-label={t("Altura del nuevo elemento")} type="text" inputMode="decimal" required value={height} onChange={event => { setHeight(event.target.value); setError(''); }} /><span>m</span></div></label>

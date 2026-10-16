@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as THREE from 'three';
 import { addCustomFurniture, addFurniture, createDefaultRoom, fitFurniture, fitRoom, resizeRoom, validateRoom } from './model';
+import { createDefaultProject, updateProjectRoom } from './projectDocument';
 import { createServer } from './server';
 import { clearCustomModelCache, loadEditableModel } from './customModel';
 import { WORKSHOP_PIECES } from './workshopPieces';
@@ -76,26 +77,27 @@ test('la API persiste dimensiones delgadas y rechaza cambios inválidos sin alte
   try {
     const registered = await request('/api/auth/register', 'POST', { username: 'prefab_owner', password: 'Testing-pass-123', confirmPassword: 'Testing-pass-123', termsVersion: TERMS_VERSION });
     assert.equal(registered.status, 201); cookie = registered.headers.get('set-cookie')!.split(';')[0];
-    const id = randomUUID(), initial = createDefaultRoom(), path = '/api/rooms/' + id;
-    assert.equal((await request('/api/rooms', 'POST', { id, room: initial })).status, 201);
+    const id = randomUUID(), baseProject = createDefaultProject(undefined, undefined, id), initial = createDefaultRoom(), path = '/api/rooms/' + id;
+    assert.equal((await request('/api/rooms', 'POST', { id, project: updateProjectRoom(baseProject, baseProject.activeLevelId, initial) })).status, 201);
     const uploaded = await fetch(base + '/api/models?room=' + id, { method: 'POST', headers: { Origin: base, Cookie: cookie, 'Content-Type': 'model/gltf-binary', 'X-Model-Name': 'Tabla.glb' }, body: new Uint8Array(thinModelData()) });
     assert.equal(uploaded.status, 201);
     const asset = (await uploaded.json()).model;
     let room = addCustomFurniture(initial, asset), revision = 1;
-    const saved = await request(path, 'PUT', { room, revision }); assert.equal(saved.status, 200);
+    const saved = await request(path, 'PUT', { project: updateProjectRoom(baseProject, baseProject.activeLevelId, room), revision, operationId: randomUUID() }); assert.equal(saved.status, 200);
     revision = (await saved.json()).revision;
-    const exact = room.furniture[0];
+    const exact = { ...room.furniture[0], levelId: baseProject.activeLevelId };
     assert.equal(exact.height, asset.height); assert.ok(exact.height < .025);
-    assert.deepEqual((await (await request(path)).json()).room.furniture[0], exact);
+    assert.deepEqual((await (await request(path)).json()).project.levels[0].furniture[0], exact);
     room = resizeRoom(room, 3, 3);
-    const resized = await request(path, 'PUT', { room, revision }); assert.equal(resized.status, 200); revision = (await resized.json()).revision;
+    const resized = await request(path, 'PUT', { project: updateProjectRoom(baseProject, baseProject.activeLevelId, room), revision, operationId: randomUUID() }); assert.equal(resized.status, 200); revision = (await resized.json()).revision;
     for (const field of ['width', 'height', 'depth'] as const) for (const value of [0, .009]) {
-      const invalid = { ...room, furniture: [{ ...exact, [field]: value }] };
-      assert.equal((await request(path, 'PUT', { room: invalid, revision })).status, 400);
+      const valid = updateProjectRoom(baseProject, baseProject.activeLevelId, room);
+      const invalid = { ...valid, levels: valid.levels.map(level => ({ ...level, furniture: level.furniture.map(item => ({ ...item, [field]: value })) })) };
+      assert.equal((await request(path, 'PUT', { project: invalid, revision, operationId: randomUUID() })).status, 400);
     }
-    assert.equal((await request(path, 'PUT', { room: { ...room, furniture: [{ ...exact, assetId: randomUUID() }] }, revision })).status, 400, 'la validación de referencias privadas sigue activa');
+    assert.equal((await request(path, 'PUT', { project: updateProjectRoom(baseProject, baseProject.activeLevelId, { ...room, furniture: [{ ...exact, assetId: randomUUID() }] }), revision, operationId: randomUUID() })).status, 400, 'la validación de referencias privadas sigue activa');
     const remaining = await (await request(path)).json();
-    assert.equal(remaining.revision, revision); assert.deepEqual(remaining.room.furniture[0], exact);
+    assert.equal(remaining.revision, revision); assert.deepEqual(remaining.project.levels[0].furniture[0], exact);
   } finally {
     await new Promise<void>((accept, reject) => server.close(error => error ? reject(error) : accept()));
     rmSync(dataDir, { recursive: true, force: true });

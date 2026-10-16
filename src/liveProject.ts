@@ -1,146 +1,150 @@
 import * as Y from 'yjs';
-import { readYRoom, writeYRoom } from './collaborativeRoom';
-import { validateRoom } from './model';
-import type { Room } from './types';
+import { assembleProject, projectScopes, readProjectScope, writeProjectScope } from './collaborativeProject';
+import { validateProjectDocument, validateProjectChange, type ProjectDocument } from './projectDocument';
+import { structureCommand, type StructureCommand } from './projectProtocol';
 
 export type ProjectRole = 'owner' | 'editor' | 'reader' | 'public';
-export type ProjectSnapshot = { id: string; room: Room; revision: number; canEdit: boolean; canManage: boolean; role: ProjectRole; hasSketch: boolean; sketchVersion: number; shared: boolean; accountId?: string | null; offlineAllowed?: boolean; sketchMutationId?: string | null };
-type Edit = { previous: Room; next: Room; update: Uint8Array; id: string; batch?: string };
-const encode = (data: Uint8Array) => {
-  let value = ''; for (let i = 0; i < data.length; i += 8192) value += String.fromCharCode(...data.subarray(i, i + 8192));
-  return btoa(value);
-};
+export type SketchState = { hasSketch: boolean; version: number; mutationId: string | null };
+export type ProjectSnapshot = { id: string; project: ProjectDocument; revision: number; structureRevision: number; structureRevisions: Record<string, number>; sketches: Record<string, SketchState>; canEdit: boolean; canManage: boolean; role: ProjectRole; shared: boolean; accountId?: string | null; offlineAllowed?: boolean };
+type Edit = { id: string; scope?: string; update?: string; command?: StructureCommand; next: ProjectDocument; previous: ProjectDocument; sent?: boolean };
+const encode = (data: Uint8Array) => { let value = ''; for (let i = 0; i < data.length; i += 8192) value += String.fromCharCode(...data.subarray(i, i + 8192)); return btoa(value); };
 const decode = (data: string) => Uint8Array.from(atob(data), value => value.charCodeAt(0));
 
+/** Ordinary updates touch one level document; geometry uses confirmed structural commands. */
 export class LiveProject {
-  private doc = new Y.Doc();
+  private docs = new Map<string, Y.Doc>();
   private socket: WebSocket | null = null;
   private pending: Edit[] = [];
-  private reconnect: ReturnType<typeof setTimeout> | undefined;
-  private timeout: ReturnType<typeof setTimeout> | undefined;
-  private flush: ReturnType<typeof setTimeout> | undefined;
+  private reconnect?: ReturnType<typeof setTimeout>;
+  private timeout?: ReturnType<typeof setTimeout>;
+  private flush?: ReturnType<typeof setTimeout>;
   private stopped = false;
+  private paused = false;
   private synchronized = false;
-  private serial = 0;
-  private prefix = crypto.randomUUID();
   private editable = false;
+  private snapshot?: ProjectSnapshot;
+  private recovery: ProjectDocument | null = null;
   constructor(private url: string, private callbacks: {
-    room: (room: Room) => void;
-    metadata: (snapshot: Omit<ProjectSnapshot, 'room'>) => void;
+    project: (project: ProjectDocument) => void;
+    metadata: (snapshot: Omit<ProjectSnapshot, 'project'>) => void;
     state: (connected: boolean, pending: boolean) => void;
     error: (message: string, denied?: boolean) => void;
+    recovery?: (project: ProjectDocument, reason: string) => void;
   }, private factory: (url: string) => WebSocket = address => new WebSocket(address)) {}
-
   connect() {
-    if (this.stopped || this.socket && this.socket.readyState < 2) return;
-    this.socket = this.factory(this.url);
-    const socket = this.socket;
+    if (this.stopped || this.paused || this.socket && this.socket.readyState < 2) return;
+    const socket = this.socket = this.factory(this.url);
     socket.onmessage = event => {
-      if (this.stopped || socket !== this.socket) return;
+      if (this.stopped || this.paused || socket !== this.socket) return;
       try {
         const message = JSON.parse(String(event.data));
-        if (message.type === 'sync') {
-          this.replace(message.update);
-          this.synchronized = true; this.editable = message.canEdit === true;
-          this.callbacks.metadata(message);
-          if (!this.editable) this.pending = [];
-          const dropped = this.replay(); this.publish(); this.sendPending();
-          if (dropped) this.callbacks.error('Un cambio pendiente ya no cabe en el diseño actualizado. Se conservó la última versión válida.');
+        if (message.type === 'sync' || message.type === 'error' && message.states) {
+          if (message.type === 'error') {
+            const rejected = this.pending.find(edit => edit.id === message.requestId);
+            if (rejected) {
+              this.preserveRecovery(message.error || 'No se pudo guardar el cambio.');
+              // Later updates from the same scope may depend on this rejected actor
+              // clock. Keep them in the recovery instead of resending invalid bytes.
+              this.pending = this.pending.filter(edit => edit.id !== rejected.id && (rejected.scope === undefined || edit.scope !== rejected.scope));
+            }
+          }
+          this.replace(message.states); this.snapshot = message;
+          this.synchronized = true; this.editable = message.canEdit === true; this.callbacks.metadata(message);
+          if (!this.editable) { this.preserveRecovery('Tu acceso a este diseño cambió.'); this.pending = []; }
+          if (this.pending.some(edit => edit.scope && !this.docs.has(edit.scope))) {
+            this.preserveRecovery('El nivel de tus cambios ya no existe. Tu copia se conserva.');
+            this.pending = this.pending.filter(edit => !edit.scope || this.docs.has(edit.scope));
+          }
+          // Keep sent bytes/operation IDs so lost confirmations cannot duplicate commands.
+          for (const edit of this.pending) if (!edit.command && edit.scope && edit.update && this.docs.has(edit.scope)) Y.applyUpdate(this.docs.get(edit.scope)!, decode(edit.update));
+          this.publish(); this.sendPending(true);
+          if (message.type === 'error') this.callbacks.error(message.error || 'No se pudo guardar el cambio.', message.status === 401 || message.status === 403);
         } else if (message.type === 'update') {
-          Y.applyUpdate(this.doc, decode(message.update));
-          try { this.publish(); }
-          catch {
-            this.synchronized = false; this.report();
-            socket.send(JSON.stringify({ type: 'sync' }));
-          }
+          const doc = this.docs.get(message.scope); if (!doc) throw new Error();
+          Y.applyUpdate(doc, decode(message.update)); this.updateRevision(message); this.publish();
         } else if (message.type === 'ack') {
-          this.pending = this.pending.filter(edit => edit.batch !== message.id);
-          this.report(); this.armTimeout();
+          this.pending = this.pending.filter(edit => edit.id !== message.id); this.updateRevision(message); this.sendPending();
         } else if (message.type === 'metadata') {
-          const wasEditable = this.editable;
-          this.editable = message.canEdit === true; this.callbacks.metadata(message);
-          if (wasEditable && !this.editable) {
-            this.pending = []; this.synchronized = false;
-            if (this.flush) { clearTimeout(this.flush); this.flush = undefined; }
-            if (this.timeout) clearTimeout(this.timeout);
-            socket.send(JSON.stringify({ type: 'sync' }));
-          }
+          if (this.snapshot) this.snapshot = { ...this.snapshot, ...message };
+          const lost = this.editable && !message.canEdit; this.editable = message.canEdit === true; this.callbacks.metadata(message);
+          if (lost) { this.preserveRecovery('Tu acceso a este diseño cambió.'); this.pending = []; socket.send(JSON.stringify({ type: 'sync' })); }
           this.report();
-        } else if (message.type === 'error') {
-          this.pending = this.pending.filter(edit => edit.batch !== (message.requestId ?? message.id));
-          if (message.update) { this.replace(message.update); this.editable = message.canEdit === true; this.callbacks.metadata(message); if (!this.editable) this.pending = []; this.replay(); this.publish(); this.sendPending(); }
-          this.callbacks.error(message.error || 'No se pudo guardar el cambio.', message.status === 401 || message.status === 403);
         } else if (message.type === 'access') {
-          this.editable = false; this.synchronized = false; this.callbacks.state(false, this.pending.length > 0);
-          this.callbacks.error(message.error || 'Tu acceso a este diseño terminó.', true); this.stopped = true; socket.close();
+          this.preserveRecovery(message.error || 'Tu acceso a este diseño terminó.'); this.pending = [];
+          this.editable = false; this.synchronized = false; this.report(); this.callbacks.error(message.error || 'Tu acceso a este diseño terminó.', true); this.stopped = true; socket.close();
         }
       } catch { this.callbacks.error('No se pudo recibir el diseño. Reintenta la conexión.'); socket.close(); }
     };
     socket.onclose = event => {
       if (socket !== this.socket || this.stopped) return;
-      this.synchronized = false; this.callbacks.state(false, this.pending.length > 0);
-      if (event.code === 4003 || event.code === 1008) { this.callbacks.error('Tu sesión o tu acceso terminaron.', true); this.stopped = true; return; }
-      this.callbacks.error('Conexión interrumpida. Reconectando…');
-      this.reconnect = setTimeout(() => this.connect(), 1500);
+      this.synchronized = false; this.report();
+      if (this.paused) return;
+      if (event.code === 4003 || event.code === 1008) { this.preserveRecovery('Tu sesión o tu acceso terminaron.'); this.pending = []; this.report(); this.callbacks.error('Tu sesión o tu acceso terminaron.', true); this.stopped = true; return; }
+      this.callbacks.error('Conexión interrumpida. Reconectando…'); this.reconnect = setTimeout(() => this.connect(), 1500);
     };
-    socket.onerror = () => { if (!this.stopped) this.callbacks.error('No se pudo conectar. Reconectando…'); };
+    socket.onerror = () => { if (!this.stopped && !this.paused) this.callbacks.error('No se pudo conectar. Reconectando…'); };
   }
-
-  change(next: Room, previous: Room) {
-    if (!this.synchronized || !this.editable || this.socket?.readyState !== WebSocket.OPEN) throw new Error('Espera a que se restablezca la conexión.');
-    if (this.pending.length >= 128) throw new Error('Espera a que terminen de guardarse los cambios.');
-    const candidate = new Y.Doc();
-    let update: Uint8Array;
-    let accepted = false;
-    try {
-      Y.applyUpdate(candidate, Y.encodeStateAsUpdate(this.doc));
-      candidate.clientID = this.doc.clientID;
-      const before = Y.encodeStateVector(candidate);
-      writeYRoom(candidate, validateRoom(next), previous);
-      validateRoom(readYRoom(candidate));
-      update = Y.encodeStateAsUpdate(candidate, before);
-      this.doc.destroy(); this.doc = candidate; accepted = true;
-    } finally { if (!accepted) candidate.destroy(); }
-    const edit = { next, previous, update, id: this.prefix + ':' + ++this.serial };
-    this.pending.push(edit); this.publish(); this.report();
+  change(next: ProjectDocument, previous: ProjectDocument) {
+    if (this.recovery) throw new Error('Recupera o descarta la copia pendiente antes de continuar.');
+    if (!this.synchronized || !this.editable || this.socket?.readyState !== WebSocket.OPEN || !this.snapshot) throw new Error('Espera a que se restablezca la conexión.');
+    if (this.pending.length >= 128 || this.pending.some(edit => edit.command)) throw new Error('Espera a que terminen de guardarse los cambios.');
+    validateProjectChange(previous, next);
+    const command = structureCommand(previous, next, this.snapshot.structureRevisions, this.snapshot.structureRevision);
+    if (command) {
+      if (this.pending.length) throw new Error('Espera a que terminen de guardarse los cambios.');
+      this.pending.push({ id: crypto.randomUUID(), command, next, previous }); this.callbacks.project(next); this.sendPending(); return;
+    }
+    const before = projectScopes(previous), after = projectScopes(next);
+    for (const [scope, value] of Object.entries(after)) {
+      if (value === before[scope] || JSON.stringify(value) === JSON.stringify(before[scope])) continue;
+      const doc = this.docs.get(scope); if (!doc) throw new Error('Los cambios requieren sincronizar el diseño.');
+      const vector = Y.encodeStateVector(doc); writeProjectScope(doc, value, before[scope]);
+      const update = Y.encodeStateAsUpdate(doc, vector);
+      let queued: Edit | undefined;
+      for (let index = this.pending.length - 1; index >= 0; index--) if (!this.pending[index].sent && this.pending[index].scope === scope) { queued = this.pending[index]; break; }
+      if (queued) { queued.update = encode(Y.mergeUpdates([decode(queued.update!), update])); queued.next = next; }
+      else this.pending.push({ id: crypto.randomUUID(), scope, update: encode(update), next, previous });
+    }
+    this.callbacks.project(next); this.report();
     if (!this.flush) this.flush = setTimeout(() => { this.flush = undefined; this.sendPending(); }, 85);
   }
-  private replace(update: string) { this.doc.destroy(); this.doc = new Y.Doc(); Y.applyUpdate(this.doc, decode(update)); }
-  private replay() {
-    let dropped = false;
-    this.pending = this.pending.filter(edit => {
-      const candidate = new Y.Doc();
-      let accepted = false;
-      try {
-        Y.applyUpdate(candidate, Y.encodeStateAsUpdate(this.doc));
-        candidate.clientID = this.doc.clientID;
-        const before = Y.encodeStateVector(candidate);
-        writeYRoom(candidate, edit.next, edit.previous);
-        validateRoom(readYRoom(candidate));
-        edit.update = Y.encodeStateAsUpdate(candidate, before); edit.batch = undefined;
-        this.doc.destroy(); this.doc = candidate; accepted = true;
-        return true;
-      } catch { dropped = true; return false; }
-      finally { if (!accepted) candidate.destroy(); }
-    });
-    return dropped;
-  }
-  private sendPending() {
-    const unsent = this.pending.filter(edit => !edit.batch);
-    if (this.editable && this.synchronized && this.socket?.readyState === WebSocket.OPEN && unsent.length) {
-      const id = this.prefix + ':batch:' + ++this.serial;
-      unsent.forEach(edit => { edit.batch = id; });
-      this.socket.send(JSON.stringify({ type: 'update', id, update: encode(Y.mergeUpdates(unsent.map(edit => edit.update))) }));
+  private updateRevision(message: any) {
+    if (this.snapshot) {
+      this.snapshot.revision = Math.max(this.snapshot.revision, Number.isSafeInteger(message.revision) ? message.revision : 0);
+      this.snapshot.structureRevision = Math.max(this.snapshot.structureRevision, Number.isSafeInteger(message.structureRevision) ? message.structureRevision : 0);
+      this.callbacks.metadata(this.snapshot);
     }
-    this.report(); this.armTimeout();
+    this.report();
   }
-  private publish() { this.callbacks.room(validateRoom(readYRoom(this.doc))); }
+  private replace(states: Record<string, string>) {
+    for (const doc of this.docs.values()) doc.destroy(); this.docs.clear();
+    for (const [scope, update] of Object.entries(states)) { const doc = new Y.Doc(); Y.applyUpdate(doc, decode(update)); this.docs.set(scope, doc); }
+  }
+  private sendPending(resend = false) {
+    const edit = this.pending[0];
+    if (edit && !this.paused && this.editable && this.synchronized && this.socket?.readyState === WebSocket.OPEN && (!edit.sent || resend)) {
+      edit.sent = true; this.socket.send(JSON.stringify(edit.command ? { ...edit.command, id: edit.id } : { type: 'update', id: edit.id, scope: edit.scope, update: edit.update }));
+    }
+    this.report(); if (this.timeout) clearTimeout(this.timeout);
+    if (this.pending.length && !this.paused) this.timeout = setTimeout(() => { this.callbacks.error('El guardado tardó demasiado. Reconectando…'); this.socket?.close(); }, 15000);
+  }
+  private publish() { this.callbacks.project(validateProjectDocument(assembleProject(Object.fromEntries([...this.docs].map(([scope, doc]) => [scope, readProjectScope(doc)]))))); }
+  private preserveRecovery(reason: string) {
+    if (this.recovery || !this.pending.length) return;
+    this.recovery = validateProjectDocument(this.pending[this.pending.length - 1].next);
+    this.callbacks.recovery?.(this.recovery, reason);
+  }
   private report() { this.callbacks.state(this.synchronized, this.pending.length > 0); }
-  private armTimeout() {
-    if (this.timeout) clearTimeout(this.timeout);
-    if (this.pending.length) this.timeout = setTimeout(() => { this.callbacks.error('El guardado tardó demasiado. Reconectando…'); this.socket?.close(); }, 15000);
-  }
   get hasPending() { return this.pending.length > 0; }
-  retry() { if (this.reconnect) clearTimeout(this.reconnect); this.stopped = false; if (this.socket?.readyState === WebSocket.OPEN) this.sendPending(); else this.connect(); }
-  destroy() { this.stopped = true; if (this.reconnect) clearTimeout(this.reconnect); if (this.timeout) clearTimeout(this.timeout); if (this.flush) clearTimeout(this.flush); this.socket?.close(); this.doc.destroy(); }
+  get recoveryProject() { return this.recovery; }
+  clearRecovery() { this.recovery = null; this.report(); }
+  offline() {
+    this.paused = true; this.synchronized = false;
+    if (this.reconnect) clearTimeout(this.reconnect); this.reconnect = undefined;
+    if (this.timeout) clearTimeout(this.timeout); this.timeout = undefined;
+    if (this.flush) clearTimeout(this.flush); this.flush = undefined;
+    this.socket?.close(); this.report();
+  }
+  retry() { if (this.reconnect) clearTimeout(this.reconnect); this.stopped = false; this.paused = false; if (this.socket?.readyState === WebSocket.OPEN && this.synchronized) this.sendPending(true); else if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify({ type: 'sync' })); else this.connect(); }
+  destroy() { this.stopped = true; if (this.reconnect) clearTimeout(this.reconnect); if (this.timeout) clearTimeout(this.timeout); if (this.flush) clearTimeout(this.flush); this.socket?.close(); for (const doc of this.docs.values()) doc.destroy(); }
 }

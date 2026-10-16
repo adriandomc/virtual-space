@@ -19,7 +19,8 @@ export default defineConfig({
     reducedMotion: 'reduce',
   },
   projects: [
-    { name: 'chromium', use: { ...devices['Desktop Chrome'], channel: process.env.PLAYWRIGHT_CHANNEL, launchOptions: { args: ['--disable-webgpu', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] } } },
-    { name: 'webkit', use: { ...devices['Desktop Safari'] } },
+    { name: 'chromium', testIgnore: /gpu\.spec\.ts/, use: { ...devices['Desktop Chrome'], channel: process.env.PLAYWRIGHT_CHANNEL, launchOptions: { args: ['--disable-webgpu', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] } } },
+    { name: 'webkit', testIgnore: /gpu\.spec\.ts/, use: { ...devices['Desktop Safari'] } },
+    { name: 'gpu', testMatch: /gpu\.spec\.ts/, use: { ...devices['Desktop Chrome'], channel: 'chrome', launchOptions: { args: [] } } },
   ],
 });

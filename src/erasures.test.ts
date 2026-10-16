@@ -99,16 +99,16 @@ test('deleted room identities remain blocked for the backup window and are not m
 test('sketch deletion clears restored old versions but preserves a newer deliberate upload', () => {
   const sample = fixture();
   try {
-    recordErasure(sample.database, sample.ledger, { kind: 'sketch', id: sample.room, at: time, version: 2 }, () => {
-      sample.database.prepare('UPDATE rooms SET sketch = NULL, sketch_mime = NULL, sketch_version = 2 WHERE id = ?').run(sample.room);
+    recordErasure(sample.database, sample.ledger, { kind: 'sketch', id: sample.room, levelId: String(sample.database.prepare('SELECT level_id FROM project_sketches WHERE room_id=?').get(sample.room)!.level_id), at: time, version: 2 }, () => {
+      sample.database.prepare('UPDATE project_sketches SET data = NULL, mime = NULL, version = 2 WHERE room_id = ?').run(sample.room);
     });
-    sample.database.prepare('UPDATE rooms SET sketch = ?, sketch_mime = ?, sketch_version = 1 WHERE id = ?').run(Buffer.from([1, 2, 3]), 'image/png', sample.room);
+    sample.database.prepare('UPDATE project_sketches SET data = ?, mime = ?, version = 1 WHERE room_id = ?').run(Buffer.from([1, 2, 3]), 'image/png', sample.room);
     assert.equal(applyErasures(sample.database, sample.ledger, { now: time + 1 }), 1);
-    const erased = sample.database.prepare('SELECT sketch, sketch_mime, sketch_version FROM rooms WHERE id = ?').get(sample.room)!;
+    const erased = sample.database.prepare('SELECT data AS sketch, mime AS sketch_mime, version AS sketch_version FROM project_sketches WHERE room_id = ?').get(sample.room)!;
     assert.equal(erased.sketch, null); assert.equal(erased.sketch_mime, null); assert.equal(erased.sketch_version, 2);
-    sample.database.prepare('UPDATE rooms SET sketch = ?, sketch_mime = ?, sketch_version = 3 WHERE id = ?').run(Buffer.from([4, 5]), 'image/png', sample.room);
+    sample.database.prepare('UPDATE project_sketches SET data = ?, mime = ?, version = 3 WHERE room_id = ?').run(Buffer.from([4, 5]), 'image/png', sample.room);
     assert.equal(applyErasures(sample.database, sample.ledger, { now: time + 2 }), 0);
-    assert.deepEqual(sample.database.prepare('SELECT sketch FROM rooms WHERE id = ?').get(sample.room)!.sketch, new Uint8Array([4, 5]));
+    assert.deepEqual(sample.database.prepare('SELECT data AS sketch FROM project_sketches WHERE room_id = ?').get(sample.room)!.sketch, new Uint8Array([4, 5]));
   } finally { sample.dispose(); }
 });
 

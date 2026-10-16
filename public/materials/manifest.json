@@ -10,7 +10,23 @@
     "bytes": 734493,
     "md5": "b7e927d2bf2f8f103820ff3890c8407c",
     "sha256": "2a1c07687b6dbb214c4b9213739c6d92d425f1f0fc8ab3ac157f105d78240789",
-    "mime": "image/jpeg"
+    "mime": "image/jpeg",
+    "variants": {
+      "512": {
+        "path": "/materials/512/wood/color.jpg",
+        "bytes": 57401,
+        "sha256": "efa5f6d1bf9757cc4f774d7ec63588ee1f52df808580be132ffc5c96dc6afa32",
+        "width": 512,
+        "height": 512
+      },
+      "1024": {
+        "path": "/materials/wood/color.jpg",
+        "bytes": 734493,
+        "sha256": "2a1c07687b6dbb214c4b9213739c6d92d425f1f0fc8ab3ac157f105d78240789",
+        "width": 1024,
+        "height": 1024
+      }
+    }
   },
   {
     "path": "/materials/wood/normal.jpg",
@@ -23,7 +39,23 @@
     "bytes": 423303,
     "md5": "620f174d2c09b579c5d02d37b2106668",
     "sha256": "452247f0d0d1b7fc7f8324ff3b6ed60bcc6de1405f4284eeb8d9bce90d4939c2",
-    "mime": "image/jpeg"
+    "mime": "image/jpeg",
+    "variants": {
+      "512": {
+        "path": "/materials/512/wood/normal.jpg",
+        "bytes": 10531,
+        "sha256": "7c613bddf8e38c1d9e61510d3364585ce088729c26e74441f80a4f104aef5a71",
+        "width": 512,
+        "height": 512
+      },
+      "1024": {
+        "path": "/materials/wood/normal.jpg",
+        "bytes": 423303,
+        "sha256": "452247f0d0d1b7fc7f8324ff3b6ed60bcc6de1405f4284eeb8d9bce90d4939c2",
+        "width": 1024,
+        "height": 1024
+      }
+    }
   },
   {
     "path": "/materials/wood/arm.jpg",
@@ -36,7 +68,23 @@
     "bytes": 447855,
     "md5": "02090ec0443778b85ba3df555236b755",
     "sha256": "a84d9457fa35a76cf8a41da8bcef55387230c6b236819de878799585eda76059",
-    "mime": "image/jpeg"
+    "mime": "image/jpeg",
+    "variants": {
+      "512": {
+        "path": "/materials/512/wood/arm.jpg",
+        "bytes": 30521,
+        "sha256": "4e2d991126022a572bf5b3bdfc8bf194df023a174ea69195222c98efa1cf2381",
+        "width": 512,
+        "height": 512
+      },
+      "1024": {
+        "path": "/materials/wood/arm.jpg",
+        "bytes": 447855,
+        "sha256": "a84d9457fa35a76cf8a41da8bcef55387230c6b236819de878799585eda76059",
+        "width": 1024,
+        "height": 1024
+      }
+    }
   },
   {
     "path": "/materials/plaster/color.jpg",
@@ -49,7 +97,23 @@
     "bytes": 527219,
     "md5": "7b10c2686bcfd76d1f309a20fd06b57e",
     "sha256": "a1ebbe091bd1ae93d2abd5de8d69f9003a8d0ee6532bcf9a87c2492c97051f23",
-    "mime": "image/jpeg"
+    "mime": "image/jpeg",
+    "variants": {
+      "512": {
+        "path": "/materials/512/plaster/color.jpg",
+        "bytes": 62429,
+        "sha256": "5624cf8611b5b0d3ed859de47e8e5df2d22d8eed643c47c7f72afadd82db8689",
+        "width": 512,
+        "height": 512
+      },
+      "1024": {
+        "path": "/materials/plaster/color.jpg",
+        "bytes": 527219,
+        "sha256": "a1ebbe091bd1ae93d2abd5de8d69f9003a8d0ee6532bcf9a87c2492c97051f23",
+        "width": 1024,
+        "height": 1024
+      }
+    }
   },
   {
     "path": "/materials/plaster/normal.jpg",
@@ -62,7 +126,23 @@
     "bytes": 652310,
     "md5": "55fc03203ebf1dc703a380fde93ff502",
     "sha256": "eb572ca3630d5bfde72e2601b1f02412da23ca005cd19384dced8690be4cb783",
-    "mime": "image/jpeg"
+    "mime": "image/jpeg",
+    "variants": {
+      "512": {
+        "path": "/materials/512/plaster/normal.jpg",
+        "bytes": 46389,
+        "sha256": "c36cf9b06c3ea04fa14c1d0fbe32b037beff1d1a213d46a66e1b6bc1e6b1e98e",
+        "width": 512,
+        "height": 512
+      },
+      "1024": {
+        "path": "/materials/plaster/normal.jpg",
+        "bytes": 652310,
+        "sha256": "eb572ca3630d5bfde72e2601b1f02412da23ca005cd19384dced8690be4cb783",
+        "width": 1024,
+        "height": 1024
+      }
+    }
   },
   {
     "path": "/materials/plaster/arm.jpg",
@@ -75,7 +155,23 @@
     "bytes": 191017,
     "md5": "4a5a080e2421fac4fa602680bef4c8b1",
     "sha256": "2bb1115821715dfd8bbd1c5a294a5bb43b97d5c46b1aa8aa8f744bcaf5eeeb10",
-    "mime": "image/jpeg"
+    "mime": "image/jpeg",
+    "variants": {
+      "512": {
+        "path": "/materials/512/plaster/arm.jpg",
+        "bytes": 76363,
+        "sha256": "b57e386d5272c00e2f873d0fa1b96279305c1b5d7f6e0f667f6512093a9dd1de",
+        "width": 512,
+        "height": 512
+      },
+      "1024": {
+        "path": "/materials/plaster/arm.jpg",
+        "bytes": 191017,
+        "sha256": "2bb1115821715dfd8bbd1c5a294a5bb43b97d5c46b1aa8aa8f744bcaf5eeeb10",
+        "width": 1024,
+        "height": 1024
+      }
+    }
   },
   {
     "path": "/materials/stone/color.jpg",
@@ -88,7 +184,23 @@
     "bytes": 927975,
     "md5": "99b94da291a4f038fa6af93c3993cbec",
     "sha256": "5e06d0fb226f671470f59bf7798954b6965c9ed56dd45084dfd012e15737e444",
-    "mime": "image/jpeg"
+    "mime": "image/jpeg",
+    "variants": {
+      "512": {
+        "path": "/materials/512/stone/color.jpg",
+        "bytes": 75132,
+        "sha256": "b4ac826e621bd93b48b5833d95da4e12766f2c5a64019ac8a3af2b024eb2ada8",
+        "width": 512,
+        "height": 512
+      },
+      "1024": {
+        "path": "/materials/stone/color.jpg",
+        "bytes": 927975,
+        "sha256": "5e06d0fb226f671470f59bf7798954b6965c9ed56dd45084dfd012e15737e444",
+        "width": 1024,
+        "height": 1024
+      }
+    }
   },
   {
     "path": "/materials/stone/normal.jpg",
@@ -101,7 +213,23 @@
     "bytes": 883889,
     "md5": "d77c5c5de3f58adcb00f93caeb4c5a73",
     "sha256": "5a403c176361193b785198ab363d3dc3755773ca5b023f19e05874e50caea302",
-    "mime": "image/jpeg"
+    "mime": "image/jpeg",
+    "variants": {
+      "512": {
+        "path": "/materials/512/stone/normal.jpg",
+        "bytes": 48966,
+        "sha256": "2ce165f2da24213ba4ec535529681398dfb39fefe4efa80ae858d4588f177446",
+        "width": 512,
+        "height": 512
+      },
+      "1024": {
+        "path": "/materials/stone/normal.jpg",
+        "bytes": 883889,
+        "sha256": "5a403c176361193b785198ab363d3dc3755773ca5b023f19e05874e50caea302",
+        "width": 1024,
+        "height": 1024
+      }
+    }
   },
   {
     "path": "/materials/stone/arm.jpg",
@@ -114,7 +242,23 @@
     "bytes": 614195,
     "md5": "3df74374f5f190be74799f9bc32a8831",
     "sha256": "626b3f6bf3e7ac4793b569af87fc7e15cd375a59ff121654a0a4b67d9907878f",
-    "mime": "image/jpeg"
+    "mime": "image/jpeg",
+    "variants": {
+      "512": {
+        "path": "/materials/512/stone/arm.jpg",
+        "bytes": 33565,
+        "sha256": "779a248bf62871ea3f864a3f4d4f376ea89108ea187901e454a8969abef5b0a5",
+        "width": 512,
+        "height": 512
+      },
+      "1024": {
+        "path": "/materials/stone/arm.jpg",
+        "bytes": 614195,
+        "sha256": "626b3f6bf3e7ac4793b569af87fc7e15cd375a59ff121654a0a4b67d9907878f",
+        "width": 1024,
+        "height": 1024
+      }
+    }
   },
   {
     "path": "/materials/marble/color.jpg",
@@ -127,7 +271,23 @@
     "bytes": 305029,
     "md5": "04325ced5018eb8a2e598a4ef69cb176",
     "sha256": "b10dabea976d68baa976a0d4e8dac58789df8d26a1b50697f320106f1b00a229",
-    "mime": "image/jpeg"
+    "mime": "image/jpeg",
+    "variants": {
+      "512": {
+        "path": "/materials/512/marble/color.jpg",
+        "bytes": 38580,
+        "sha256": "ecaabf9f0b4ce0630dbd52ed80d58cd11627cd3881b33457242a206423499a06",
+        "width": 512,
+        "height": 512
+      },
+      "1024": {
+        "path": "/materials/marble/color.jpg",
+        "bytes": 305029,
+        "sha256": "b10dabea976d68baa976a0d4e8dac58789df8d26a1b50697f320106f1b00a229",
+        "width": 1024,
+        "height": 1024
+      }
+    }
   },
   {
     "path": "/materials/marble/normal.jpg",
@@ -140,7 +300,23 @@
     "bytes": 110230,
     "md5": "fa073d722cde733c1bd6cc6e8897c8e3",
     "sha256": "77c2a9b549a6a408659f8197be91945aeb0abc33e697f1dd2ce24ee8dc7c2bc0",
-    "mime": "image/jpeg"
+    "mime": "image/jpeg",
+    "variants": {
+      "512": {
+        "path": "/materials/512/marble/normal.jpg",
+        "bytes": 9816,
+        "sha256": "484ada67d756bb591ca6fef525afa69dd832a7673711dc3c738fcd0d7bd3e8af",
+        "width": 512,
+        "height": 512
+      },
+      "1024": {
+        "path": "/materials/marble/normal.jpg",
+        "bytes": 110230,
+        "sha256": "77c2a9b549a6a408659f8197be91945aeb0abc33e697f1dd2ce24ee8dc7c2bc0",
+        "width": 1024,
+        "height": 1024
+      }
+    }
   },
   {
     "path": "/materials/marble/arm.jpg",
@@ -153,7 +329,23 @@
     "bytes": 54740,
     "md5": "51017a4e4f320c3b58763c66727d89c1",
     "sha256": "84b1516c27b4393230e77e0aa525186b4a8a415169661a4385f02dcb10c14104",
-    "mime": "image/jpeg"
+    "mime": "image/jpeg",
+    "variants": {
+      "512": {
+        "path": "/materials/512/marble/arm.jpg",
+        "bytes": 25677,
+        "sha256": "8d2f55f2c4cc45ae9e77734451c127c1ef0479a97b271f4fc41a5454867fa72a",
+        "width": 512,
+        "height": 512
+      },
+      "1024": {
+        "path": "/materials/marble/arm.jpg",
+        "bytes": 54740,
+        "sha256": "84b1516c27b4393230e77e0aa525186b4a8a415169661a4385f02dcb10c14104",
+        "width": 1024,
+        "height": 1024
+      }
+    }
   },
   {
     "path": "/materials/fabric/color.jpg",
@@ -167,7 +359,23 @@
     "bytes": 581360,
     "md5": "d2f4493fdd48634b50d40f810ce9deb7",
     "sha256": "0f1b790e4087223275aaa6fdffdd46a556a26d2af72cd811acf72ba9c21ec1f6",
-    "mime": "image/jpeg"
+    "mime": "image/jpeg",
+    "variants": {
+      "512": {
+        "path": "/materials/512/fabric/color.jpg",
+        "bytes": 20826,
+        "sha256": "4384dac5ae3f2ea7ee8c4af5e505989d3003f22c8016c297b595852f12d85e4d",
+        "width": 512,
+        "height": 512
+      },
+      "1024": {
+        "path": "/materials/fabric/color.jpg",
+        "bytes": 581360,
+        "sha256": "0f1b790e4087223275aaa6fdffdd46a556a26d2af72cd811acf72ba9c21ec1f6",
+        "width": 1024,
+        "height": 1025
+      }
+    }
   },
   {
     "path": "/materials/fabric/normal.jpg",
@@ -181,7 +389,23 @@
     "bytes": 678670,
     "md5": "2dcc9dda3b726477f607c808e52f1833",
     "sha256": "9b79709806511b62567fb007ff61009c3b194bb0d0821fbaee3faf1b2bff0318",
-    "mime": "image/jpeg"
+    "mime": "image/jpeg",
+    "variants": {
+      "512": {
+        "path": "/materials/512/fabric/normal.jpg",
+        "bytes": 14855,
+        "sha256": "e907efe56cf7f3d13bfa71583859aa882db484ae803074183b841147e9daeafe",
+        "width": 512,
+        "height": 512
+      },
+      "1024": {
+        "path": "/materials/fabric/normal.jpg",
+        "bytes": 678670,
+        "sha256": "9b79709806511b62567fb007ff61009c3b194bb0d0821fbaee3faf1b2bff0318",
+        "width": 1024,
+        "height": 1025
+      }
+    }
   },
   {
     "path": "/materials/fabric/arm.jpg",
@@ -195,6 +419,22 @@
     "bytes": 976674,
     "md5": "f568748c335892e00b767565a3d5b6ae",
     "sha256": "c3d38c2d862df80f0133f895bb7142978f097d69b4507374d5a8eafd6e088d71",
-    "mime": "image/jpeg"
+    "mime": "image/jpeg",
+    "variants": {
+      "512": {
+        "path": "/materials/512/fabric/arm.jpg",
+        "bytes": 54295,
+        "sha256": "40275b7641dbef00abfcdc74d9e7a1b557cef13b36dffcacba017a5e5a3d246a",
+        "width": 512,
+        "height": 512
+      },
+      "1024": {
+        "path": "/materials/fabric/arm.jpg",
+        "bytes": 976674,
+        "sha256": "c3d38c2d862df80f0133f895bb7142978f097d69b4507374d5a8eafd6e088d71",
+        "width": 1024,
+        "height": 1025
+      }
+    }
   }
 ]

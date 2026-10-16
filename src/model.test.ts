@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { addFurniture, addLight, addOpening, BED_SIZES, bounds, createDefaultRoom as createEmptyRoom, fitFurniture, fitRoom, furnitureContains, furnitureCorners, furnitureInside, furniturePlacementIssues, furnitureWalkable, interiorPoint, interiorWalkPoint, invalidFurnitureIds, itemWorldPosition, moveSceneItem, pointInPolygon, polygonArea, resizeRoom, snapPlanPoint, toggleSceneInteraction, validateRoom, walkablePoint } from './model';
+import { createDefaultProject, projectToRoom } from './projectDocument';
 import type { BedSize, FurnitureItem, Room } from './types';
 
 function createDefaultRoom(): Room {
@@ -13,7 +14,7 @@ function createDefaultRoom(): Room {
 
 test('new room creators contain only explicitly persisted elements', () => {
   const room = validateRoom(createEmptyRoom());
-  assert.equal(room.version, 2); assert.deepEqual(room.furniture, []); assert.deepEqual(room.openings, []);
+  assert.equal(room.version, 3); assert.deepEqual(room.furniture, []); assert.deepEqual(room.openings, []);
   assert.equal(room.lights.length, 1); assert.equal(room.lights[0].enabled, true);
   const furnished = addFurniture(room, 'nightstand');
   assert.deepEqual(validateRoom({ ...furnished, furniture: [] }).furniture, []);
@@ -30,7 +31,7 @@ test('el cuarto inicial es válido, tiene 20 m² y aberturas reales', () => {
 
 test('requires the current complete contract and rejects prototypes', () => {
   const room = createDefaultRoom();
-  for (const version of [0, 1, 3, '2', undefined]) assert.throws(() => validateRoom({ ...room, version }));
+  for (const version of [0, 1, 2, '3', undefined]) assert.throws(() => validateRoom({ ...room, version }));
   assert.throws(() => validateRoom({ ...room, showFurniture: false }));
   for (const key of Object.keys(room).filter(key => key !== 'setupStep')) {
     const incomplete: Record<string, unknown> = { ...room }; delete incomplete[key];
@@ -566,4 +567,14 @@ test('las advertencias detectan huellas que cruzan entrantes con esquinas interi
   assert.equal(furnitureCorners(item).every(p => pointInPolygon(p, vertices)), true);
   assert.deepEqual(furniturePlacementIssues(room, item), { outside: true, overlap: false });
   assert.deepEqual(invalidFurnitureIds(room), new Set([item.id]));
+});
+
+
+test('resizing canonical wall projections scales opening offsets with their actual segments', () => {
+  const project = createDefaultProject();
+  const room = addOpening(projectToRoom(project), 'door', 0, { width: .9, height: 2.1 });
+  const before = room.openings[0].offset;
+  const resized = resizeRoom(room, 10, 4);
+  assert.equal(resized.openings[0].offset, before * 2);
+  assert.equal(resized.wallSegments![0].end.x - resized.wallSegments![0].start.x, 10);
 });

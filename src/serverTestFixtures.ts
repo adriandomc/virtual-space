@@ -1,7 +1,8 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { initializeDatabase } from './databaseSchema';
 import { TERMS_VERSION } from './legalPolicy';
-import { createDefaultRoom } from './model';
+import { createDefaultProject, type ProjectDocument } from './projectDocument';
+import { writeProject, projectMetadata } from './projectRepository';
 import { inactivityDeadline } from './retention';
 
 export function initializeTestDatabase(database: DatabaseSync) {
@@ -15,6 +16,11 @@ export function insertTestSession(database: DatabaseSync, token: string, userId:
   database.prepare('INSERT INTO sessions (token_hash, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)').run(token, userId, expiresAt, createdAt);
 }
 export function insertTestRoom(database: DatabaseSync, id: string, ownerId: string, overrides: Record<string, unknown> = {}) {
-  const values = { room: JSON.stringify(createDefaultRoom()), revision: 1, shared: 0, updated_at: Date.now(), sketch: null, sketch_mime: null, sketch_version: 0, sketch_mutation_id: null, y_state: null, ...overrides };
+  const { sketch = null, sketch_mime = null, sketch_version = 0, sketch_mutation_id = null, room, ...columns } = overrides;
+  const project: ProjectDocument = room ? { ...JSON.parse(String(room)), id } : createDefaultProject(undefined, undefined, id);
+  const values = { room: JSON.stringify(projectMetadata(project)), revision: 1, shared: 0, updated_at: Date.now(), y_state: null, ...columns };
   database.prepare('INSERT INTO rooms (id, owner_id, ' + Object.keys(values).join(', ') + ') VALUES (' + Array(Object.keys(values).length + 2).fill('?').join(', ') + ')').run(id, ownerId, ...Object.values(values) as (string | number | null | Uint8Array)[]);
+  writeProject(database, project);
+  database.prepare('UPDATE project_sketches SET data=?,mime=?,version=?,mutation_id=? WHERE room_id=? AND level_id=?').run(sketch as Uint8Array | null, sketch_mime as string | null, sketch_version as number, sketch_mutation_id as string | null, id, project.activeLevelId);
+  return project;
 }

@@ -2,13 +2,15 @@ import 'fake-indexeddb/auto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { IDBObjectStore } from 'fake-indexeddb';
-import { createBlankRoom } from './onboardingModel';
+import { createBlankProject } from './onboardingModel';
 import { offlineForced, setOfflineMode } from './offlineMode';
 import { accountRequest } from './accountApi';
-import { clearOffline, listOffline, readOffline, setOfflineAccess, writeOffline } from './offlineStorage';
+import { atomicOffline, clearOffline, listOffline, readOffline, setOfflineAccess, writeOffline } from './offlineStorage';
 import { readOfflineProject, type OfflineProjectRecord } from './offlineProject';
 import { assertRoomReadyToShare, createDesignLocal, clearOfflineAccount, deleteDesign, exportOfflineProject, importOfflineProject, listDesigns, pendingOfflineCount, persistOfflineProject, roomHasOfflineChanges, syncOfflineAccount } from './offlineService';
 import { listOfflineModels, uploadOfflineModel, type OfflineAssetRecord } from './offlineAssets';
+import { addLevel } from './projectOperations';
+import { patchProject, snapshotFixture } from './projectTestFixture';
 import type { ProjectSnapshot } from './liveProject';
 
 const user = { id: '031f3902-316e-4233-931b-6e3776ba8ae6', username: 'pruebas', verifiedAt: 1700000000000 };
@@ -34,10 +36,10 @@ test('forced mode creates, reloads, lists, imports and exports without any API r
   globalThis.fetch = async () => { requests++; throw new Error('No request allowed'); };
   try {
     const { id } = await createDesignLocal();
-    const room = { ...createBlankRoom(), name: 'Mi diseño local' };
-    await importOfflineProject(id, { room, assets: [], sketch: null });
+    const room = { ...createBlankProject(), name: 'Mi diseño local' };
+    await importOfflineProject(id, { project: room, assets: [], sketches: [] });
     assert.equal((await readOfflineProject(id))?.draft?.name, room.name);
-    assert.equal((await exportOfflineProject(id)).room.name, room.name);
+    assert.equal((await exportOfflineProject(id)).project.name, room.name);
     assert.equal((await listDesigns())[0].id, id);
     await assert.rejects(accountRequest('/api/auth/session'));
     await syncOfflineAccount();
@@ -48,13 +50,13 @@ test('forced mode creates, reloads, lists, imports and exports without any API r
 test('atomic import rolls back assets, room and sketch when its final write fails', async () => {
   await reset(); await force(); const { id } = await createDesignLocal();
   const assetId = crypto.randomUUID(), blob = glb();
-  const room = { ...createBlankRoom(), name: 'Imported', furniture: [{ id: 'piece', type: 'custom' as const, assetId, name: 'Tabla', material: null, color: null, width: 1, height: 1, depth: 1, x: 0, z: 0, rotation: 0 }] };
+  const room = patchProject(createBlankProject(), { name: 'Imported', furniture: [{ id: 'piece', type: 'custom' as const, assetId, name: 'Tabla', material: null, color: null, width: 1, height: 1, depth: 1, x: 0, z: 0, rotation: 0 }] });
   const put = IDBObjectStore.prototype.put;
   IDBObjectStore.prototype.put = function (...args: Parameters<typeof put>) {
     if (this.name === 'projects') throw new DOMException('Full', 'QuotaExceededError');
     return put.apply(this, args);
   };
-  try { await assert.rejects(importOfflineProject(id, { room, assets: [{ id: assetId, name: 'Tabla', blob }], sketch: null }), /espacio/); }
+  try { await assert.rejects(importOfflineProject(id, { project: room, assets: [{ id: assetId, name: 'Tabla', blob }], sketches: [] }), /espacio/); }
   finally { IDBObjectStore.prototype.put = put; }
   assert.equal((await listOffline('assets')).length, 0);
   assert.notEqual((await readOfflineProject(id))?.draft?.name, 'Imported');
@@ -64,24 +66,23 @@ test('atomic import rolls back assets, room and sketch when its final write fail
 
 test('invalid GLB or sketch never partially changes an existing design', async () => {
   await reset(); const { id } = await createDesignLocal();
-  const room = { ...createBlankRoom(), name: 'Broken' };
-  await assert.rejects(importOfflineProject(id, { room, assets: [], sketch: new Blob(['not PNG'], { type: 'image/png' }) }));
+  const room = { ...createBlankProject(), name: 'Broken' };
+  await assert.rejects(importOfflineProject(id, { project: room, assets: [], sketches: [{ levelId: room.activeLevelId, blob: new Blob(['not PNG'], { type: 'image/png' }) }] }));
   assert.notEqual((await readOfflineProject(id))?.draft?.name, room.name);
 });
 
 test('sketch blobs are versioned separately, replaced and removed without reviving stale bytes', async () => {
   await reset(); const { id } = await createDesignLocal();
   const record = (await readOfflineProject(id))!;
-  record.localOnly = false; record.snapshot.revision = 1; record.snapshot.hasSketch = true; record.snapshot.sketchVersion = 1;
-  record.sketchBlob = new Blob(['old']); record.sketchBlobVersion = 1;
+  const levelId = record.snapshot.project.activeLevelId;
+  record.localOnly = false; record.snapshot.revision = 1; record.snapshot.sketches[levelId] = { hasSketch: true, version: 1, mutationId: null };
+  record.sketchBlobs = { [levelId]: { blob: new Blob(['old']), version: 1 } };
   await persistOfflineProject(record);
-  assert.equal((await readOffline<OfflineProjectRecord>('projects', user.id + ':' + id))?.sketchBlob, undefined);
-  assert.equal(await (await readOfflineProject(id))!.sketchBlob?.text(), 'old');
-  record.snapshot.sketchVersion = 2; record.sketchBlob = undefined; record.sketchBlobVersion = undefined;
-  await persistOfflineProject(record);
-  assert.equal((await readOfflineProject(id))?.sketchBlob, undefined);
-  record.snapshot.hasSketch = false; await persistOfflineProject(record);
-  assert.deepEqual(await listOffline('blobs'), []);
+  assert.equal((await readOffline<OfflineProjectRecord>('projects', user.id + ':' + id))?.sketchBlobs, undefined);
+  assert.equal(await (await readOfflineProject(id))!.sketchBlobs?.[levelId].blob.text(), 'old');
+  record.snapshot.sketches[levelId].version = 2; record.sketchBlobs = {};
+  await persistOfflineProject(record); assert.equal((await readOfflineProject(id))?.sketchBlobs?.[levelId], undefined);
+  record.snapshot.sketches[levelId].hasSketch = false; await persistOfflineProject(record); assert.deepEqual(await listOffline('blobs'), []);
 });
 
 test('logout guard preserves pending work and account-specific cleanup preserves another account', async () => {
@@ -104,10 +105,10 @@ test('all closed new projects synchronize, including a GLB not inserted in any r
     const path = String(input), method = options?.method ?? 'GET'; requests.push(method + ' ' + path);
     if (path === '/api/auth/session') return json({ user });
     if (path === '/api/rooms' && method === 'POST') {
-      const { id, room } = JSON.parse(String(options?.body));
+      const { id, project } = JSON.parse(String(options?.body));
       assert.equal(new Headers(options?.headers).get('X-Account-Id'), user.id);
       assert.equal(new Headers(options?.headers).get('X-Offline-Write'), '1');
-      const snapshot: ProjectSnapshot = { id, room, accountId: user.id, offlineAllowed: true, revision: 1, shared: false, role: 'owner', canEdit: true, canManage: true, hasSketch: false, sketchVersion: 0 };
+      const snapshot: ProjectSnapshot = snapshotFixture(id, user.id, project);
       remote.set(id, snapshot); return json(snapshot, 201);
     }
     if (path.startsWith('/api/models?room=') && method === 'POST') {
@@ -115,7 +116,7 @@ test('all closed new projects synchronize, including a GLB not inserted in any r
       return json({ model: asset }, 201);
     }
     const id = path.split('/')[3], snapshot = remote.get(id)!;
-    if (method === 'PUT') { const body = JSON.parse(String(options?.body)); assert.equal(body.revision, snapshot.revision); snapshot.room = body.room; snapshot.revision++; return json({ room: snapshot.room, revision: snapshot.revision }); }
+    if (method === 'PUT') { const body = JSON.parse(String(options?.body)); assert.equal(body.revision, snapshot.revision); snapshot.project = body.project; snapshot.revision++; return json(snapshot); }
     return json(snapshot);
   };
   try {
@@ -129,12 +130,12 @@ test('all closed new projects synchronize, including a GLB not inserted in any r
 
 test('deferred deletes include both revisions and stay hidden until their confirmation', async () => {
   await reset(); const { id } = await createDesignLocal();
-  const record = (await readOfflineProject(id))!; record.localOnly = false; record.draft = null; record.snapshot.revision = 4; record.snapshot.sketchVersion = 2; await persistOfflineProject(record);
+  const record = (await readOfflineProject(id))!; record.localOnly = false; record.draft = null; record.snapshot.revision = 4; record.snapshot.sketches[record.snapshot.project.activeLevelId].version = 2; await persistOfflineProject(record);
   await force(); await deleteDesign(id); assert.deepEqual(await listDesigns(), []);
   const fetch = globalThis.fetch; let deleted = false;
   globalThis.fetch = async (input, options) => {
     if (String(input) === '/api/auth/session') return json({ user });
-    assert.equal(options?.method, 'DELETE'); assert.deepEqual(JSON.parse(String(options.body)), { revision: 4, sketchVersion: 2 }); deleted = true; return json({ deleted: true });
+    assert.equal(options?.method, 'DELETE'); assert.deepEqual(JSON.parse(String(options.body)), { revision: 4, sketches: record.snapshot.sketches }); deleted = true; return json({ deleted: true });
   };
   try { await setOfflineMode(false); await syncOfflineAccount(); assert.ok(deleted); assert.equal(await readOfflineProject(id), null); }
   finally { globalThis.fetch = fetch; }
@@ -146,9 +147,9 @@ test('clean local exports remain available after expired sessions and transport 
   const fetch = globalThis.fetch;
   try {
     globalThis.fetch = async () => json({ error: 'Expired' }, 401);
-    assert.equal((await exportOfflineProject(id)).room.version, 2);
+    assert.equal((await exportOfflineProject(id)).project.version, 3);
     globalThis.fetch = async () => { throw new TypeError('Offline'); };
-    assert.equal((await exportOfflineProject(id)).room.version, 2);
+    assert.equal((await exportOfflineProject(id)).project.version, 3);
     globalThis.fetch = async () => json({ error: 'No access' }, 403);
     await assert.rejects(exportOfflineProject(id), /No access/);
   } finally { globalThis.fetch = fetch; }
@@ -195,7 +196,7 @@ test('an uninserted pending GLB blocks collaboration until it is synchronized', 
   await reset(); await force(); const { id } = await createDesignLocal();
   const record = (await readOfflineProject(id))!; record.localOnly = false; record.draft = null; record.snapshot.revision = 1; await persistOfflineProject(record);
   const model = await uploadOfflineModel(new File([glb()], 'Sin insertar.glb'), id);
-  assert.equal(record.snapshot.room.furniture.length, 0);
+  assert.equal(record.snapshot.project.levels[0].furniture.length, 0);
   await setOfflineMode(false);
   assert.equal(await roomHasOfflineChanges(id), true); await assert.rejects(assertRoomReadyToShare(id), /modelos/);
   const fetch = globalThis.fetch; globalThis.fetch = async (input, options) => {
@@ -205,4 +206,66 @@ test('an uninserted pending GLB blocks collaboration until it is synchronized', 
   };
   try { await syncOfflineAccount(); assert.equal(await roomHasOfflineChanges(id), false); await assert.doesNotReject(assertRoomReadyToShare(id)); }
   finally { globalThis.fetch = fetch; }
+});
+
+
+test('twelve-level edits write only their changed level and never fetch sketch/model bytes while saving metadata', async () => {
+  await reset(); await force(); let project = createBlankProject();
+  while (project.levels.length < 12) project = addLevel(project, { copy: true });
+  const { id } = await createDesignLocal(project), record = (await readOfflineProject(id))!;
+  record.localOnly = false; record.snapshot.revision = 1;
+  record.sketchBlobs = Object.fromEntries(project.levels.map(level => [level.id, { blob: new Blob(['image']), version: 1 }]));
+  for (const level of project.levels) record.snapshot.sketches[level.id] = { hasSketch: true, version: 1, mutationId: null };
+  await persistOfflineProject(record);
+  const originalGet = IDBObjectStore.prototype.get, originalAll = IDBObjectStore.prototype.getAll, originalPut = IDBObjectStore.prototype.put;
+  let levelWrites = 0;
+  IDBObjectStore.prototype.get = function (...args: Parameters<typeof originalGet>) { if (this.name === 'blobs') throw new Error('Binary read during metadata save'); return originalGet.apply(this, args); };
+  IDBObjectStore.prototype.getAll = function (...args: Parameters<typeof originalAll>) { if (this.name === 'blobs') throw new Error('Binary scan during metadata save'); return originalAll.apply(this, args); };
+  IDBObjectStore.prototype.put = function (...args: Parameters<typeof originalPut>) { if (this.name === 'levels') levelWrites++; return originalPut.apply(this, args); };
+  try {
+    record.draft = { ...record.draft!, name: 'Updated title' }; await persistOfflineProject(record); assert.equal(levelWrites, 0);
+    record.draft = { ...record.draft, levels: record.draft.levels.map((level, index) => index === 5 ? { ...level, name: 'Changed one level' } : level) };
+    await persistOfflineProject(record); assert.equal(levelWrites, 1);
+  } finally { IDBObjectStore.prototype.get = originalGet; IDBObjectStore.prototype.getAll = originalAll; IDBObjectStore.prototype.put = originalPut; await setOfflineMode(false); }
+  const restored = (await readOfflineProject(id))!;
+  assert.equal(restored.draft!.levels.length, 12); assert.equal(Object.keys(restored.sketchBlobs ?? {}).length, 12); assert.equal(restored.draft!.levels[5].name, 'Changed one level');
+});
+
+test('collaboration recoveries count as pending and cannot be lost through logout or sharing', async () => {
+  await reset(); const id = crypto.randomUUID(), project = { ...createBlankProject(), id };
+  await atomicOffline(user.id, [{ store: 'meta', key: 'recovery:' + user.id + ':' + id, value: { accountId: user.id, roomId: id, project } }]);
+  assert.equal(await pendingOfflineCount(), 1); assert.equal(await roomHasOfflineChanges(id), true);
+  await assert.rejects(clearOfflineAccount(user.id), /pendientes/);
+  await assert.rejects(assertRoomReadyToShare(id), /sincronicen/);
+  await writeOffline('meta', 'another-account-recovery', { accountId: 'other-account', roomId: 'other-room', project });
+  await clearOfflineAccount(user.id, { discard: true });
+  assert.equal(await readOffline('meta', 'recovery:' + user.id + ':' + id), undefined);
+  assert.ok(await readOffline('meta', 'another-account-recovery'));
+});
+
+test('a stale deferred deletion is cancelled visibly rather than hiding the design forever', async () => {
+  await reset(); await force(); const { id } = await createDesignLocal(), record = (await readOfflineProject(id))!;
+  record.localOnly = false; record.draft = null; record.snapshot.revision = 1; await persistOfflineProject(record); await deleteDesign(id);
+  const fetch = globalThis.fetch; globalThis.fetch = async input => {
+    if (String(input) === '/api/auth/session') return json({ user });
+    if (String(input) === '/api/rooms') return json({ rooms: [{ id, name: record.snapshot.project.name, updatedAt: new Date().toISOString(), role: 'owner', offlineAllowed: true }] });
+    return json({ error: 'Changed revision' }, 409);
+  };
+  try { await setOfflineMode(false); await assert.rejects(syncOfflineAccount(), /canceló/); const restored = (await readOfflineProject(id))!; assert.equal(restored.deleted, false); assert.match(restored.error!, /canceló/); assert.equal((await listDesigns())[0].id, id); }
+  finally { globalThis.fetch = fetch; }
+});
+
+test('logout refuses while another live editor holds this account, without blocking other accounts', async () => {
+  await reset();
+  const descriptor = Object.getOwnPropertyDescriptor(navigator, 'locks'); let name = '3d-space-live:' + user.id + ':live-project', pending = false;
+  Object.defineProperty(navigator, 'locks', { configurable: true, value: { query: async () => ({ held: pending ? [] : [{ name, mode: 'shared' }], pending: pending ? [{ name, mode: 'shared' }] : [] }) } });
+  try {
+    assert.equal(await pendingOfflineCount(), 0);
+    await assert.rejects(clearOfflineAccount(user.id), /otras pestañas/);
+    pending = true; await assert.rejects(clearOfflineAccount(user.id), /otras pestañas/);
+    assert.equal((await readOffline<{ id: string }>('meta', 'identity'))?.id, user.id);
+    name = '3d-space-live:other-account:live-project';
+    await clearOfflineAccount(user.id);
+    assert.equal(await readOffline('meta', 'identity'), undefined);
+  } finally { if (descriptor) Object.defineProperty(navigator, 'locks', descriptor); else Reflect.deleteProperty(navigator, 'locks'); }
 });

@@ -45,7 +45,7 @@ test('online backup captures WAL, hashes, sessions, complete schema, policies, m
     const expected = contents(sample.database);
     const result = await runBackup(sample.database, sample.directory, { now: time });
     assert.equal(result.created, true); assert.match(result.path, /accounts-1800000000000-[a-f0-9]{32}\.sqlite$/);
-    assert.equal(result.verified.tables, 6); assert.equal(result.verified.rows, 6); assert.equal(result.verified.blobBytes, 14);
+    assert.equal(result.verified.tables, 9); assert.equal(result.verified.rows, 8); assert.equal(result.verified.blobBytes, 14);
     assert.deepEqual(verifyBackup(result.path), result.verified);
     assert.deepEqual(readdirSync(join(sample.directory, 'backups')), [result.path.split(/[\\/]/).at(-1)]);
     if (process.platform !== 'win32') {
@@ -150,7 +150,7 @@ test('restore proves the entire snapshot then respects subsequent erasures and i
   try {
     const snapshot = await runBackup(sample.database, sample.directory, { now: time });
     for (const kind of ['user', 'room', 'sketch'] as const) {
-      writeFileSync(sample.erasureFile, JSON.stringify({ version: 1, entries: [{ kind, id: kind === 'user' ? ownerId : designId, at: time + 1, ...(kind === 'sketch' ? { version: 5 } : {}) }] }));
+      writeFileSync(sample.erasureFile, JSON.stringify({ version: 1, entries: [{ kind, id: kind === 'user' ? ownerId : designId, at: time + 1, ...(kind === 'sketch' ? { version: 5, levelId: String(sample.database.prepare('SELECT level_id FROM project_sketches WHERE room_id=?').get(designId)!.level_id) } : {}) }] }));
       const result = restoreBackup(snapshot.path, join(sample.directory, 'recover-' + kind), { now: time + 2, erasureFile: sample.erasureFile });
       assert.equal(result.recovered.digest, snapshot.verified.digest);
       assert.notEqual(result.verified.digest, snapshot.verified.digest);
@@ -159,7 +159,7 @@ test('restore proves the entire snapshot then respects subsequent erasures and i
         if (kind === 'user') {
           for (const table of ['users', 'sessions', 'rooms']) assert.equal(database.prepare('SELECT COUNT(*) AS count FROM ' + table).get()!.count, 0);
         } else if (kind === 'room') assert.equal(database.prepare('SELECT COUNT(*) AS count FROM rooms').get()!.count, 0);
-        else { const room = database.prepare('SELECT sketch, sketch_mime, sketch_version FROM rooms').get()!; assert.equal(room.sketch, null); assert.equal(room.sketch_mime, null); assert.equal(room.sketch_version, 5); }
+        else { const room = database.prepare('SELECT data AS sketch, mime AS sketch_mime, version AS sketch_version FROM project_sketches').get()!; assert.equal(room.sketch, null); assert.equal(room.sketch_mime, null); assert.equal(room.sketch_version, 5); }
       } finally { database.close(); }
       assert.deepEqual(JSON.parse(readFileSync(join(sample.directory, 'recover-' + kind, 'erasures.json'), 'utf8')), JSON.parse(readFileSync(sample.erasureFile, 'utf8')));
     }

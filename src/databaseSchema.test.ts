@@ -13,8 +13,8 @@ test('the only schema is atomically initialized with every current table, index,
     initializeDatabase(database); assertCurrentDatabase(database);
     assert.equal(database.prepare('PRAGMA user_version').get()!.user_version, DATABASE_VERSION);
     assert.equal(database.prepare('PRAGMA application_id').get()!.application_id, DATABASE_APPLICATION_ID);
-    assert.deepEqual(database.prepare("SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name").all().map(row => row.name), ['model_assets', 'request_limits', 'room_members', 'rooms', 'sessions', 'users']);
-    assert.ok(database.prepare('PRAGMA table_info(rooms)').all().some(row => row.name === 'sketch_mutation_id'));
+    assert.deepEqual(database.prepare("SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name").all().map(row => row.name), ['model_assets', 'mutation_receipts', 'project_levels', 'project_sketches', 'request_limits', 'room_members', 'rooms', 'sessions', 'users']);
+    assert.ok(database.prepare('PRAGMA table_info(project_sketches)').all().some(row => row.name === 'mutation_id'));
     assert.ok(database.prepare('PRAGMA table_info(rooms)').all().some(row => row.name === 'y_state'));
     assert.equal(database.prepare('PRAGMA table_info(users)').all().filter(row => String(row.name).startsWith('terms_')).every(row => row.notnull === 1), true);
     const before = database.prepare('SELECT * FROM sqlite_schema').all();

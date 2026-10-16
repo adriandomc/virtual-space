@@ -9,8 +9,9 @@ import { DatabaseSync } from 'node:sqlite';
 import { WebSocket } from 'ws';
 import * as Y from 'yjs';
 import { createServer } from './server';
-import { createDefaultRoom } from './model';
-import { writeYRoom, readYRoom } from './collaborativeRoom';
+import { createDefaultProject, type ProjectLevel } from './projectDocument';
+import { patchProject } from './projectTestFixture';
+import { writeProjectScope, readProjectScope } from './collaborativeProject';
 import { runBackup, restoreBackup } from './backups';
 
 function modelData() {
@@ -45,9 +46,9 @@ test('GLB upload HTTP permissions, collaboration updates, erasure and restart re
       const response = await request('/api/auth/register', undefined, 'POST', { username, password: 'Testing-pass-123', confirmPassword: 'Testing-pass-123', termsVersion: TERMS_VERSION });
       assert.equal(response.status, 201); cookies[username] = response.headers.get('set-cookie')!.split(';')[0]; userIds[username] = (await response.json()).user.id;
     }
-    const roomId = randomUUID(), secondRoom = randomUUID(), room = createDefaultRoom(), path = '/api/rooms/' + roomId;
-    assert.equal((await request('/api/rooms', 'owner', 'POST', { id: roomId, room })).status, 201);
-    assert.equal((await request('/api/rooms', 'owner', 'POST', { id: secondRoom, room })).status, 201);
+    const roomId = randomUUID(), secondRoom = randomUUID(), room = createDefaultProject(undefined, undefined, roomId), path = '/api/rooms/' + roomId;
+    assert.equal((await request('/api/rooms', 'owner', 'POST', { id: roomId, project: room })).status, 201);
+    assert.equal((await request('/api/rooms', 'owner', 'POST', { id: secondRoom, project: { ...room, id: secondRoom } })).status, 201);
     for (const username of ['editor', 'reader']) {
       const invite = await request(path + '/members', 'owner', 'POST', { username, role: username }); assert.equal(invite.status, 201);
       const notification = (await (await request('/api/notifications', username)).json()).notifications[0];
@@ -68,9 +69,9 @@ test('GLB upload HTTP permissions, collaboration updates, erasure and restart re
     assert.equal((await request('/api/models/' + asset.id, 'editor', 'DELETE')).status, 404);
     await request(path + '/share', 'owner', 'POST', { enabled: true });
     assert.equal((await request('/api/models/' + asset.id + '?room=' + roomId)).status, 404, 'unplaced uploads are not exposed by public links');
-    const custom = { id: 'model-1', type: 'custom', material: null, color: null, assetId: asset.id, name: asset.name, width: 1, depth: 1, height: 1, x: 0, z: 0, rotation: 0 };
-    assert.equal((await request('/api/rooms/' + secondRoom, 'owner', 'PUT', { revision: 1, room: { ...room, furniture: [custom] } })).status, 400);
-    assert.equal((await request(path, 'editor', 'PUT', { revision: 1, room: { ...room, furniture: [custom] } })).status, 200);
+    const custom = { id: 'model-1', type: 'custom' as const, material: null, color: null, assetId: asset.id, name: asset.name, width: 1, depth: 1, height: 1, x: 0, z: 0, rotation: 0 };
+    assert.equal((await request('/api/rooms/' + secondRoom, 'owner', 'PUT', { revision: 1, project: { ...patchProject(room, { furniture: [custom] }), id: secondRoom }, operationId: randomUUID() })).status, 400);
+    assert.equal((await request(path, 'editor', 'PUT', { revision: 1, project: patchProject(room, { furniture: [custom] }), operationId: randomUUID() })).status, 200);
     const bytes = await request('/api/models/' + asset.id + '?room=' + roomId); assert.equal(bytes.status, 200); assert.equal(bytes.headers.get('cache-control'), 'no-store'); assert.deepEqual(Buffer.from(await bytes.arrayBuffer()), modelData());
     assert.equal((await request('/api/models/' + asset.id + '?room=' + roomId, 'reader')).status, 200);
     assert.equal((await request('/api/models/' + asset.id, 'owner', 'DELETE')).status, 409);
@@ -88,13 +89,13 @@ test('GLB upload HTTP permissions, collaboration updates, erasure and restart re
     socket = new WebSocket(base.replace('http:', 'ws:') + path + '/live', { headers: { Origin: base, Cookie: cookies.editor } });
     socket.on('error', () => {});
     const sync = await nextMessage(socket, 'sync'), doc = new Y.Doc();
-    Y.applyUpdate(doc, Buffer.from(sync.update, 'base64'));
-    const previous = readYRoom(doc), vector = Y.encodeStateVector(doc);
-    writeYRoom(doc, { ...previous, furniture: [{ ...previous.furniture[0], assetId: wrongAsset.id }] }, previous);
+    Y.applyUpdate(doc, Buffer.from(sync.states[room.activeLevelId], 'base64'));
+    const previous = readProjectScope(doc) as ProjectLevel, vector = Y.encodeStateVector(doc);
+    writeProjectScope(doc, { ...previous, furniture: [{ ...previous.furniture[0], assetId: wrongAsset.id }] }, previous);
     const rejected = nextMessage(socket, 'error');
-    socket.send(JSON.stringify({ type: 'update', id: randomUUID(), update: Buffer.from(Y.encodeStateAsUpdate(doc, vector)).toString('base64') }));
+    socket.send(JSON.stringify({ type: 'update', scope: room.activeLevelId, id: randomUUID(), update: Buffer.from(Y.encodeStateAsUpdate(doc, vector)).toString('base64') }));
     assert.equal((await rejected).status, 400);
-    assert.equal((await (await request(path, 'owner')).json()).room.furniture[0].assetId, asset.id);
+    assert.equal((await (await request(path, 'owner')).json()).project.levels[0].furniture[0].assetId, asset.id);
     doc.destroy(); socket.terminate(); socket = undefined;
     const source = new DatabaseSync(join(dataDir, 'accounts.sqlite'));
     let snapshot: Awaited<ReturnType<typeof runBackup>>;
@@ -118,7 +119,7 @@ test('GLB upload HTTP permissions, collaboration updates, erasure and restart re
     assert.equal((await request(path, 'owner', 'DELETE')).status, 200);
     assert.equal((await request('/api/models/' + asset.id, 'owner')).status, 404);
     const sourceRoom = randomUUID(), destinationRoom = randomUUID();
-    for (const id of [sourceRoom, destinationRoom]) assert.equal((await request('/api/rooms', 'owner', 'POST', { id, room })).status, 201);
+    for (const id of [sourceRoom, destinationRoom]) assert.equal((await request('/api/rooms', 'owner', 'POST', { id, project: { ...room, id } })).status, 201);
     const sourceUpload = await upload(sourceRoom, 'owner'); assert.equal(sourceUpload.status, 201); const reusable = (await sourceUpload.json()).model;
     const copy = await fetch(base + '/api/models?room=' + destinationRoom, { method: 'POST', headers: { Origin: base, Cookie: cookies.owner, 'Content-Type': 'model/gltf-binary', 'X-Model-Name': encodeURIComponent(reusable.name) }, body: await (await request('/api/models/' + reusable.id, 'owner')).arrayBuffer() });
     assert.equal(copy.status, 201); const reused = (await copy.json()).model;
@@ -131,9 +132,9 @@ test('GLB upload HTTP permissions, collaboration updates, erasure and restart re
     assert.equal((await offlineDelete(secondRoom, 1)).status, 409, 'an unrelated eligible room cannot authorize model deletion');
     assert.equal((await offlineDelete(destinationRoom, 2)).status, 409, 'stale revisions cannot delete assets');
     const reusedItem = { ...custom, assetId: reused.id };
-    assert.equal((await request('/api/rooms/' + destinationRoom, 'owner', 'PUT', { revision: 1, room: { ...room, furniture: [reusedItem] } })).status, 200);
+    assert.equal((await request('/api/rooms/' + destinationRoom, 'owner', 'PUT', { revision: 1, project: { ...patchProject(room, { furniture: [reusedItem] }), id: destinationRoom }, operationId: randomUUID() })).status, 200);
     assert.equal((await offlineDelete(destinationRoom, 2)).status, 409, 'referenced models cannot be deleted');
-    assert.equal((await request('/api/rooms/' + destinationRoom, 'owner', 'PUT', { revision: 2, room })).status, 200);
+    assert.equal((await request('/api/rooms/' + destinationRoom, 'owner', 'PUT', { revision: 2, project: { ...room, id: destinationRoom }, operationId: randomUUID() })).status, 200);
     assert.equal((await offlineDelete(destinationRoom, 3)).status, 200);
     assert.equal((await request('/api/models/' + reused.id, 'owner')).status, 404);
   } finally { socket?.terminate(); await close(); rmSync(dataDir, { recursive: true, force: true }); }

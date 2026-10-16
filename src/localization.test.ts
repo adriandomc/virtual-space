@@ -130,7 +130,7 @@ test('all literal translation keys in the interface exist in every locale', () =
 
 test('model and collaboration boundary errors have translations before reaching the interface', () => {
   const missing: string[] = [];
-  const modules = ['modelAssets.ts', 'offlineModelValidation.ts', 'modelWorkshopGeometry.ts', 'workshopBoolean.ts', 'workshopBooleanClient.ts', 'workshopPieces.ts', 'workshopGrouping.ts', 'offlineAssets.ts', 'collaborationServer.ts', 'customModel.ts'];
+  const modules = ['modelAssets.ts', 'offlineModelValidation.ts', 'modelWorkshopGeometry.ts', 'workshopBoolean.ts', 'workshopBooleanClient.ts', 'workshopPieces.ts', 'workshopGrouping.ts', 'offlineAssets.ts', 'collaborationServer.ts', 'customModel.ts', 'projectDocument.ts', 'projectOperations.ts', 'projectProtocol.ts', 'projectBackup.ts', 'architecturalNavigation.ts', 'modelBudget.ts', 'graphicsSettings.ts'];
   for (const file of modules) {
     const source = ts.createSourceFile(file, readFileSync(new URL(file, sourceDirectory), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
     const check = (value: ts.Expression | undefined) => {
@@ -187,7 +187,7 @@ test('help content and screenshots are available in each locale with the declare
       if (ts.isJsxAttribute(attribute) && ['width', 'height'].includes(attribute.name.getText(source)) && attribute.initializer && ts.isStringLiteral(attribute.initializer)) dimensions.set(attribute.name.getText(source), Number(attribute.initializer.text));
     }
     if (ts.isPropertyAssignment(node)) {
-      const key = node.name.getText(source);
+      const key = ts.isStringLiteralLike(node.name) ? node.name.text : node.name.getText(source);
       if (key === 'file' && ts.isStringLiteralLike(node.initializer)) images.add(node.initializer.text);
       if (['title', 'introduction', 'note', 'alt', 'caption'].includes(key) && ts.isStringLiteralLike(node.initializer)) strings.push(node.initializer.text);
       if (key === 'steps' && ts.isArrayLiteralExpression(node.initializer)) for (const element of node.initializer.elements) if (ts.isStringLiteralLike(element)) strings.push(element.text);

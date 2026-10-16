@@ -8,6 +8,7 @@ import { readWorkshopGroup } from './workshopGrouping';
 import { copyOfflineModel, listOfflineModels, loadModelBlob, readModelMetadata, reconcileOfflineModels, rememberModelMetadata, uploadOfflineModel } from './offlineAssets';
 import { onOfflinePurge } from './offlineStorage';
 import { deleteOfflineModel } from './offlineService';
+import { textureDimensions } from './graphicsSettings';
 
 export type { ModelAsset } from './modelAssets';
 export const modelAssetUrl = (id: string, roomId?: string, publicOnly = false) => `/api/models/${encodeURIComponent(id)}${roomId ? '?room=' + encodeURIComponent(roomId) : ''}${publicOnly ? (roomId ? '&' : '?') + 'public=1' : ''}`;
@@ -37,7 +38,7 @@ export async function modelMetadata(id: string, roomId?: string): Promise<ModelA
 }
 export async function deleteModel(id: string): Promise<void> { await deleteOfflineModel(id); clearCustomModelCache(); }
 
-type Template = { scene: THREE.Group; bounds: THREE.Box3; gltf: GLTF };
+type Template = { scene: THREE.Group; bounds: THREE.Box3; gltf: GLTF; textureLods?: Map<number, Map<THREE.Texture, THREE.Texture>> };
 type Entry = { promise: Promise<Template>; references: number; touched: number; value?: Template };
 const cache = new Map<string, Entry>();
 const maps = ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'emissiveMap', 'alphaMap'] as const;
@@ -53,6 +54,22 @@ function disposeTemplate(template: Template) {
   });
   geometries.forEach(value => value.dispose()); materials.forEach(value => value.dispose());
   textures.forEach(value => { value.dispose(); if (typeof ImageBitmap !== 'undefined' && value.image instanceof ImageBitmap) value.image.close(); });
+  template.textureLods?.forEach(lod => lod.forEach(value => value.dispose()));
+}
+
+function modelTextureLod(template: Template, texture: THREE.Texture, maximum: number): THREE.Texture {
+  const image = texture.image as { width?: number; height?: number } | undefined;
+  if (typeof document === 'undefined' || !image?.width || !image.height || Math.max(image.width, image.height) <= maximum) return texture;
+  template.textureLods ??= new Map();
+  let maps = template.textureLods.get(maximum);
+  if (!maps) { maps = new Map(); template.textureLods.set(maximum, maps); }
+  const existing = maps.get(texture); if (existing) return existing;
+  const size = textureDimensions(image.width, image.height, maximum), canvas = document.createElement('canvas');
+  canvas.width = size.width; canvas.height = size.height;
+  const context = canvas.getContext('2d'); if (!context) return texture;
+  context.drawImage(texture.image as CanvasImageSource, 0, 0, size.width, size.height);
+  const result = texture.clone(); result.image = canvas; result.needsUpdate = true; maps.set(texture, result);
+  return result;
 }
 function trimCache() {
   const idle = [...cache.entries()].filter(([, entry]) => entry.references === 0).sort((a, b) => b[1].touched - a[1].touched);
@@ -156,7 +173,7 @@ export function applyCustomPart(node: THREE.Object3D, part: ModelPart, item: Fur
   });
 }
 
-function instantiate(template: Template, item: FurnitureItem, quality: Room['renderQuality']): THREE.Group {
+function instantiate(template: Template, item: FurnitureItem, quality: Room['renderQuality'], textureResolution?: number): THREE.Group {
   const model = cloneCustomModel(template.scene), size = template.bounds.getSize(new THREE.Vector3()), center = template.bounds.getCenter(new THREE.Vector3());
   const content = new THREE.Group(); content.add(model);
   model.position.x -= center.x; model.position.y -= template.bounds.min.y; model.position.z -= center.z;
@@ -166,6 +183,10 @@ function instantiate(template: Template, item: FurnitureItem, quality: Room['ren
     const nodeKey = object.userData.modelNodeKey as string | undefined;
     const part = nodeKey === undefined ? undefined : item.parts?.[nodeKey];
     if (part) applyCustomPart(object, part, { ...item, color: null, material: null }, quality);
+    if (textureResolution && object instanceof THREE.Mesh) for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
+      const standard = material as THREE.MeshStandardMaterial;
+      for (const key of maps) if (standard[key]) standard[key] = modelTextureLod(template, standard[key]!, textureResolution);
+    }
   });
   return content;
 }
@@ -188,8 +209,8 @@ export async function loadEditableModel(item: FurnitureItem, roomId?: string): P
 }
 
 export function attachCustomModel(parent: THREE.Group, item: FurnitureItem, quality: Room['renderQuality'], {
-  roomId, publicOnly = false, onLoaded, onError,
-}: { roomId?: string; publicOnly?: boolean; onLoaded?: () => void; onError?: (message: string) => void } = {}): () => void {
+  roomId, publicOnly = false, onLoaded, onError, textureResolution,
+}: { roomId?: string; publicOnly?: boolean; onLoaded?: () => void; onError?: (message: string) => void; textureResolution?: number } = {}): () => void {
   if (!item.assetId) return () => {};
   let cancelled = false, instance: THREE.Group | null = null, released = false;
   const key = modelAssetUrl(item.assetId, roomId, publicOnly), entry = loadTemplate(key);
@@ -206,7 +227,7 @@ export function attachCustomModel(parent: THREE.Group, item: FurnitureItem, qual
   parent.userData.disposeCustomModel = cleanup;
   void entry.promise.then(template => {
     if (cancelled) return;
-    const content = instantiate(template, item, quality);
+    const content = instantiate(template, item, quality, textureResolution);
     parent.add(content); instance = content;
     parent.userData.customModelLoading = false;
     onLoaded?.();

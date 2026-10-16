@@ -41,7 +41,7 @@ function inspect(path: string) {
     return {
       users: database.prepare('SELECT id, username FROM users ORDER BY id').all(),
       sessions: database.prepare('SELECT user_id FROM sessions ORDER BY user_id').all(),
-      rooms: database.prepare('SELECT id, owner_id, sketch FROM rooms ORDER BY id').all(),
+      rooms: database.prepare('SELECT rooms.id, rooms.owner_id, project_sketches.data AS sketch FROM rooms JOIN project_sketches ON project_sketches.room_id=rooms.id ORDER BY rooms.id').all(),
       limits: database.prepare('SELECT key FROM request_limits ORDER BY key').all(),
     };
   } finally { database.close(); }
@@ -178,7 +178,7 @@ test('one-time prelaunch reset replaces recognized test data and backups with th
     try { await runBackup(source, sample.directory, { now: time }); source.exec('PRAGMA user_version=0'); }
     finally { source.close(); }
     assert.throws(() => resetPrelaunch(sample.directory, '--confirm=erase-all', time), /confirmation/);
-    assert.deepEqual(resetPrelaunch(sample.directory, '--confirm=reset-3d-space-test-data', time), { reset: true, version: 2, removedBackups: 1 });
+    assert.deepEqual(resetPrelaunch(sample.directory, '--confirm=reset-3d-space-test-data', time), { reset: true, version: 3, removedBackups: 1 });
     const database = new DatabaseSync(sample.path);
     try {
       assertCurrentDatabase(database); initializeDatabase(database);
@@ -187,7 +187,7 @@ test('one-time prelaunch reset replaces recognized test data and backups with th
       assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(), []);
     } finally { database.close(); }
     assert.deepEqual(JSON.parse(readFileSync(sample.ledger, 'utf8')), { version: 1, entries: [] });
-    assert.deepEqual(JSON.parse(readFileSync(join(sample.directory, 'prelaunch-reset.json'), 'utf8')), { version: 2, resetAt: time });
+    assert.deepEqual(JSON.parse(readFileSync(join(sample.directory, 'prelaunch-reset-v3.json'), 'utf8')), { version: 3, resetAt: time });
     assert.deepEqual(readdirSync(join(sample.directory, 'backups')), []);
     assert.equal(readFileSync(sample.neighbor, 'utf8'), 'outside service data');
     assert.throws(() => resetPrelaunch(sample.directory, '--confirm=reset-3d-space-test-data', time + 1), /already completed/);

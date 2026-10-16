@@ -67,7 +67,7 @@ test('expiry cascades through designs, binary sketches and sessions while retain
     assert.equal(deleteInactiveAccounts(database, expiry), 1);
     assert.equal(row(database, 'expired'), undefined);
     assert.ok(row(database, 'active'));
-    const survivingRooms = database.prepare('SELECT owner_id, sketch FROM rooms').all();
+    const survivingRooms = database.prepare('SELECT rooms.owner_id, project_sketches.data AS sketch FROM rooms JOIN project_sketches ON project_sketches.room_id=rooms.id').all();
     assert.equal(survivingRooms.length, 1);
     assert.equal(survivingRooms[0].owner_id, 'active');
     assert.deepEqual(survivingRooms[0].sketch, new Uint8Array([0, 255, 137, 80]));

@@ -1,25 +1,27 @@
 import { createServer as httpServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { chmodSync, mkdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { extname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { gzipSync } from 'node:zlib';
-import { validateRoom } from './model.js';
-import type { Room } from './types.js';
+import { validateProjectDocument, type ProjectDocument } from './projectDocument.js';
+import { readProject, writeProject, projectMetadata, readSketchStates, seedProjectStates, stringifyProjectPayload, invalidateProjectCache } from './projectRepository.js';
 import { checkOrigin, createAuth, HttpError, ipRateIdentity, proxyTrust, type User } from './auth.js';
 import { deleteInactiveAccounts } from './retention.js';
-import { applyErasures, initializeErasures, recordErasure, wasErased } from './erasures.js';
+import { applyErasures, initializeErasures, recordErasure, recordErasures, wasErased } from './erasures.js';
 import { createMaintenance } from './maintenanceService.js';
 import { createLiveCollaboration, roomRole, type RoomRow as Row } from './collaborationServer.js';
 import { createModelAssets, MODEL_MAX_BYTES } from './modelAssets.js';
+import { sameData } from './sameData.js';
+import { PRELAUNCH_STORAGE_EPOCH, hasTestStorageRetirement } from './releasePolicy.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MIME: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.webmanifest': 'application/manifest+json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.ico': 'image/x-icon', '.woff2': 'font/woff2' };
 
 function sendJson(response: ServerResponse, status: number, body: unknown) {
   response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
-  response.end(JSON.stringify(body));
+  response.end(stringifyProjectPayload(body));
 }
 
 function readBody(request: IncomingMessage, limit: number): Promise<Buffer> {
@@ -43,7 +45,7 @@ function readBody(request: IncomingMessage, limit: number): Promise<Buffer> {
   });
 }
 
-async function readJson(request: IncomingMessage, limit = 1024 * 1024): Promise<Record<string, unknown>> {
+async function readJson(request: IncomingMessage, limit = 4 * 1024 * 1024): Promise<Record<string, unknown>> {
   if (request.headers['content-type']?.split(';')[0].trim().toLowerCase() !== 'application/json') throw new HttpError(415, 'Envía un proyecto válido.');
   try {
     const value: unknown = JSON.parse((await readBody(request, limit)).toString('utf8'));
@@ -55,8 +57,8 @@ async function readJson(request: IncomingMessage, limit = 1024 * 1024): Promise<
   }
 }
 
-function roomValue(value: unknown): Room {
-  try { return validateRoom(value); }
+function projectValue(value: unknown): ProjectDocument {
+  try { return validateProjectDocument(value); }
   catch (error) { throw new HttpError(400, error instanceof Error ? error.message : 'El proyecto no es válido.'); }
 }
 
@@ -87,12 +89,14 @@ export function createServer({ dataDir = process.env.DATA_DIR ?? './data', stati
   applyErasures(database, ledgerPath, { now: now(), includeExpired: true });
   deleteInactiveAccounts(database, now());
   const maintenanceTasks = createMaintenance(database, dataDir, ledgerPath, { now });
-  const find = database.prepare('SELECT id, owner_id, room, revision, shared, updated_at, sketch_version, sketch_mutation_id, (sketch IS NOT NULL) AS has_sketch FROM rooms WHERE id = ?');
+  const find = database.prepare('SELECT id, owner_id, room, revision, structure_revision, shared, updated_at FROM rooms WHERE id = ?');
   const root = resolve(staticDir);
   const offlineAllowed = (row: Row, user: User | null) => row.owner_id === user?.id && row.shared === 0 && !database.prepare('SELECT 1 FROM room_members WHERE room_id = ? LIMIT 1').get(row.id);
   const snapshot = (row: Row, user: User | null) => {
     const role = roomRole(database, row, user);
-    return { id: row.id, room: JSON.parse(row.room) as Room, revision: row.revision, hasSketch: row.has_sketch === 1, sketchVersion: row.sketch_version, sketchMutationId: row.sketch_mutation_id, role, canEdit: role === 'owner' || role === 'editor', canManage: role === 'owner', shared: row.shared === 1, accountId: user?.id ?? null, offlineAllowed: offlineAllowed(row, user), updatedAt: new Date(row.updated_at).toISOString() };
+    return { id: row.id, project: readProject(database, row.id), revision: row.revision, structureRevision: row.structure_revision,
+      structureRevisions: Object.fromEntries(database.prepare('SELECT id,structure_revision FROM project_levels WHERE room_id=?').all(row.id).map(level => [String(level.id), Number(level.structure_revision)])),
+      sketches: readSketchStates(database, row.id), role, canEdit: role === 'owner' || role === 'editor', canManage: role === 'owner', shared: row.shared === 1, accountId: user?.id ?? null, offlineAllowed: offlineAllowed(row, user), updatedAt: new Date(row.updated_at).toISOString() };
   };
   const rowFor = (id: string, user: User | null) => {
     const row = find.get(id) as Row | undefined;
@@ -112,7 +116,8 @@ export function createServer({ dataDir = process.env.DATA_DIR ?? './data', stati
   };
   const live = createLiveCollaboration({ database, auth, identify, appOrigin, now, find: id => find.get(id) as Row | undefined, snapshot, readJson, sendJson,
     eraseMember: (id, erase) => recordErasure(database, ledgerPath, { kind: 'member', id, at: now() }, erase),
-    validateReferences: (room, userId, roomId) => modelAssets.validateRoomReferences(room, userId, roomId),
+    eraseSketches: (id, entries, erase) => recordErasures(database, ledgerPath, entries.map(entry => ({ kind: 'sketch', id, ...entry, at: now() })), erase),
+    validateReferences: (room, userId, roomId) => modelAssets.validateProjectReferences(room, userId, roomId),
   });
   const server = httpServer(async (request, response) => {
     try {
@@ -133,6 +138,21 @@ export function createServer({ dataDir = process.env.DATA_DIR ?? './data', stati
       });
       const { ip: clientIP, fromProxy } = identify(request), ip = ipRateIdentity(clientIP);
       if (pathname.startsWith('/api/')) { auth.checkBlocked(ip); auth.limit('api', ip, 600, 60_000); checkOrigin(request, fromProxy, appOrigin); }
+      if (pathname === '/api/release' && method === 'GET') {
+        const path = resolve(dataDir, 'prelaunch-reset-v3.json');
+        let retireTestStorage = null;
+        if (existsSync(path)) {
+          const info = lstatSync(path);
+          if (info.isFile() && !info.isSymbolicLink() && info.size < 4096) {
+            try {
+              const marker = JSON.parse(readFileSync(path, 'utf8'));
+              const release = { version: marker.version, retireTestStorage: { epoch: PRELAUNCH_STORAGE_EPOCH, resetAt: marker.resetAt } };
+              if (hasTestStorageRetirement(release, now())) retireTestStorage = release.retireTestStorage;
+            } catch { /* Invalid or absent operator markers never authorize local deletion. */ }
+          }
+        }
+        sendJson(response, 200, { version: 3, retireTestStorage }); return;
+      }
       if (pathname === '/api/auth/session' && method === 'GET') { sendJson(response, 200, { user: auth.session(request) }); return; }
       if (pathname === '/api/auth/register' && method === 'POST') { sendJson(response, 201, { user: await auth.register(request, response, await readJson(request, 8192), ip) }); return; }
       if (pathname === '/api/auth/login' && method === 'POST') { sendJson(response, 200, { user: await auth.login(request, response, await readJson(request, 8192), ip) }); return; }
@@ -189,7 +209,7 @@ export function createServer({ dataDir = process.env.DATA_DIR ?? './data', stati
       }
       if (pathname === '/api/rooms' && method === 'GET') {
         const user = auth.requireUser(request);
-        const rooms = database.prepare('SELECT rooms.id, rooms.owner_id, json_extract(room, \'$.name\') AS name, json_extract(room, \'$.setupStep\') AS setup_step, shared, updated_at, room_members.role AS member_role FROM rooms LEFT JOIN room_members ON room_members.room_id = rooms.id AND room_members.user_id = ? AND room_members.accepted_at IS NOT NULL WHERE owner_id = ? OR room_members.id IS NOT NULL ORDER BY updated_at DESC, rooms.id').all(user.id, user.id) as { id: string; owner_id: string; name: string; setup_step: Room['setupStep'] | null; shared: number; updated_at: number; member_role: 'editor' | 'reader' | null }[];
+        const rooms = database.prepare('SELECT rooms.id, rooms.owner_id, json_extract(room, \'$.name\') AS name, json_extract(room, \'$.setupStep\') AS setup_step, shared, updated_at, room_members.role AS member_role FROM rooms LEFT JOIN room_members ON room_members.room_id = rooms.id AND room_members.user_id = ? AND room_members.accepted_at IS NOT NULL WHERE owner_id = ? OR room_members.id IS NOT NULL ORDER BY updated_at DESC, rooms.id').all(user.id, user.id) as { id: string; owner_id: string; name: string; setup_step: ProjectDocument['setupStep'] | null; shared: number; updated_at: number; member_role: 'editor' | 'reader' | null }[];
         sendJson(response, 200, { rooms: rooms.map(row => ({ id: row.id, name: row.name, setupStep: row.setup_step ?? undefined, role: row.owner_id === user.id ? 'owner' : row.member_role, canManage: row.owner_id === user.id, canEdit: row.owner_id === user.id || row.member_role === 'editor', shared: row.shared === 1, offlineAllowed: row.owner_id === user.id && row.shared === 0 && !database.prepare('SELECT 1 FROM room_members WHERE room_id = ? LIMIT 1').get(row.id), updatedAt: new Date(row.updated_at).toISOString() })) }); return;
       }
       if (pathname === '/api/rooms' && method === 'POST') {
@@ -198,8 +218,9 @@ export function createServer({ dataDir = process.env.DATA_DIR ?? './data', stati
         user = auth.requireUser(request);
         if (request.headers['x-offline-write'] === '1' && request.headers['x-account-id'] !== user.id) throw new HttpError(403, 'La cuenta activa cambió. Conserva tu copia y vuelve a iniciar sesión.');
         if (typeof body.id !== 'string' || !UUID.test(body.id)) throw new HttpError(400, 'La identidad del proyecto no es válida.');
-        const room = roomValue(body.room);
-        modelAssets.validateRoomReferences(room, user.id, body.id);
+        const project = projectValue(body.project);
+        if (project.id !== body.id) throw new HttpError(400, 'La identidad del proyecto no es válida.');
+        modelAssets.validateProjectReferences(project, user.id, body.id);
         const existing = find.get(body.id) as Row | undefined;
         if (existing) {
           if (user.id !== existing.owner_id) throw new HttpError(409, 'El proyecto ya existe.');
@@ -208,12 +229,14 @@ export function createServer({ dataDir = process.env.DATA_DIR ?? './data', stati
         } else {
           if (wasErased(ledgerPath, 'room', body.id)) throw new HttpError(409, 'Crea un proyecto nuevo para continuar.');
           auth.limit('create-ip', ip, 60, 3_600_000); auth.limit('create-user', user.id, 60, 3_600_000);
-          database.prepare('INSERT INTO rooms (id, owner_id, room, updated_at) VALUES (?, ?, ?, ?)').run(body.id, user.id, JSON.stringify(room), now());
+          database.exec('BEGIN IMMEDIATE');
+          try { database.prepare('INSERT INTO rooms (id, owner_id, room, updated_at) VALUES (?, ?, ?, ?)').run(body.id, user.id, JSON.stringify(projectMetadata(project)), now()); writeProject(database, project); seedProjectStates(database, project); database.exec('COMMIT'); }
+          catch (cause) { database.exec('ROLLBACK'); throw cause; }
           sendJson(response, 201, snapshot(rowFor(body.id, user), user));
         }
         return;
       }
-      const api = pathname.match(/^\/api\/rooms\/([^/]+)(\/(?:sketch|share))?$/);
+      const api = pathname.match(/^\/api\/rooms\/([^/]+)(\/share|\/levels\/([^/]+)\/sketch)?$/);
       if (api) {
         const id = api[1];
         if (!UUID.test(id)) throw new HttpError(400, 'La dirección del proyecto no es válida.');
@@ -231,56 +254,36 @@ export function createServer({ dataDir = process.env.DATA_DIR ?? './data', stati
           else recordErasure(database, ledgerPath, { kind: 'share', id, at: now() }, updateShare);
           live.refresh(id);
           sendJson(response, 200, { shared: body.enabled });
-        } else if (api[2] === '/sketch') {
+        } else if (api[3]) {
+          const levelId = api[3];
+          const sketchState = () => database.prepare('SELECT data,mime,version,mutation_id FROM project_sketches sketches WHERE room_id=? AND level_id=? AND EXISTS(SELECT 1 FROM project_levels levels WHERE levels.room_id=sketches.room_id AND levels.id=sketches.level_id)').get(id, levelId) as { data: Uint8Array | null; mime: string | null; version: number; mutation_id: string | null } | undefined;
+          let saved = sketchState(); if (!saved) throw new HttpError(404, 'Este nivel no existe.');
           if (method === 'GET' || method === 'HEAD') {
-            if (!row.has_sketch) throw new HttpError(404, 'Este proyecto no tiene croquis.');
-            const sketch = database.prepare('SELECT sketch, sketch_mime FROM rooms WHERE id = ?').get(id) as { sketch: Uint8Array; sketch_mime: string };
-            const etag = '"' + id + '-' + row.sketch_version + '"';
+            if (!saved.data) throw new HttpError(404, 'Este proyecto no tiene croquis.');
+            const etag = '"' + id + '-' + levelId + '-' + saved.version + '"';
             if (request.headers['if-none-match'] === etag) { response.writeHead(304, { ETag: etag, 'Cache-Control': 'no-cache' }); response.end(); return; }
-            response.writeHead(200, { 'Content-Type': sketch.sketch_mime, 'Content-Length': sketch.sketch.length, ETag: etag, 'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff' });
-            response.end(method === 'HEAD' ? undefined : Buffer.from(sketch.sketch));
-          } else if (method === 'PUT') {
-            requireEditor(request, row);
-            auth.limit('upload', ip, 20, 60_000);
-            const mime = request.headers['content-type']?.split(';')[0].trim().toLowerCase() ?? '';
-            if (!['image/png', 'image/jpeg', 'image/webp'].includes(mime)) throw new HttpError(415, 'Usa una imagen PNG, JPG o WebP.');
-            const data = await readBody(request, 10 * 1024 * 1024);
-            requireEditor(request, row);
-            if (!imageMatches(data, mime)) throw new HttpError(400, 'El contenido no coincide con el tipo de imagen.');
-            const mutation = typeof request.headers['x-sketch-request-id'] === 'string' ? request.headers['x-sketch-request-id'] : null;
-            if (mutation && !UUID.test(mutation)) throw new HttpError(400, 'La identidad del croquis no es válida.');
-            if (request.headers['x-offline-write'] === '1') {
-              const current = requireOffline(request, id);
-              if (!mutation) throw new HttpError(400, 'Falta la identidad del croquis.');
-              if (current.sketch_mutation_id === mutation) {
-                const saved = database.prepare('SELECT sketch, sketch_mime FROM rooms WHERE id = ?').get(id) as { sketch: Uint8Array | null; sketch_mime: string | null };
-                if (!saved.sketch || saved.sketch_mime !== mime || !Buffer.from(saved.sketch).equals(data)) throw new HttpError(409, 'La identidad del croquis ya está en uso.');
-                sendJson(response, 200, { hasSketch: true, sketchVersion: current.sketch_version }); return;
-              }
-              if (Number(request.headers['x-sketch-version']) !== current.sketch_version || Number(request.headers['x-room-revision']) !== current.revision) throw new HttpError(409, 'El diseño cambió en otra sesión. Tu croquis se conserva en este dispositivo.');
+            response.writeHead(200, { 'Content-Type': saved.mime!, 'Content-Length': saved.data.length, ETag: etag, 'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff' });
+            response.end(method === 'HEAD' ? undefined : Buffer.from(saved.data));
+          } else if (method === 'PUT' || method === 'DELETE') {
+            requireEditor(request, row); auth.limit('upload', ip, 20, 60000);
+            const mime = method === 'PUT' ? request.headers['content-type']?.split(';')[0].trim().toLowerCase() ?? '' : null;
+            if (method === 'PUT' && !['image/png', 'image/jpeg', 'image/webp'].includes(mime!)) throw new HttpError(415, 'Usa una imagen PNG, JPG o WebP.');
+            const data = method === 'PUT' ? await readBody(request, 10 * 1024 * 1024) : null;
+            requireEditor(request, rowFor(id, auth.requireUser(request)));
+            if (data && !imageMatches(data, mime!)) throw new HttpError(400, 'El contenido no coincide con el tipo de imagen.');
+            const mutation = request.headers['x-sketch-request-id'];
+            if (typeof mutation !== 'string' || !UUID.test(mutation)) throw new HttpError(400, 'Falta la identidad del croquis.');
+            if (request.headers['x-offline-write'] === '1') requireOffline(request, id);
+            saved = sketchState(); if (!saved) throw new HttpError(409, 'Este nivel ya no existe.');
+            if (saved.mutation_id === mutation) {
+              if (saved.mime !== mime || Boolean(saved.data) !== Boolean(data) || data && !Buffer.from(saved.data!).equals(data)) throw new HttpError(409, 'La identidad del croquis ya está en uso.');
+              sendJson(response, 200, { hasSketch: Boolean(saved.data), version: saved.version }); return;
             }
-            const changed = database.prepare('UPDATE rooms SET sketch = ?, sketch_mime = ?, sketch_version = sketch_version + 1, sketch_mutation_id = ?, updated_at = ? WHERE id = ? RETURNING sketch_version').get(data, mime, mutation, now(), id) as { sketch_version: number };
-            live.refresh(id);
-            sendJson(response, 200, { hasSketch: true, sketchVersion: changed.sketch_version });
-          } else if (method === 'DELETE') {
-            requireEditor(request, row);
-            const mutation = typeof request.headers['x-sketch-request-id'] === 'string' ? request.headers['x-sketch-request-id'] : null;
-            if (mutation && !UUID.test(mutation)) throw new HttpError(400, 'La identidad del croquis no es válida.');
-            if (request.headers['x-offline-write'] === '1') {
-              const current = requireOffline(request, id);
-              if (!mutation) throw new HttpError(400, 'Falta la identidad del croquis.');
-              if (current.sketch_mutation_id === mutation) {
-                if (current.has_sketch) throw new HttpError(409, 'La identidad del croquis ya está en uso.');
-                sendJson(response, 200, { hasSketch: false, sketchVersion: current.sketch_version }); return;
-              }
-              if (Number(request.headers['x-sketch-version']) !== current.sketch_version || Number(request.headers['x-room-revision']) !== current.revision) throw new HttpError(409, 'El diseño cambió en otra sesión. Tu croquis se conserva en este dispositivo.');
-            }
-            let changed!: { sketch_version: number };
-            recordErasure(database, ledgerPath, { kind: 'sketch', id, at: now(), version: row.sketch_version + 1 }, () => {
-              changed = database.prepare('UPDATE rooms SET sketch = NULL, sketch_mime = NULL, sketch_version = sketch_version + 1, sketch_mutation_id = ?, updated_at = ? WHERE id = ? RETURNING sketch_version').get(mutation, now(), id) as { sketch_version: number };
-            });
-            live.refresh(id);
-            sendJson(response, 200, { hasSketch: false, sketchVersion: changed.sketch_version });
+            if (Number(request.headers['x-sketch-version']) !== saved.version || Number(request.headers['x-room-revision']) !== (find.get(id) as Row).revision) throw new HttpError(409, 'El diseño cambió en otra sesión. Tu croquis se conserva en este dispositivo.');
+            const version = saved.version + 1;
+            const change = () => { database.prepare('UPDATE project_sketches SET data=?,mime=?,version=?,mutation_id=? WHERE room_id=? AND level_id=?').run(data, mime, version, mutation, id, levelId); database.prepare('UPDATE rooms SET updated_at=? WHERE id=?').run(now(), id); };
+            if (method === 'DELETE') recordErasure(database, ledgerPath, { kind: 'sketch', id, levelId, at: now(), version }, change); else change();
+            live.refresh(id); sendJson(response, 200, { hasSketch: Boolean(data), version });
           } else throw new HttpError(405, 'Este método no está permitido.');
         } else if (method === 'GET') sendJson(response, 200, snapshot(row, user));
         else if (method === 'DELETE') {
@@ -289,10 +292,10 @@ export function createServer({ dataDir = process.env.DATA_DIR ?? './data', stati
             const body = await readJson(request);
             const current = requireOffline(request, id);
             if (!Number.isSafeInteger(body.revision) || (body.revision as number) < 1) throw new HttpError(400, 'La versión del proyecto no es válida.');
-            if (!Number.isSafeInteger(body.sketchVersion) || (body.sketchVersion as number) < 0) throw new HttpError(400, 'La versión del croquis no es válida.');
-            if (body.revision !== current.revision || body.sketchVersion !== current.sketch_version) throw new HttpError(409, 'El diseño cambió. Conserva tu copia antes de eliminarlo.');
+            if (!sameData(body.sketches, readSketchStates(database, id)) || body.revision !== current.revision) throw new HttpError(409, 'El diseño cambió. Conserva tu copia antes de eliminarlo.');
           }
           recordErasure(database, ledgerPath, { kind: 'room', id, at: now() }, () => { database.prepare('DELETE FROM rooms WHERE id = ?').run(id); });
+          invalidateProjectCache(database, id);
           live.refresh(id);
           sendJson(response, 200, { deleted: true });
         }
@@ -302,9 +305,9 @@ export function createServer({ dataDir = process.env.DATA_DIR ?? './data', stati
           requireEditor(request, row);
           if (request.headers['x-offline-write'] === '1') requireOffline(request, id);
           if (!Number.isSafeInteger(body.revision) || (body.revision as number) < 1) throw new HttpError(400, 'La versión del proyecto no es válida.');
-          const room = roomValue(body.room);
-          const changed = live.putRoom(id, room, body.revision as number, auth.requireUser(request).id);
-          sendJson(response, 200, { id, room, revision: changed.revision });
+          const project = projectValue(body.project);
+          const changed = live.putProject(id, project, body.revision as number, auth.requireUser(request).id, String(body.operationId ?? ''));
+          sendJson(response, 200, { ...snapshot(rowFor(id, auth.requireUser(request)), auth.requireUser(request)), ...changed });
         } else throw new HttpError(405, 'Este método no está permitido.');
         return;
       }

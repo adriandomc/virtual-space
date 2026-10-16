@@ -1,7 +1,13 @@
 import { createDefaultRoom, validateRoom } from './model';
 import type { FurnitureItem, Room } from './types';
+import { createDefaultProject, projectToRoom, updateProjectRoom } from './projectDocument';
 
 export const LANDING_WARDROBE_ID = 'demo-wardrobe';
+
+export function createLandingProject() {
+  const project = createDefaultProject('Cuarto de ejemplo');
+  return updateProjectRoom(project, project.activeLevelId, { ...projectToRoom(project), ...createLandingRoom(), levelId: project.activeLevelId });
+}
 
 export function createLandingRoom(): Room {
   return validateRoom({

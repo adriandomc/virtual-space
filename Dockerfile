@@ -1,6 +1,7 @@
 FROM node:24-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
+COPY scripts/patch-three.mjs ./scripts/patch-three.mjs
 RUN npm ci
 COPY . .
 RUN npm run build
@@ -13,6 +14,7 @@ ENV DATA_DIR=/data
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/server-dist ./server-dist
 COPY package.json package-lock.json ./
+COPY scripts/patch-three.mjs ./scripts/patch-three.mjs
 RUN npm ci --omit=dev && npm cache clean --force
 RUN mkdir -p /data && chown node:node /data
 USER node

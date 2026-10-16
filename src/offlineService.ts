@@ -1,16 +1,17 @@
 import { accountRequest, AccountRequestError, isNetworkError } from './accountApi';
 import { waitForAppOffline } from './appOffline';
-import { createBlankRoom } from './onboardingModel';
-import { validateRoom } from './model';
-import type { Room } from './types';
+import { createBlankProject } from './onboardingModel';
+import { validateProjectDocument, projectAssetIds, type ProjectDocument } from './projectDocument';
 import type { ProjectSnapshot } from './liveProject';
 import type { ModelAsset } from './modelAssets';
 import { validateProjectBackupResources, type ProjectBackup } from './projectBackup';
 import { offlineIdentity } from './offlineIdentity';
-import { atomicOffline, cacheOfflineAsset, clearOfflineAccount as clearAccountStorage, listOffline, listOfflineMetadata, readOffline, removeOffline, setOfflineAccess, updateOffline, writeOffline, type OfflineWrite } from './offlineStorage';
-import { hydrateOfflineProject, listOfflineDesigns, offlineProjectKey, readOfflineProject, SoloProject, validateOfflineProject, type OfflineProjectRecord, type SoloStatus } from './offlineProject';
+import { atomicOffline, cacheOfflineAsset, clearOfflineAccount as clearAccountStorage, listOffline, listOfflineMetadata, listOfflineKeys, readOffline, removeOffline, setOfflineAccess, updateOffline, writeOffline, type OfflineWrite } from './offlineStorage';
+import { hydrateOfflineProject, listOfflineDesigns, pendingSketches, projectWithoutModels, offlineProjectKey, readOfflineProject, SoloProject, validateOfflineProject, type OfflineProjectRecord, type SoloStatus } from './offlineProject';
 import { flushOfflineAssets, type OfflineAssetRecord } from './offlineAssets';
 import { offlineModelMetadata } from './offlineModelValidation';
+import { validateModelBudget } from './modelBudget';
+import { sameData } from './sameData';
 import { offlineFetch, offlineForced, subscribeOfflineMode } from './offlineMode';
 
 export type OfflineProgress = { done: number; total: number; label: string; labelIsKey: boolean };
@@ -18,7 +19,7 @@ export type OfflineSummary = { accountId: string | null; forced: boolean; prepar
 let preparing = false, syncing = false, error = '';
 let progress: OfflineProgress | null = null;
 const signal = () => { if (typeof window !== 'undefined') window.dispatchEvent(new Event('space-offline-data')); };
-const hasPending = (record: OfflineProjectRecord) => Boolean(record.localOnly || record.deleted || record.draft || record.sketchDraft || record.inflight || record.inflightSketch);
+const hasPending = (record: OfflineProjectRecord) => Boolean(record.localOnly || record.deleted || record.draft || pendingSketches(record) || record.inflight);
 const assetKey = (accountId: string, roomId: string, id: string) => `${accountId}:${roomId}:${id}`;
 async function identity() {
   const value = await offlineIdentity();
@@ -33,13 +34,16 @@ export async function pendingOfflineCount(accountId?: string) {
   const owner = accountId ?? (await identity()).id;
   const projects = (await listOffline<OfflineProjectRecord>('projects')).filter(value => value.accountId === owner);
   const assets = (await listOfflineMetadata<OfflineAssetRecord>('assets')).filter(value => value.accountId === owner && (value.pending || value.deleted));
-  return projects.filter(hasPending).length + assets.filter(asset => !projects.some(project => project.id === asset.roomId && hasPending(project))).length;
+  const recoveries = (await listOfflineMetadata<{ accountId?: string; roomId?: string; project?: unknown }>('meta')).filter(value => value.accountId === owner && value.project && typeof value.roomId === 'string');
+  const pendingIds = new Set([...projects.filter(hasPending).map(project => project.id), ...recoveries.map(value => value.roomId!)]);
+  return pendingIds.size + assets.filter(asset => !pendingIds.has(asset.roomId)).length;
 }
 export async function roomHasOfflineChanges(id: string): Promise<boolean> {
   const user = await offlineIdentity();
   if (!user) return false;
   const project = await readOffline<OfflineProjectRecord>('projects', offlineProjectKey(user.id, id));
   if (project && hasPending(project)) return true;
+  if (await readOffline('meta', 'recovery:' + user.id + ':' + id)) return true;
   return (await listOfflineMetadata<OfflineAssetRecord>('assets')).some(asset => asset.accountId === user.id && asset.roomId === id && (asset.pending || asset.deleted || asset.uploading));
 }
 export async function assertRoomReadyToShare(id: string): Promise<void> {
@@ -55,46 +59,57 @@ export async function offlineSummary(): Promise<OfflineSummary> {
 
 /** Blob values are immutable and live outside the frequently edited project record. */
 export async function projectWrites(record: OfflineProjectRecord): Promise<OfflineWrite[]> {
-  const key = offlineProjectKey(record.accountId, record.id);
-  const copy = structuredClone(record), writes: OfflineWrite[] = [];
-  const previousRecord = await readOffline<OfflineProjectRecord>('projects', key);
-  const currentMutations = new Set([copy.sketchDraft?.id, copy.inflightSketch?.id]);
-  for (const previous of [previousRecord?.sketchDraft, previousRecord?.inflightSketch]) if (previous && !currentMutations.has(previous.id)) writes.push({ store: 'blobs', key: key + ':sketch:' + previous.id, remove: true });
-  if (copy.sketchBlob && copy.sketchBlobVersion === copy.snapshot.sketchVersion) {
-    const previous = await readOffline<{ version: number }>('blobs', key + ':sketch');
-    if (previous?.version !== copy.sketchBlobVersion) writes.push({ store: 'blobs', key: key + ':sketch', value: { accountId: copy.accountId, roomId: copy.id, key: key + ':sketch', version: copy.sketchBlobVersion, blob: copy.sketchBlob } });
-  } else {
-    const base = await readOffline<{ version: number }>('blobs', key + ':sketch');
-    if (!copy.snapshot.hasSketch || base && base.version !== copy.snapshot.sketchVersion) writes.push({ store: 'blobs', key: key + ':sketch', remove: true });
+  const key = offlineProjectKey(record.accountId, record.id), writes: OfflineWrite[] = [];
+  const previous = await readOffline<OfflineProjectRecord & { levelRefs?: Record<string, string[]> }>('projects', key);
+  const copy = { ...record, snapshot: { ...record.snapshot }, sketchDrafts: structuredClone(record.sketchDrafts ?? {}), inflightSketches: structuredClone(record.inflightSketches ?? {}) } as OfflineProjectRecord & { levelRefs: Record<string, string[]> };
+  copy.levelRefs = {};
+  for (const slot of ['snapshot', 'draft', 'inflight'] as const) {
+    const project = slot === 'snapshot' ? record.snapshot.project : slot === 'draft' ? record.draft : record.inflight?.project;
+    if (!project) continue;
+    const old = slot === 'snapshot' ? previous?.snapshot.project : slot === 'draft' ? previous?.draft : previous?.inflight?.project;
+    copy.levelRefs[slot] = project.levels.map(level => {
+      const oldIndex = old?.levels.findIndex(value => value.id === level.id) ?? -1;
+      if (oldIndex >= 0 && JSON.stringify(old!.levels[oldIndex]) === JSON.stringify(level)) return previous!.levelRefs?.[slot]?.[oldIndex] ?? key + ':level:' + slot + ':' + level.id;
+      const ref = key + ':level:' + slot + ':' + level.id;
+      writes.push({ store: 'levels', key: ref, value: { accountId: record.accountId, roomId: record.id, key: ref, level } }); return ref;
+    });
+    const metadata = { ...project, levels: [] };
+    if (slot === 'snapshot') copy.snapshot.project = metadata; else if (slot === 'draft') copy.draft = metadata; else copy.inflight = { ...record.inflight!, project: metadata };
   }
-  delete copy.sketchBlob;
-  for (const property of ['sketchDraft', 'inflightSketch'] as const) {
-    const value = copy[property];
-    if (!value) continue;
-    const blobKey = key + ':sketch:' + value.id;
-    if (!await readOffline('blobs', blobKey)) writes.push({ store: 'blobs', key: blobKey, value: { accountId: copy.accountId, roomId: copy.id, key: blobKey, blob: value.blob } });
+  const available = new Set((await listOfflineKeys('blobs')).filter((ref): ref is string => typeof ref === 'string' && ref.startsWith(key + ':sketch:')));
+  const required = new Set<string>();
+  for (const [levelId, value] of Object.entries(record.snapshot.sketches)) if (value.hasSketch) required.add(key + ':sketch:' + levelId + ':' + value.version);
+  for (const [levelId, value] of Object.entries(record.sketchBlobs ?? {})) if (record.snapshot.sketches[levelId]?.hasSketch && value.version === record.snapshot.sketches[levelId].version) {
+    const ref = key + ':sketch:' + levelId + ':' + value.version; required.add(ref);
+    if (!available.has(ref)) writes.push({ store: 'blobs', key: ref, value: { accountId: record.accountId, roomId: record.id, key: ref, blob: value.blob } });
+  }
+  delete copy.sketchBlobs;
+  for (const property of ['sketchDrafts', 'inflightSketches'] as const) for (const [levelId, value] of Object.entries(copy[property] ?? {})) {
+    const ref = key + ':sketch:' + levelId + ':' + value.id; required.add(ref);
+    if (!available.has(ref)) writes.push({ store: 'blobs', key: ref, value: { accountId: record.accountId, roomId: record.id, key: ref, blob: value.blob } });
     delete (value as { blob?: Blob | null }).blob;
   }
-  writes.push({ store: 'projects', key, value: copy });
-  return writes;
+  for (const ref of available) if (ref.startsWith(key + ':sketch:') && !required.has(ref)) writes.push({ store: 'blobs', key: ref, remove: true });
+  for (const refs of Object.values(previous?.levelRefs ?? {})) for (const ref of refs) if (!Object.values(copy.levelRefs).some(values => values.includes(ref))) writes.push({ store: 'levels', key: ref, remove: true });
+  writes.push({ store: 'projects', key, value: copy }); return writes;
 }
 export async function persistOfflineProject(record: OfflineProjectRecord) {
   const checked = validateOfflineProject(record, record.accountId, record.id);
   if (!checked) throw new Error('No se pudo guardar un diseño inválido.');
   await atomicOffline(record.accountId, await projectWrites(checked));
 }
-export async function createDesignLocal(room = createBlankRoom(), designId?: string) {
+export async function createDesignLocal(project = createBlankProject(), designId?: string) {
   const user = await identity(), id = designId ?? crypto.randomUUID();
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) throw new Error('La identidad del diseño no es válida.');
   const existing = await readOfflineProject(id);
   if (existing) return { id };
-  const initial = validateRoom(room);
-  const snapshot: ProjectSnapshot = { id, accountId: user.id, room: initial, revision: 0, role: 'owner', canManage: true, canEdit: true, shared: false, offlineAllowed: true, hasSketch: false, sketchVersion: 0, sketchMutationId: null };
+  const initial = validateProjectDocument({ ...project, id });
+  const snapshot: ProjectSnapshot = { id, accountId: user.id, project: initial, revision: 0, structureRevision: 0, structureRevisions: Object.fromEntries(initial.levels.map(level => [level.id, 0])), sketches: Object.fromEntries(initial.levels.map(level => [level.id, { hasSketch: false, version: 0, mutationId: null }])), role: 'owner', canManage: true, canEdit: true, shared: false, offlineAllowed: true };
   await persistOfflineProject({ id, accountId: user.id, snapshot, draft: initial, localOnly: true, creating: Boolean(designId), authorized: true, prepared: true, updatedAt: Date.now() });
   setOfflineAccess(id, { accountId: user.id, allowed: true });
   return { id };
 }
-export type OfflineDesign = { id: string; name: string; setupStep?: 0 | 1 | 2; role: 'owner' | 'editor' | 'reader'; canManage: boolean; canEdit?: boolean; shared?: boolean; offlineAllowed?: boolean; updatedAt: string; offline?: boolean };
+export type OfflineDesign = { id: string; name: string; setupStep?: 0 | 1 | 2 | 3; role: 'owner' | 'editor' | 'reader'; canManage: boolean; canEdit?: boolean; shared?: boolean; offlineAllowed?: boolean; updatedAt: string; offline?: boolean };
 export async function listDesigns(): Promise<OfflineDesign[]> {
   const user = await identity();
   const local = await listOfflineDesigns(user.id);
@@ -119,7 +134,7 @@ export async function listDesigns(): Promise<OfflineDesign[]> {
 export async function clearOfflineAccount(accountId: string, options: { discard?: boolean } = {}) {
   if (typeof navigator !== 'undefined' && navigator.locks?.query) {
     const locks = await navigator.locks.query();
-    if (locks.held?.some(lock => lock.name?.startsWith('3d-space-project:' + accountId + ':'))) throw new Error('Cierra los diseños abiertos en otras pestañas antes de cerrar sesión.');
+    if ([...(locks.held ?? []), ...(locks.pending ?? [])].some(lock => lock.name?.startsWith('3d-space-project:' + accountId + ':') || lock.name?.startsWith('3d-space-live:' + accountId + ':'))) throw new Error('Cierra los diseños abiertos en otras pestañas antes de cerrar sesión.');
   }
   if (!options.discard && await pendingOfflineCount(accountId)) throw new Error('Hay cambios pendientes. Sincronízalos o descarga una copia antes de cerrar sesión.');
   await clearAccountStorage(accountId); signal();
@@ -153,6 +168,7 @@ async function deleteDesignLocked(id: string) {
 async function removeProject(record: OfflineProjectRecord) {
   const writes: OfflineWrite[] = [{ store: 'projects', key: offlineProjectKey(record.accountId, record.id), remove: true }];
   for (const asset of await listOfflineMetadata<OfflineAssetRecord>('assets')) if (asset.accountId === record.accountId && asset.roomId === record.id) writes.push({ store: 'assets', key: assetKey(record.accountId, record.id, asset.asset.id), remove: true });
+  for (const level of await listOfflineMetadata<{ accountId: string; roomId: string; key: string }>('levels')) if (level.accountId === record.accountId && level.roomId === record.id) writes.push({ store: 'levels', key: level.key, remove: true });
   // All private blobs are room-scoped, including abandoned sketch mutations.
   for (const blob of await listOfflineMetadata<{ accountId: string; roomId: string; key?: string }>('blobs')) {
     if (blob.accountId === record.accountId && blob.roomId === record.id && blob.key) writes.push({ store: 'blobs', key: blob.key, remove: true });
@@ -175,7 +191,7 @@ async function removeCleanProject(accountId: string, id: string, locked = false)
 }
 export async function createRemoteProject(record: OfflineProjectRecord) {
   await verifyAccount(record.accountId);
-  return accountRequest<ProjectSnapshot>('/api/rooms', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Offline-Write': '1', 'X-Account-Id': record.accountId }, body: JSON.stringify({ id: record.id, room: { ...record.snapshot.room, furniture: [] } }) });
+  return accountRequest<ProjectSnapshot>('/api/rooms', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Offline-Write': '1', 'X-Account-Id': record.accountId }, body: JSON.stringify({ id: record.id, project: projectWithoutModels(record.snapshot.project) }) });
 }
 export function soloNetworkDependencies(record: OfflineProjectRecord) {
   const path = '/api/rooms/' + record.id;
@@ -183,10 +199,10 @@ export function soloNetworkDependencies(record: OfflineProjectRecord) {
     persist: persistOfflineProject,
     create: createRemoteProject,
     get: () => accountRequest<ProjectSnapshot>(path),
-    assets: (room: Room) => flushOfflineAssets(record.id, room),
+    assets: (project: ProjectDocument) => flushOfflineAssets(record.id, project),
     finalize: () => flushDeletedModels(record),
-    put: (room: Room, revision: number) => accountRequest<{ room: Room; revision: number }>(path, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Offline-Write': '1', 'X-Account-Id': record.accountId }, body: JSON.stringify({ room, revision }) }),
-    sketch: (draft: { id: string; blob: Blob | null }, snapshot: ProjectSnapshot) => accountRequest<{ hasSketch: boolean; sketchVersion: number }>(path + '/sketch', { method: draft.blob ? 'PUT' : 'DELETE', headers: { ...(draft.blob ? { 'Content-Type': draft.blob.type } : {}), 'X-Offline-Write': '1', 'X-Account-Id': record.accountId, 'X-Sketch-Request-Id': draft.id, 'X-Sketch-Version': String(snapshot.sketchVersion), 'X-Room-Revision': String(snapshot.revision) }, body: draft.blob ?? undefined }),
+    put: (project: ProjectDocument, revision: number, operationId: string) => accountRequest<ProjectSnapshot>(path, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Offline-Write': '1', 'X-Account-Id': record.accountId }, body: JSON.stringify({ project, revision, operationId }) }),
+    sketch: (draft: { id: string; blob: Blob | null }, snapshot: ProjectSnapshot, levelId: string) => accountRequest<{ hasSketch: boolean; version: number }>(path + '/levels/' + encodeURIComponent(levelId) + '/sketch', { method: draft.blob ? 'PUT' : 'DELETE', headers: { ...(draft.blob ? { 'Content-Type': draft.blob.type } : {}), 'X-Offline-Write': '1', 'X-Account-Id': record.accountId, 'X-Sketch-Request-Id': draft.id, 'X-Sketch-Version': String(snapshot.sketches[levelId]?.version ?? 0), 'X-Room-Revision': String(snapshot.revision) }, body: draft.blob ?? undefined }),
   };
 }
 let syncPromise: Promise<void> | undefined;
@@ -212,10 +228,16 @@ export async function syncOfflineAccount() {
               let expected = record.snapshot;
               if (record.localOnly) {
                 expected = await accountRequest<ProjectSnapshot>('/api/rooms/' + record.id);
-                if (expected.accountId !== user.id || !expected.offlineAllowed || expected.revision !== 1 || JSON.stringify(expected.room) !== JSON.stringify({ ...record.snapshot.room, furniture: [] })) throw new AccountRequestError('El diseño cambió antes de eliminarlo. Revisa su versión guardada.', 409);
+                if (expected.accountId !== user.id || !expected.offlineAllowed || expected.revision !== 1 || !sameData(expected.project, projectWithoutModels(record.snapshot.project))) throw new AccountRequestError('El diseño cambió antes de eliminarlo. Revisa su versión guardada.', 409);
               }
-              await accountRequest('/api/rooms/' + record.id, { method: 'DELETE', headers: { 'Content-Type': 'application/json', 'X-Offline-Write': '1', 'X-Account-Id': user.id }, body: JSON.stringify({ revision: expected.revision, sketchVersion: expected.sketchVersion }) });
-            } catch (cause) { if (!(cause instanceof AccountRequestError && cause.status === 404)) throw cause; }
+              await accountRequest('/api/rooms/' + record.id, { method: 'DELETE', headers: { 'Content-Type': 'application/json', 'X-Offline-Write': '1', 'X-Account-Id': user.id }, body: JSON.stringify({ revision: expected.revision, sketches: expected.sketches }) });
+            } catch (cause) {
+              if (cause instanceof AccountRequestError && cause.status === 409) {
+                record.deleted = false; record.error = 'El diseño cambió. Se canceló su eliminación; revisa la versión guardada.';
+                await persistOfflineProject(record); throw new AccountRequestError(record.error, 409);
+              }
+              if (!(cause instanceof AccountRequestError && cause.status === 404)) throw cause;
+            }
             await removeProject(record); return;
           }
           let failure = '', missing = false;
@@ -236,13 +258,17 @@ export async function syncOfflineAccount() {
   return syncPromise;
 }
 
-async function fetchSketch(snapshot: ProjectSnapshot) {
-  if (!snapshot.hasSketch) return undefined;
-  const response = await offlineFetch('/api/rooms/' + snapshot.id + '/sketch?v=' + snapshot.sketchVersion, { credentials: 'same-origin', cache: 'no-store' });
+async function fetchSketch(snapshot: ProjectSnapshot, levelId: string) {
+  const state = snapshot.sketches[levelId]; if (!state?.hasSketch) return undefined;
+  const response = await offlineFetch('/api/rooms/' + snapshot.id + '/levels/' + encodeURIComponent(levelId) + '/sketch?v=' + state.version, { credentials: 'same-origin', cache: 'no-store' });
   if (!response.ok) throw new AccountRequestError('No se pudo descargar el croquis.', response.status);
-  const blob = await response.blob();
-  if (!['image/png', 'image/jpeg', 'image/webp'].includes(blob.type) || blob.size > 10 * 1024 * 1024) throw new Error('El croquis no es válido.');
-  return blob;
+  if (response.headers.get('ETag') !== '"' + snapshot.id + '-' + levelId + '-' + state.version + '"') throw new Error('El croquis cambió durante la descarga.');
+  const blob = await response.blob(); if (!['image/png', 'image/jpeg', 'image/webp'].includes(blob.type) || blob.size > 10 * 1024 * 1024) throw new Error('El croquis no es válido.'); return blob;
+}
+async function fetchSketches(snapshot: ProjectSnapshot) {
+  const values: Record<string, { blob: Blob; version: number }> = {};
+  for (const [levelId, state] of Object.entries(snapshot.sketches)) { const blob = await fetchSketch(snapshot, levelId); if (blob) values[levelId] = { blob, version: state.version }; }
+  return values;
 }
 async function cacheAsset(accountId: string, asset: ModelAsset, destinationRoom = asset.roomId!) {
   if (!asset.roomId) throw new Error('El modelo no tiene un diseño de origen.');
@@ -252,7 +278,8 @@ async function cacheAsset(accountId: string, asset: ModelAsset, destinationRoom 
   if (!response.ok) throw new AccountRequestError('No se pudo descargar ' + asset.name + '.', response.status);
   const blob = await response.blob();
   if (blob.size !== asset.size || blob.size > 20 * 1024 * 1024) throw new Error('El modelo descargado está incompleto.');
-  await cacheOfflineAsset(assetKey(accountId, destinationRoom, asset.id), { accountId, roomId: destinationRoom, asset: { ...asset, roomId: destinationRoom }, blob, pending: false });
+  const verified = await offlineModelMetadata(blob, asset.id, destinationRoom, asset.name);
+  await cacheOfflineAsset(assetKey(accountId, destinationRoom, asset.id), { accountId, roomId: destinationRoom, asset: verified, blob, pending: false });
 }
 export async function prepareOffline(onProgress?: (progress: OfflineProgress) => void): Promise<OfflineSummary> {
   if (preparing) throw new Error('La preparación ya está en curso.');
@@ -283,13 +310,14 @@ export async function prepareOffline(onProgress?: (progress: OfflineProgress) =>
         const previous = await readOfflineProject(room.id);
         if (previous && hasPending(previous)) { if (!previous.prepared) throw new Error('Sincroniza los cambios pendientes antes de preparar todos los diseños.'); complete = true; break; }
         const assets = (await accountRequest<{ models: ModelAsset[] }>('/api/models?room=' + room.id)).models;
-        const available = await listOffline<OfflineAssetRecord>('assets');
+        const available = await listOfflineMetadata<OfflineAssetRecord>('assets');
         for (const asset of assets) if (!available.some(entry => entry.accountId === user.id && entry.roomId === room.id && entry.asset.id === asset.id && !entry.pending)) await cacheAsset(user.id, asset, room.id);
-        for (const item of snapshot.room.furniture) if (item.type === 'custom' && !assets.some(asset => asset.id === item.assetId)) throw new Error('Falta un modelo del diseño.');
-        const sketchBlob = await fetchSketch(snapshot);
+        for (const item of snapshot.project.levels.flatMap(level => level.furniture)) if (item.type === 'custom' && !assets.some(asset => asset.id === item.assetId)) throw new Error('Falta un modelo del diseño.');
+        validateModelBudget(snapshot.project.levels.flatMap(level => level.furniture), new Map(assets.map(asset => [asset.id, asset])));
+        const sketchBlobs = await fetchSketches(snapshot);
         const latest = await accountRequest<ProjectSnapshot>('/api/rooms/' + room.id);
-        if (latest.revision !== snapshot.revision || latest.sketchVersion !== snapshot.sketchVersion || !latest.offlineAllowed) continue;
-        await persistOfflineProject({ id: room.id, accountId: user.id, snapshot, draft: null, authorized: true, prepared: true, updatedAt: Date.now(), sketchBlob, sketchBlobVersion: sketchBlob ? snapshot.sketchVersion : undefined });
+        if (latest.revision !== snapshot.revision || JSON.stringify(latest.sketches) !== JSON.stringify(snapshot.sketches) || !latest.offlineAllowed) continue;
+        await persistOfflineProject({ id: room.id, accountId: user.id, snapshot, draft: null, authorized: true, prepared: true, updatedAt: Date.now(), sketchBlobs });
         complete = true;
       }
       if (!complete) throw new Error('Un diseño siguió cambiando. Vuelve a intentarlo.');
@@ -308,15 +336,15 @@ async function exportRemoteProject(id: string): Promise<ProjectBackup> {
   for (let attempt = 0; attempt < 3; attempt++) {
     const snapshot = await accountRequest<ProjectSnapshot>('/api/rooms/' + id);
     const assets: ProjectBackup['assets'] = [];
-    for (const item of snapshot.room.furniture) if (item.type === 'custom' && !assets.some(asset => asset.id === item.assetId)) {
+    for (const item of snapshot.project.levels.flatMap(level => level.furniture)) if (item.type === 'custom' && !assets.some(asset => asset.id === item.assetId)) {
       const { model } = await accountRequest<{ model: ModelAsset }>('/api/models/' + item.assetId + '?room=' + id + '&metadata=1');
       const response = await offlineFetch('/api/models/' + item.assetId + '?room=' + id, { credentials: 'same-origin' });
       if (!response.ok) throw new AccountRequestError('No se pudo descargar el modelo.', response.status);
       assets.push({ id: model.id, name: model.name, blob: await response.blob() });
     }
-    const sketch = await fetchSketch(snapshot) ?? null;
+    const sketchBlobs = await fetchSketches(snapshot);
     const latest = await accountRequest<ProjectSnapshot>('/api/rooms/' + id);
-    if (latest.revision === snapshot.revision && latest.sketchVersion === snapshot.sketchVersion) return { room: snapshot.room, assets, sketch };
+    if (latest.revision === snapshot.revision && JSON.stringify(latest.sketches) === JSON.stringify(snapshot.sketches)) return { project: snapshot.project, assets, sketches: Object.entries(sketchBlobs).map(([levelId, value]) => ({ levelId, blob: value.blob })) };
   }
   throw new Error('El diseño siguió cambiando. Vuelve a descargarlo.');
 }
@@ -327,8 +355,8 @@ export async function exportOfflineProject(id: string, localOnly = false): Promi
     catch (cause) { if (!record || !(isNetworkError(cause) || cause instanceof AccountRequestError && cause.status === 401)) throw cause; }
   }
   if (!record) throw new Error('Este diseño no está guardado en este dispositivo.');
-  const room = record.draft ?? record.snapshot.room;
-  const required = new Set(room.furniture.filter(item => item.type === 'custom').map(item => item.assetId));
+  const project = record.draft ?? record.snapshot.project;
+  const required = new Set(projectAssetIds(project));
   const records = (await listOffline<OfflineAssetRecord>('assets')).filter(asset => asset.accountId === record.accountId && asset.roomId === id && required.has(asset.asset.id));
   for (const assetId of required) if (!records.some(asset => asset.asset.id === assetId) && !offlineForced() && !localOnly) {
     const { model } = await accountRequest<{ model: ModelAsset }>('/api/models/' + assetId + '?room=' + id + '&metadata=1');
@@ -337,27 +365,27 @@ export async function exportOfflineProject(id: string, localOnly = false): Promi
     if (saved) records.push(saved);
   }
   if ([...required].some(id => !records.some(asset => asset.asset.id === id))) throw new Error('Faltan modelos. Prepara el diseño antes de descargarlo.');
-  let sketch = record.sketchDraft ? record.sketchDraft.blob : record.sketchBlob ?? null;
-  if (record.snapshot.hasSketch && !record.sketchDraft && !sketch && !offlineForced() && !localOnly) {
-    const latest = await accountRequest<ProjectSnapshot>('/api/rooms/' + id);
-    if (latest.sketchVersion === record.snapshot.sketchVersion) sketch = await fetchSketch(latest) ?? null;
+  const sketches: ProjectBackup['sketches'] = [];
+  for (const level of project.levels) {
+    const draft = record.sketchDrafts?.[level.id], state = record.snapshot.sketches[level.id];
+    let blob = draft ? draft.blob : record.sketchBlobs?.[level.id]?.blob;
+    if (!draft && state?.hasSketch && !blob && !offlineForced() && !localOnly) blob = await fetchSketch(record.snapshot, level.id);
+    if (!draft && state?.hasSketch && !blob) throw new Error('Falta el croquis. Prepara el diseño antes de descargarlo.');
+    if (blob) sketches.push({ levelId: level.id, blob });
   }
-  if (record.snapshot.hasSketch && !record.sketchDraft && !sketch) throw new Error('Falta el croquis. Prepara el diseño antes de descargarlo.');
-  return { room, sketch, assets: records.map(asset => ({ id: asset.asset.id, name: asset.asset.name, blob: asset.blob })) };
+  return { project, sketches, assets: records.map(asset => ({ id: asset.asset.id, name: asset.asset.name, blob: asset.blob })) };
 }
 export async function importOfflineProject(id: string, backup: ProjectBackup) {
   const record = await readOfflineProject(id);
   if (!record || record.deleted || !record.authorized) throw new Error('Abre un diseño privado para importar la copia.');
   await validateProjectBackupResources(backup);
-  const room = validateRoom(backup.room), writes: OfflineWrite[] = [], ids = new Map<string, string>();
+  const project = validateProjectDocument({ ...backup.project, id }), writes: OfflineWrite[] = [], ids = new Map<string, string>();
   for (const asset of backup.assets) {
-    const next = crypto.randomUUID(), metadata = await offlineModelMetadata(asset.blob, next, id, asset.name);
-    ids.set(asset.id, next);
+    const next = crypto.randomUUID(), metadata = await offlineModelMetadata(asset.blob, next, id, asset.name); ids.set(asset.id, next);
     writes.push({ store: 'assets', key: assetKey(record.accountId, id, next), value: { accountId: record.accountId, roomId: id, asset: metadata, blob: asset.blob, pending: true } satisfies OfflineAssetRecord });
   }
-  if (backup.sketch && (!['image/png', 'image/jpeg', 'image/webp'].includes(backup.sketch.type) || backup.sketch.size > 10 * 1024 * 1024)) throw new Error('El croquis no es válido.');
-  record.draft = validateRoom({ ...room, furniture: room.furniture.map(item => { if (item.type !== 'custom') return item; const mapped = ids.get(item.assetId!); if (!mapped) throw new Error('Falta un modelo en la copia.'); return { ...item, assetId: mapped }; }) });
-  record.sketchDraft = { id: crypto.randomUUID(), blob: backup.sketch }; record.updatedAt = Date.now();
+  record.draft = validateProjectDocument({ ...project, levels: project.levels.map(level => ({ ...level, furniture: level.furniture.map(item => { if (item.type !== 'custom') return item; const assetId = ids.get(item.assetId!); if (!assetId) throw new Error('Falta un modelo en la copia.'); return { ...item, assetId }; }) })) });
+  record.sketchDrafts = Object.fromEntries(project.levels.map(level => [level.id, { id: crypto.randomUUID(), blob: backup.sketches.find(sketch => sketch.levelId === level.id)?.blob ?? null }])); record.updatedAt = Date.now();
   writes.push(...await projectWrites(record));
   await atomicOffline(record.accountId, writes);
 }
@@ -369,28 +397,28 @@ export async function copyDesign(id: string, suffix = ' (copia)') {
     if (!(cause instanceof AccountRequestError && [403, 404].includes(cause.status)) || !await readOfflineProject(id)) throw cause;
     backup = await exportOfflineProject(id, true);
   }
-  const copy = { ...backup, room: { ...backup.room, name: backup.room.name.slice(0, 100 - suffix.length) + suffix } };
-  const result = await createDesignLocal({ ...copy.room, furniture: [] });
+  const copy = { ...backup, project: { ...backup.project, name: backup.project.name.slice(0, 100 - suffix.length) + suffix } };
+  const result = await createDesignLocal(projectWithoutModels(copy.project));
   try { await importOfflineProject(result.id, copy); }
   catch (cause) { await removeOffline('projects', offlineProjectKey(user.id, result.id)); throw cause; }
   return result;
 }
 export async function deleteOfflineModel(id: string) {
   const user = await identity();
-  const record = (await listOffline<OfflineAssetRecord>('assets')).find(asset => asset.accountId === user.id && asset.asset.id === id);
+  const record = (await listOfflineMetadata<OfflineAssetRecord>('assets')).find(asset => asset.accountId === user.id && asset.asset.id === id);
   if (!record) { await accountRequest('/api/models/' + id, { method: 'DELETE' }); return; }
   const project = await readOfflineProject(record.roomId);
   if (!project) {
     if (offlineForced()) throw new Error('Prepara una copia privada antes de modificar esta biblioteca sin conexión.');
     await accountRequest('/api/models/' + id, { method: 'DELETE' }); await removeOffline('assets', assetKey(user.id, record.roomId, id)); signal(); return;
   }
-  for (const project of await listOffline<OfflineProjectRecord>('projects')) if (project.accountId === user.id && !project.deleted && (project.draft ?? project.snapshot.room).furniture.some(item => item.assetId === id)) throw new Error('Quita el modelo de tus diseños antes de eliminarlo.');
+  for (const project of await listOffline<OfflineProjectRecord>('projects')) if (project.accountId === user.id && !project.deleted && (project.draft ?? project.snapshot.project).levels.flatMap(level => level.furniture).some(item => item.assetId === id)) throw new Error('Quita el modelo de tus diseños antes de eliminarlo.');
   await updateOffline<OfflineAssetRecord>('assets', assetKey(user.id, record.roomId, id), user.id, current => current ? { ...current, deleted: true } : undefined);
   signal();
   if (!offlineForced()) await syncOfflineAccount();
 }
 async function flushDeletedModels(record: OfflineProjectRecord) {
-  for (const asset of await listOffline<OfflineAssetRecord>('assets')) {
+  for (const asset of await listOfflineMetadata<OfflineAssetRecord>('assets')) {
     if (asset.accountId !== record.accountId || asset.roomId !== record.id || !asset.deleted) continue;
     try { await accountRequest('/api/models/' + asset.asset.id + '?room=' + record.id, { method: 'DELETE', headers: { 'Content-Type': 'application/json', 'X-Offline-Write': '1', 'X-Account-Id': record.accountId }, body: JSON.stringify({ revision: record.snapshot.revision }) }); }
     catch (cause) { if (!(cause instanceof AccountRequestError && cause.status === 404)) throw cause; }

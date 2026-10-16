@@ -76,7 +76,7 @@ test('English account forms expose translated validation and password visibility
   await expect(page.getByRole('link', { name: 'Privacy notice', exact: true })).toHaveCount(0);
 });
 
-test('mobile settings and Information lead to an English setup, editor and model workshop', async ({ page, context }) => {
+test('mobile settings and Information lead to an English setup, editor and model workshop', async ({ page, context }, testInfo) => {
   const username = await createAccount(context.request);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/designs');
@@ -108,14 +108,22 @@ test('mobile settings and Information lead to an English setup, editor and model
   await page.getByLabel('Design name', { exact: true }).fill('My unchanged project name');
   await page.getByLabel('Design name', { exact: true }).press('Tab');
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect(page.getByRole('list', { name: 'New design steps', exact: true }).getByRole('listitem').filter({ hasText: 'Roof' })).toHaveAttribute('aria-current', 'step');
+  await page.getByRole('button', { name: 'Skip', exact: true }).click();
   await expect(page.getByRole('list', { name: 'New design steps', exact: true }).getByRole('listitem').filter({ hasText: 'Colors' })).toHaveAttribute('aria-current', 'step');
   await page.getByRole('button', { name: 'Skip', exact: true }).click();
   await expect(page.getByRole('list', { name: 'New design steps', exact: true }).getByRole('listitem').filter({ hasText: 'Furniture' })).toHaveAttribute('aria-current', 'step');
   await page.getByRole('button', { name: 'Remove Main light', exact: true }).click();
   await page.getByRole('button', { name: 'Skip', exact: true }).click();
-  await expect(page.getByLabel('Project name', { exact: true })).toHaveValue('My unchanged project name');
+  // Windows WebKit can block its first WebGL frame while compiling shaders; keep other checks at their normal timeout.
+  const firstEditorTimeout = testInfo.project.name === 'webkit' ? 45000 : 15000;
+  await expect(page.getByLabel('Project name', { exact: true })).toHaveValue('My unchanged project name', { timeout: firstEditorTimeout });
+  await expect.poll(async () => {
+    const raw = await page.locator('.room-scene canvas').getAttribute('data-scene-metrics');
+    return raw ? JSON.parse(raw).drawCalls : 0;
+  }, { timeout: firstEditorTimeout }).toBeGreaterThan(0);
   await page.getByRole('button', { name: 'Items', exact: true }).click();
-  await expect(page.locator('.tree-item').filter({ hasText: 'Main light' })).toHaveCount(1);
+  await expect(page.locator('.tree-item').filter({ hasText: 'Main light' })).toHaveCount(0);
   await expect(page.locator('.tree-item').filter({ hasText: 'Luz principal' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Close items', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Walk through', exact: true })).toBeVisible();

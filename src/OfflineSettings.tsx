@@ -5,6 +5,7 @@ import { checkAppUpdate, confirmAllLocalSaved, confirmLocalSaved, getAppOfflineS
 import { offlineForced, setOfflineMode, subscribeOfflineMode } from './offlineMode';
 import { offlineSummary, prepareOffline, syncOfflineAccount, type OfflineSummary } from './offlineService';
 import LanguageSelector from './LanguageSelector';
+import GraphicsSettings from './GraphicsSettings.tsx';
 import './information.css';
 import './offline.css';
 
@@ -47,6 +48,7 @@ export default function OfflineSettings() {
     <dialog ref={dialog} className="app-dialog offline-settings" onCancel={() => setOpen(false)} onClick={event => { if (event.target === event.currentTarget) setOpen(false); }}>
       <header className="dialog-heading"><h2>{t("Ajustes")}</h2><button type="button" className="icon-button" aria-label={t("Cerrar ajustes")} onClick={() => setOpen(false)}><X size={20} /></button></header>
       <section className="settings-language" aria-labelledby="language-heading"><h3 id="language-heading">{t('Idioma')}</h3><LanguageSelector /></section>
+      <GraphicsSettings />
       <section aria-labelledby="offline-heading"><h3 id="offline-heading"><WifiOff size={19} />{t("Sin conexión")}</h3>
         <p>{t("Prepara tus diseños privados y modelos para usarlos en este dispositivo.")}</p>
         <div className="offline-setting-row"><span>{t("Modo sin conexión")}</span><button type="button" role="switch" aria-label={t("Modo sin conexión")} aria-checked={forced} className={'switch ' + (forced ? 'on' : '')} disabled={pending || !summary || (!forced && (!summary.prepared || !app.ready))} onClick={() => void run(async () => {

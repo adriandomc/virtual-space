@@ -1,0 +1,836 @@
+{
+  "browser": "155.0.8059.84",
+  "notes": "rAF cadence is sampled during keyboard movement; frameMs measures CPU work, not GPU frame time. These observations do not guarantee FPS on other devices.",
+  "results": [
+    {
+      "count": 1,
+      "backend": "webgpu",
+      "timings": [
+        28,
+        34,
+        28,
+        31,
+        32,
+        24,
+        28,
+        28,
+        29,
+        27,
+        28,
+        32,
+        26,
+        28,
+        28,
+        30,
+        34,
+        25,
+        28,
+        28
+      ],
+      "initial": {
+        "sampledAt": 1792177329892,
+        "activeLevelId": "1ca16fc9-aa44-44d4-81c4-8b20132c486c",
+        "levels": 1,
+        "residentLevels": 1,
+        "architectureBuilds": 1,
+        "gpuGeometries": 68,
+        "gpuTextures": 8,
+        "drawCalls": 66,
+        "renderedTriangles": 1291,
+        "frameMs": 2.3,
+        "walk": null,
+        "meshes": 137,
+        "triangles": 4946,
+        "geometryBytes": 213312,
+        "textures": 0,
+        "textureBytes": 0
+      },
+      "afterLevelSwitches": {
+        "sampledAt": 1792177330975,
+        "activeLevelId": "1ca16fc9-aa44-44d4-81c4-8b20132c486c",
+        "levels": 1,
+        "residentLevels": 1,
+        "architectureBuilds": 1,
+        "gpuGeometries": 68,
+        "gpuTextures": 8,
+        "drawCalls": 66,
+        "renderedTriangles": 1291,
+        "frameMs": 1.5,
+        "walk": null,
+        "meshes": 137,
+        "triangles": 4946,
+        "geometryBytes": 213312,
+        "textures": 0,
+        "textureBytes": 0
+      },
+      "baseline": {
+        "sampledAt": 1792177333191,
+        "activeLevelId": "1ca16fc9-aa44-44d4-81c4-8b20132c486c",
+        "levels": 1,
+        "residentLevels": 1,
+        "architectureBuilds": 1,
+        "gpuGeometries": 68,
+        "gpuTextures": 8,
+        "drawCalls": 66,
+        "renderedTriangles": 1291,
+        "frameMs": 1.5,
+        "walk": {
+          "levelId": "1ca16fc9-aa44-44d4-81c4-8b20132c486c",
+          "feetY": 0,
+          "eyeY": 1.6,
+          "x": 0,
+          "z": 0,
+          "yaw": 0,
+          "surfaceId": "6a5cc70a-077d-4f63-b2be-74347bed996e",
+          "blocked": false
+        },
+        "meshes": 137,
+        "triangles": 4946,
+        "geometryBytes": 213312,
+        "textures": 0,
+        "textureBytes": 0
+      },
+      "after20Walkthroughs": {
+        "sampledAt": 1792177354475,
+        "activeLevelId": "1ca16fc9-aa44-44d4-81c4-8b20132c486c",
+        "levels": 1,
+        "residentLevels": 1,
+        "architectureBuilds": 1,
+        "gpuGeometries": 68,
+        "gpuTextures": 8,
+        "drawCalls": 66,
+        "renderedTriangles": 1291,
+        "frameMs": 1.5,
+        "walk": {
+          "levelId": "1ca16fc9-aa44-44d4-81c4-8b20132c486c",
+          "feetY": 0,
+          "eyeY": 1.6,
+          "x": 0,
+          "z": 0.9003599999999982,
+          "yaw": 0,
+          "surfaceId": "6a5cc70a-077d-4f63-b2be-74347bed996e",
+          "blocked": false
+        },
+        "meshes": 137,
+        "triangles": 4946,
+        "geometryBytes": 213312,
+        "textures": 0,
+        "textureBytes": 0
+      },
+      "walks": [
+        {
+          "index": 0,
+          "durationMs": 1237,
+          "forwardDistance": 0.18000000000000002,
+          "backwardDistance": 0.2403,
+          "sampledRenderCpuMs": 1.4,
+          "rafIntervalsMs": [
+            11.100000000000364,
+            5.599999999999454,
+            5.5,
+            5.700000000000728,
+            5.5,
+            5.5,
+            5.5,
+            5.599999999999454,
+            5.5,
+            5.600000000000364,
+            5.5
+          ]
+        },
+        {
+          "index": 1,
+          "durationMs": 921,
+          "forwardDistance": 0.09000000000000001,
+          "backwardDistance": 0.1499399999999987,
+          "sampledRenderCpuMs": 1.3
+        },
+        {
+          "index": 2,
+          "durationMs": 901,
+          "forwardDistance": 0.1200600000000013,
+          "backwardDistance": 0.149940000000002,
+          "sampledRenderCpuMs": 1.3
+        },
+        {
+          "index": 3,
+          "durationMs": 906,
+          "forwardDistance": 0.1200600000000013,
+          "backwardDistance": 0.15011999999999934,
+          "sampledRenderCpuMs": 1.4
+        },
+        {
+          "index": 4,
+          "durationMs": 1163,
+          "forwardDistance": 0.11988000000000065,
+          "backwardDistance": 0.15011999999999934,
+          "sampledRenderCpuMs": 1.6
+        },
+        {
+          "index": 5,
+          "durationMs": 899,
+          "forwardDistance": 0.12005999999999803,
+          "backwardDistance": 0.14993999999999869,
+          "sampledRenderCpuMs": 1.4
+        },
+        {
+          "index": 6,
+          "durationMs": 1121,
+          "forwardDistance": 0.09,
+          "backwardDistance": 0.149940000000002,
+          "sampledRenderCpuMs": 1.7
+        },
+        {
+          "index": 7,
+          "durationMs": 822,
+          "forwardDistance": 0.06011999999999934,
+          "backwardDistance": 0.059939999999998717,
+          "sampledRenderCpuMs": 1.3
+        },
+        {
+          "index": 8,
+          "durationMs": 1138,
+          "forwardDistance": 0.09,
+          "backwardDistance": 0.15012000000000267,
+          "sampledRenderCpuMs": 1.5
+        },
+        {
+          "index": 9,
+          "durationMs": 823,
+          "forwardDistance": 0.060120000000002616,
+          "backwardDistance": 0.09017999999999743,
+          "sampledRenderCpuMs": 1.2
+        },
+        {
+          "index": 10,
+          "durationMs": 1167,
+          "forwardDistance": 0.11988000000000393,
+          "backwardDistance": 0.15012000000000264,
+          "sampledRenderCpuMs": 1.4
+        },
+        {
+          "index": 11,
+          "durationMs": 851,
+          "forwardDistance": 0.08981999999999607,
+          "backwardDistance": 0.15012000000000258,
+          "sampledRenderCpuMs": 1.4
+        },
+        {
+          "index": 12,
+          "durationMs": 1160,
+          "forwardDistance": 0.12023999999999868,
+          "backwardDistance": 0.14994000000000524,
+          "sampledRenderCpuMs": 1.3
+        },
+        {
+          "index": 13,
+          "durationMs": 839,
+          "forwardDistance": 0.06011999999999612,
+          "backwardDistance": 0.09017999999999743,
+          "sampledRenderCpuMs": 1.4
+        },
+        {
+          "index": 14,
+          "durationMs": 1132,
+          "forwardDistance": 0.09018000000000392,
+          "backwardDistance": 0.14993999999999874,
+          "sampledRenderCpuMs": 1.2
+        },
+        {
+          "index": 15,
+          "durationMs": 812,
+          "forwardDistance": 0.060120000000002616,
+          "backwardDistance": 0.08999999999999997,
+          "sampledRenderCpuMs": 1.2
+        },
+        {
+          "index": 16,
+          "durationMs": 1133,
+          "forwardDistance": 0.08999999999999997,
+          "backwardDistance": 0.14993999999999863,
+          "sampledRenderCpuMs": 1.5
+        },
+        {
+          "index": 17,
+          "durationMs": 1134,
+          "forwardDistance": 0.08999999999999997,
+          "backwardDistance": 0.18017999999999734,
+          "sampledRenderCpuMs": 1.3
+        },
+        {
+          "index": 18,
+          "durationMs": 890,
+          "forwardDistance": 0.08999999999999997,
+          "backwardDistance": 0.14994000000000518,
+          "sampledRenderCpuMs": 1.5
+        },
+        {
+          "index": 19,
+          "durationMs": 1132,
+          "forwardDistance": 0.08999999999999997,
+          "backwardDistance": 0.15011999999999603,
+          "sampledRenderCpuMs": 1.4
+        }
+      ],
+      "hardware": {
+        "renderer": "ANGLE (AMD, AMD Radeon(TM) 8060S Graphics (0x00001586) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+        "vendor": "Google Inc. (AMD)",
+        "identified": true
+      }
+    },
+    {
+      "count": 4,
+      "backend": "webgpu",
+      "timings": [
+        25,
+        241,
+        246,
+        239,
+        242,
+        250,
+        255,
+        250,
+        258,
+        266,
+        262,
+        253,
+        263,
+        243,
+        243,
+        249,
+        265,
+        243,
+        247,
+        248
+      ],
+      "initial": {
+        "sampledAt": 1792177356973,
+        "activeLevelId": "941b4f60-3b04-4a60-9cb8-99c53326a511",
+        "levels": 4,
+        "residentLevels": 1,
+        "architectureBuilds": 4,
+        "gpuGeometries": 95,
+        "gpuTextures": 8,
+        "drawCalls": 353,
+        "renderedTriangles": 4267,
+        "frameMs": 5,
+        "walk": null,
+        "meshes": 188,
+        "triangles": 5558,
+        "geometryBytes": 241536,
+        "textures": 0,
+        "textureBytes": 0
+      },
+      "afterLevelSwitches": {
+        "sampledAt": 1792177362227,
+        "activeLevelId": "941b4f60-3b04-4a60-9cb8-99c53326a511",
+        "levels": 4,
+        "residentLevels": 1,
+        "architectureBuilds": 4,
+        "gpuGeometries": 95,
+        "gpuTextures": 8,
+        "drawCalls": 353,
+        "renderedTriangles": 4267,
+        "frameMs": 3.6,
+        "walk": null,
+        "meshes": 188,
+        "triangles": 5558,
+        "geometryBytes": 241536,
+        "textures": 0,
+        "textureBytes": 0
+      },
+      "baseline": {
+        "sampledAt": 1792177364387,
+        "activeLevelId": "941b4f60-3b04-4a60-9cb8-99c53326a511",
+        "levels": 4,
+        "residentLevels": 1,
+        "architectureBuilds": 4,
+        "gpuGeometries": 95,
+        "gpuTextures": 8,
+        "drawCalls": 66,
+        "renderedTriangles": 1291,
+        "frameMs": 1.7,
+        "walk": {
+          "levelId": "941b4f60-3b04-4a60-9cb8-99c53326a511",
+          "feetY": 0,
+          "eyeY": 1.6,
+          "x": 0,
+          "z": 0,
+          "yaw": 0,
+          "surfaceId": "b464166c-53a7-4950-be83-4139d7b4f3eb",
+          "blocked": false
+        },
+        "meshes": 188,
+        "triangles": 5558,
+        "geometryBytes": 241536,
+        "textures": 0,
+        "textureBytes": 0
+      },
+      "after20Walkthroughs": {
+        "sampledAt": 1792177385649,
+        "activeLevelId": "941b4f60-3b04-4a60-9cb8-99c53326a511",
+        "levels": 4,
+        "residentLevels": 1,
+        "architectureBuilds": 4,
+        "gpuGeometries": 95,
+        "gpuTextures": 8,
+        "drawCalls": 66,
+        "renderedTriangles": 1291,
+        "frameMs": 1.7,
+        "walk": {
+          "levelId": "941b4f60-3b04-4a60-9cb8-99c53326a511",
+          "feetY": 0,
+          "eyeY": 1.6,
+          "x": 0,
+          "z": 0.8704800000000171,
+          "yaw": 0,
+          "surfaceId": "b464166c-53a7-4950-be83-4139d7b4f3eb",
+          "blocked": false
+        },
+        "meshes": 188,
+        "triangles": 5558,
+        "geometryBytes": 241536,
+        "textures": 0,
+        "textureBytes": 0
+      },
+      "walks": [
+        {
+          "index": 0,
+          "durationMs": 1223,
+          "forwardDistance": 0.15011999999999937,
+          "backwardDistance": 0.17981999999999934,
+          "sampledRenderCpuMs": 1.6,
+          "rafIntervalsMs": [
+            5.700000000000728,
+            5.5,
+            5.599999999998545,
+            5.5,
+            5.5,
+            5.700000000000728,
+            5.5,
+            5.5,
+            5.600000000000364,
+            5.600000000000364,
+            5.5
+          ]
+        },
+        {
+          "index": 1,
+          "durationMs": 817,
+          "forwardDistance": 0.060119999999999355,
+          "backwardDistance": 0.059940000000001964,
+          "sampledRenderCpuMs": 1.8
+        },
+        {
+          "index": 2,
+          "durationMs": 1088,
+          "forwardDistance": 0.059940000000001964,
+          "backwardDistance": 0.06012000000000262,
+          "sampledRenderCpuMs": 1.8
+        },
+        {
+          "index": 3,
+          "durationMs": 867,
+          "forwardDistance": 0.09018000000000066,
+          "backwardDistance": 0.1499399999999987,
+          "sampledRenderCpuMs": 1.9
+        },
+        {
+          "index": 4,
+          "durationMs": 1115,
+          "forwardDistance": 0.09,
+          "backwardDistance": 0.149940000000002,
+          "sampledRenderCpuMs": 1.9
+        },
+        {
+          "index": 5,
+          "durationMs": 885,
+          "forwardDistance": 0.11988000000000065,
+          "backwardDistance": 0.14993999999999869,
+          "sampledRenderCpuMs": 1.9
+        },
+        {
+          "index": 6,
+          "durationMs": 1139,
+          "forwardDistance": 0.09,
+          "backwardDistance": 0.18,
+          "sampledRenderCpuMs": 2
+        },
+        {
+          "index": 7,
+          "durationMs": 807,
+          "forwardDistance": 0.06030000000000002,
+          "backwardDistance": 0.05994000000000521,
+          "sampledRenderCpuMs": 1.7
+        },
+        {
+          "index": 8,
+          "durationMs": 1132,
+          "forwardDistance": 0.08982000000000262,
+          "backwardDistance": 0.1501199999999961,
+          "sampledRenderCpuMs": 1.7
+        },
+        {
+          "index": 9,
+          "durationMs": 855,
+          "forwardDistance": 0.09,
+          "backwardDistance": 0.15012000000000267,
+          "sampledRenderCpuMs": 1.6
+        },
+        {
+          "index": 10,
+          "durationMs": 1167,
+          "forwardDistance": 0.1499399999999987,
+          "backwardDistance": 0.14994000000000526,
+          "sampledRenderCpuMs": 1.8
+        },
+        {
+          "index": 11,
+          "durationMs": 866,
+          "forwardDistance": 0.08981999999999613,
+          "backwardDistance": 0.15030000000000004,
+          "sampledRenderCpuMs": 1.6
+        },
+        {
+          "index": 12,
+          "durationMs": 1132,
+          "forwardDistance": 0.09000000000000002,
+          "backwardDistance": 0.18000000000000005,
+          "sampledRenderCpuMs": 1.9
+        },
+        {
+          "index": 13,
+          "durationMs": 833,
+          "forwardDistance": 0.05976000000000131,
+          "backwardDistance": 0.06012000000000267,
+          "sampledRenderCpuMs": 2.1
+        },
+        {
+          "index": 14,
+          "durationMs": 1135,
+          "forwardDistance": 0.08999999999999997,
+          "backwardDistance": 0.14993999999999863,
+          "sampledRenderCpuMs": 1.9
+        },
+        {
+          "index": 15,
+          "durationMs": 912,
+          "forwardDistance": 0.08999999999999997,
+          "backwardDistance": 0.20988000000000395,
+          "sampledRenderCpuMs": 1.8
+        },
+        {
+          "index": 16,
+          "durationMs": 1111,
+          "forwardDistance": 0.05993999999999866,
+          "backwardDistance": 0.11987999999999732,
+          "sampledRenderCpuMs": 2
+        },
+        {
+          "index": 17,
+          "durationMs": 827,
+          "forwardDistance": 0.05993999999999866,
+          "backwardDistance": 0.05993999999999866,
+          "sampledRenderCpuMs": 1.8
+        },
+        {
+          "index": 18,
+          "durationMs": 1112,
+          "forwardDistance": 0.08999999999999997,
+          "backwardDistance": 0.15012000000000258,
+          "sampledRenderCpuMs": 2.3
+        },
+        {
+          "index": 19,
+          "durationMs": 1166,
+          "forwardDistance": 0.12006000000000128,
+          "backwardDistance": 0.1503,
+          "sampledRenderCpuMs": 2.2
+        }
+      ],
+      "hardware": {
+        "renderer": "ANGLE (AMD, AMD Radeon(TM) 8060S Graphics (0x00001586) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+        "vendor": "Google Inc. (AMD)",
+        "identified": true
+      }
+    },
+    {
+      "count": 12,
+      "backend": "webgpu",
+      "timings": [
+        36,
+        323,
+        268,
+        241,
+        240,
+        259,
+        274,
+        251,
+        239,
+        247,
+        264,
+        246,
+        249,
+        236,
+        259,
+        240,
+        238,
+        251,
+        278,
+        337
+      ],
+      "initial": {
+        "sampledAt": 1792177388693,
+        "activeLevelId": "96a2be87-b24b-40b3-a937-2f0fa3e46a37",
+        "levels": 12,
+        "residentLevels": 1,
+        "architectureBuilds": 12,
+        "gpuGeometries": 167,
+        "gpuTextures": 8,
+        "drawCalls": 396,
+        "renderedTriangles": 4699,
+        "frameMs": 7.3,
+        "walk": null,
+        "meshes": 324,
+        "triangles": 7190,
+        "geometryBytes": 316800,
+        "textures": 0,
+        "textureBytes": 0
+      },
+      "afterLevelSwitches": {
+        "sampledAt": 1792177394132,
+        "activeLevelId": "96a2be87-b24b-40b3-a937-2f0fa3e46a37",
+        "levels": 12,
+        "residentLevels": 1,
+        "architectureBuilds": 12,
+        "gpuGeometries": 167,
+        "gpuTextures": 8,
+        "drawCalls": 66,
+        "renderedTriangles": 1291,
+        "frameMs": 2.1,
+        "walk": null,
+        "meshes": 324,
+        "triangles": 7190,
+        "geometryBytes": 316800,
+        "textures": 0,
+        "textureBytes": 0
+      },
+      "baseline": {
+        "sampledAt": 1792177396421,
+        "activeLevelId": "96a2be87-b24b-40b3-a937-2f0fa3e46a37",
+        "levels": 12,
+        "residentLevels": 1,
+        "architectureBuilds": 12,
+        "gpuGeometries": 167,
+        "gpuTextures": 8,
+        "drawCalls": 66,
+        "renderedTriangles": 1291,
+        "frameMs": 2,
+        "walk": {
+          "levelId": "96a2be87-b24b-40b3-a937-2f0fa3e46a37",
+          "feetY": 0,
+          "eyeY": 1.6,
+          "x": 0,
+          "z": 0,
+          "yaw": 0,
+          "surfaceId": "f123eb4e-931d-41bf-9716-fa0e647b94c9",
+          "blocked": false
+        },
+        "meshes": 324,
+        "triangles": 7190,
+        "geometryBytes": 316800,
+        "textures": 0,
+        "textureBytes": 0
+      },
+      "after20Walkthroughs": {
+        "sampledAt": 1792177417616,
+        "activeLevelId": "96a2be87-b24b-40b3-a937-2f0fa3e46a37",
+        "levels": 12,
+        "residentLevels": 1,
+        "architectureBuilds": 12,
+        "gpuGeometries": 167,
+        "gpuTextures": 8,
+        "drawCalls": 66,
+        "renderedTriangles": 1291,
+        "frameMs": 1.8,
+        "walk": {
+          "levelId": "96a2be87-b24b-40b3-a937-2f0fa3e46a37",
+          "feetY": 0,
+          "eyeY": 1.6,
+          "x": 0,
+          "z": 0.932580000000004,
+          "yaw": 0,
+          "surfaceId": "f123eb4e-931d-41bf-9716-fa0e647b94c9",
+          "blocked": false
+        },
+        "meshes": 324,
+        "triangles": 7190,
+        "geometryBytes": 316800,
+        "textures": 0,
+        "textureBytes": 0
+      },
+      "walks": [
+        {
+          "index": 0,
+          "durationMs": 1170,
+          "forwardDistance": 0.14994000000000196,
+          "backwardDistance": 0.149940000000002,
+          "sampledRenderCpuMs": 1.9,
+          "rafIntervalsMs": [
+            5.5,
+            5.700000000000728,
+            5.399999999999636,
+            5.600000000000364,
+            5.5,
+            5.599999999998545,
+            5.600000000000364,
+            5.5,
+            5.600000000000364,
+            5.5,
+            5.600000000000364
+          ]
+        },
+        {
+          "index": 1,
+          "durationMs": 891,
+          "forwardDistance": 0.09,
+          "backwardDistance": 0.17010000000000003,
+          "sampledRenderCpuMs": 2.1
+        },
+        {
+          "index": 2,
+          "durationMs": 884,
+          "forwardDistance": 0.09000000000000001,
+          "backwardDistance": 0.14975999999999803,
+          "sampledRenderCpuMs": 2.6
+        },
+        {
+          "index": 3,
+          "durationMs": 1144,
+          "forwardDistance": 0.08981999999999934,
+          "backwardDistance": 0.14993999999999869,
+          "sampledRenderCpuMs": 1.9
+        },
+        {
+          "index": 4,
+          "durationMs": 865,
+          "forwardDistance": 0.09,
+          "backwardDistance": 0.18000000000000005,
+          "sampledRenderCpuMs": 2.3
+        },
+        {
+          "index": 5,
+          "durationMs": 1133,
+          "forwardDistance": 0.0901799999999974,
+          "backwardDistance": 0.17982000000000262,
+          "sampledRenderCpuMs": 2.2
+        },
+        {
+          "index": 6,
+          "durationMs": 867,
+          "forwardDistance": 0.09000000000000002,
+          "backwardDistance": 0.18000000000000005,
+          "sampledRenderCpuMs": 2.3
+        },
+        {
+          "index": 7,
+          "durationMs": 1091,
+          "forwardDistance": 0.059939999999998717,
+          "backwardDistance": 0.06030000000000002,
+          "sampledRenderCpuMs": 2.2
+        },
+        {
+          "index": 8,
+          "durationMs": 1110,
+          "forwardDistance": 0.059939999999998717,
+          "backwardDistance": 0.08999999999999997,
+          "sampledRenderCpuMs": 2.1
+        },
+        {
+          "index": 9,
+          "durationMs": 860,
+          "forwardDistance": 0.08999999999999997,
+          "backwardDistance": 0.12006000000000128,
+          "sampledRenderCpuMs": 2.3
+        },
+        {
+          "index": 10,
+          "durationMs": 1083,
+          "forwardDistance": 0.059939999999998717,
+          "backwardDistance": 0.08999999999999991,
+          "sampledRenderCpuMs": 2.7
+        },
+        {
+          "index": 11,
+          "durationMs": 1015,
+          "forwardDistance": 0.15012000000000258,
+          "backwardDistance": 0.28187999999999747,
+          "sampledRenderCpuMs": 2.7
+        },
+        {
+          "index": 12,
+          "durationMs": 897,
+          "forwardDistance": 0.12006000000000128,
+          "backwardDistance": 0.12006000000000128,
+          "sampledRenderCpuMs": 2.2
+        },
+        {
+          "index": 13,
+          "durationMs": 1111,
+          "forwardDistance": 0.05993999999999866,
+          "backwardDistance": 0.08999999999999997,
+          "sampledRenderCpuMs": 2.4
+        },
+        {
+          "index": 14,
+          "durationMs": 883,
+          "forwardDistance": 0.08981999999999601,
+          "backwardDistance": 0.17999999999999994,
+          "sampledRenderCpuMs": 2.2
+        },
+        {
+          "index": 15,
+          "durationMs": 1157,
+          "forwardDistance": 0.08982000000000256,
+          "backwardDistance": 0.14993999999999863,
+          "sampledRenderCpuMs": 2.1
+        },
+        {
+          "index": 16,
+          "durationMs": 838,
+          "forwardDistance": 0.060119999999996065,
+          "backwardDistance": 0.05993999999999866,
+          "sampledRenderCpuMs": 2.4
+        },
+        {
+          "index": 17,
+          "durationMs": 1189,
+          "forwardDistance": 0.11987999999999732,
+          "backwardDistance": 0.17999999999999994,
+          "sampledRenderCpuMs": 2.3
+        },
+        {
+          "index": 18,
+          "durationMs": 824,
+          "forwardDistance": 0.05994000000000521,
+          "backwardDistance": 0.05994000000000521,
+          "sampledRenderCpuMs": 2.5
+        },
+        {
+          "index": 19,
+          "durationMs": 1102,
+          "forwardDistance": 0.08982000000000256,
+          "backwardDistance": 0.09017999999999737,
+          "sampledRenderCpuMs": 2.4
+        }
+      ],
+      "hardware": {
+        "renderer": "ANGLE (AMD, AMD Radeon(TM) 8060S Graphics (0x00001586) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+        "vendor": "Google Inc. (AMD)",
+        "identified": true
+      }
+    }
+  ],
+  "date": "2026-10-16",
+  "codeRevision": "668feaa321fac37c4e725d984b4c1a30892be1ee"
+}

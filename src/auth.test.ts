@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
-import { createDefaultRoom } from './model';
+import { createDefaultProject } from './projectDocument';
 import { createServer } from './server';
 
 const listen = async (server: Server) => {
@@ -28,7 +28,7 @@ test('cuentas sin correo, sesiones del servidor y aislamiento de diseños', asyn
   try {
     assert.deepEqual(await (await send('/api/auth/session')).json(), { user: null });
     assert.equal((await send('/api/rooms')).status, 401);
-    assert.equal((await send('/api/rooms', 'POST', { id: randomUUID(), room: createDefaultRoom() })).status, 401);
+    assert.equal((await send('/api/rooms', 'POST', { id: randomUUID(), project: createDefaultProject() })).status, 401);
     for (const patch of [
       { username: 'ab' }, { username: 'Álex' }, { username: 'a-b' }, { username: 'x'.repeat(33) },
       { password: 'short', confirmPassword: 'short' }, { password: 'x'.repeat(129), confirmPassword: 'x'.repeat(129) }, { confirmPassword: 'other-password' },
@@ -49,19 +49,20 @@ test('cuentas sin correo, sesiones del servidor y aislamiento de diseños', asyn
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM sessions WHERE token_hash = ?').get(originalCookie.split('=')[1])!.count, 0);
     database.close();
 
-    const id = randomUUID(), room = { ...createDefaultRoom(), name: 'Mi diseño' }, path = '/api/rooms/' + id;
-    const created = await send('/api/rooms', 'POST', { id, room }, originalCookie);
+    const id = randomUUID(), project = createDefaultProject('Mi diseño', undefined, id), path = '/api/rooms/' + id;
+    const sketchPath = path + '/levels/' + project.levels[0].id + '/sketch';
+    const created = await send('/api/rooms', 'POST', { id, project }, originalCookie);
     assert.equal(created.status, 201); assert.equal((await created.json()).shared, false);
     assert.equal((await send(path)).status, 404); assert.equal((await send(path, 'GET', undefined, otherCookie)).status, 404);
-    assert.equal((await send(path + '/sketch')).status, 404);
+    assert.equal((await send(sketchPath)).status, 404);
     const library = await (await send('/api/rooms', 'GET', undefined, originalCookie)).json();
     assert.deepEqual(library.rooms, [{ id, name: 'Mi diseño', role: 'owner', canManage: true, canEdit: true, shared: false, offlineAllowed: true, updatedAt: new Date(clock).toISOString() }]);
     assert.deepEqual((await (await send('/api/rooms', 'GET', undefined, otherCookie)).json()).rooms, []);
     assert.equal((await send(path + '/share', 'POST', { enabled: true }, otherCookie)).status, 404);
     assert.equal((await send(path + '/share', 'POST', { enabled: 'true' }, originalCookie)).status, 400);
     assert.equal((await send(path + '/share', 'POST', { enabled: true }, originalCookie)).status, 200);
-    const shared = await (await send(path)).json(); assert.equal(shared.canEdit, false); assert.deepEqual(shared.room, room);
-    for (const endpoint of [path, path + '/sketch']) assert.equal((await send(endpoint, 'DELETE', undefined, otherCookie)).status, 403);
+    const shared = await (await send(path)).json(); assert.equal(shared.canEdit, false); assert.deepEqual(shared.project, project);
+    for (const endpoint of [path, sketchPath]) assert.equal((await send(endpoint, 'DELETE', undefined, otherCookie)).status, 403);
     assert.equal((await send(path + '/share', 'POST', { enabled: false }, otherCookie)).status, 403);
     assert.equal((await send(path + '/share', 'POST', { enabled: false }, originalCookie)).status, 200);
     assert.equal((await send(path)).status, 404);
