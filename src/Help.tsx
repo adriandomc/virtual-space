@@ -206,7 +206,8 @@ const sections: HelpSection[] = [
       "Puedes abrir la biblioteca, crear y editar diseños, dibujar plantas, importar proyectos, crear modelos y recorrer habitaciones. No se envían cambios ni se consultan notificaciones. Compartir y la colaboración permanecen desactivados.",
       "Cuando quieras enviar tus cambios, vuelve a tener conexión y desactiva el modo. La aplicación comprueba la cuenta y los permisos y sincroniza todos los pendientes, también los diseños que no tienes abiertos y los modelos no insertados.",
       "Si la sesión venció, puedes seguir usando y descargando el trabajo local. Para sincronizar debes entrar de nuevo en la misma cuenta. Mantén la aplicación abierta hasta que terminen los cambios pendientes.",
-      "Para instalarla, usa Instalar 3D Space si aparece en Ajustes, o la opción de instalar del navegador. En iPhone o iPad, abre el menú Compartir de Safari y elige Añadir a pantalla de inicio."
+      "Para instalarla, usa Instalar 3D Space si aparece en Ajustes, o la opción de instalar del navegador. En iPhone o iPad, abre el menú Compartir de Safari y elige Añadir a pantalla de inicio.",
+      "Cuando aparezca Actualización disponible, pulsa Actualizar ahora. El aviso también aparece si una vista no pudo abrirse. Antes de aplicar la actualización, la aplicación comprueba el guardado en todas las pestañas; termina o cancela los trazados y guarda o cierra los modelos pendientes. Si no puede continuar, el aviso muestra el motivo y conserva tu trabajo. Puedes usar Recordar más tarde y actualizar después desde Ajustes → Actualizar aplicación. En modo sin conexión no se ofrece la actualización."
     ],
     "note": "Prepara el dispositivo antes de quedarte sin internet. El navegador puede borrar datos o quedarse sin espacio: conserva una copia descargada de lo importante. Trabajar sin red no renueva el plazo de inactividad de la cuenta.",
     "image": {
