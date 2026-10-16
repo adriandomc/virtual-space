@@ -58,7 +58,11 @@ export default function Landing() {
   return <div className="landing">
     <header className="landing-header">
       <a className="landing-logo" href="/" aria-label={t("3D Space")}><BrandMark /></a>
-      <div className="landing-header-actions"><a className="landing-enter" href="/login">{t("Entrar o crear cuenta")}<ArrowRight size={18} /></a><LanguageSelector /><InformationMenu /></div>
+      <div className="landing-header-actions">
+        <LanguageSelector />
+        <a className="landing-enter" href="/login">{t("Entrar o crear cuenta")}<ArrowRight size={18} /></a>
+        <InformationMenu />
+      </div>
     </header>
     <main className="landing-main">
       <h1 className="landing-title">{t("Diseña tu espacio en 3D. ¡Totalmente gratis!")}</h1>
