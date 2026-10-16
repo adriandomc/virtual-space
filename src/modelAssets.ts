@@ -7,7 +7,7 @@ export const MODEL_MAX_BYTES = 20 * 1024 * 1024;
 export const MODEL_ACCOUNT_BYTES = 100 * 1024 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 type Json = Record<string, any>;
-export type ModelNode = { key: string; name: string; mesh: boolean };
+export type ModelNode = { key: string; name: string; mesh: boolean; generatedName?: true };
 export type ModelAsset = { id: string; roomId?: string; name: string; size: number; createdAt: string; width: number; height: number; depth: number; triangles: number; texturePixels: number; nodes: ModelNode[] };
 type GeometryInfo = Omit<ModelAsset, 'id' | 'roomId' | 'name' | 'size' | 'createdAt'>;
 const invalid = (message = 'El modelo GLB no es válido.') => { throw new HttpError(400, message); };
@@ -213,7 +213,8 @@ export function validateGlb(data: Buffer): GeometryInfo {
   const visit = (index: number, parent: Matrix) => {
     const node = nodes[index], matrix = multiply(parent, nodeMatrix(node));
     matrix.forEach(value => finite(value));
-    activeNodes.push({ key: String(index), name: typeof node.name === 'string' && node.name.trim() ? node.name.slice(0, 80) : `Parte ${index + 1}`, mesh: node.mesh !== undefined });
+    const generatedName = typeof node.name !== 'string' || !node.name.trim();
+    activeNodes.push({ key: String(index), name: generatedName ? `Parte ${index + 1}` : node.name.slice(0, 80), mesh: node.mesh !== undefined, ...(generatedName ? { generatedName: true as const } : {}) });
     for (const primitive of node.mesh === undefined ? [] : meshInfo[node.mesh]) {
       triangles += primitive.triangles;
       if (triangles > 200000) invalid('El modelo debe tener como máximo 200 000 triángulos.');

@@ -1,3 +1,4 @@
+import { t, useLocale } from './i18n';
 import { useEffect, useState } from 'react';
 import { Check, LoaderCircle, UserPlus, X } from 'lucide-react';
 import { accountRequest } from './accountApi';
@@ -6,6 +7,7 @@ import './collaboration.css';
 
 type Member = { id: string; username: string; role: 'reader' | 'editor'; status: 'pending' | 'accepted' };
 export default function CollaborationPanel({ roomId }: { roomId: string }) {
+  useLocale();
   const [members, setMembers] = useState<Member[]>([]);
   const [username, setUsername] = useState('');
   const [role, setRole] = useState<'reader' | 'editor'>('editor');
@@ -32,18 +34,18 @@ export default function CollaborationPanel({ roomId }: { roomId: string }) {
       await assertRoomReadyToShare(roomId);
       const result = await accountRequest<{ members: Member[] }>(path, { method, headers: { 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
       setMembers(result.members); return true;
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudo cambiar el acceso.'); return false; }
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo cambiar el acceso."); return false; }
     finally { setPending(false); }
   }
-  return <section className="collaboration-access" aria-label="Colaboradores">
-    <h3>Personas</h3>
+  return <section className="collaboration-access" aria-label={t('Colaboradores')}>
+    <h3>{t('Personas')}</h3>
     <form className="collaboration-invite" onSubmit={event => { event.preventDefault(); void mutate(base, 'POST', { username: username.trim().toLowerCase(), role }).then(ok => { if (ok) { setUsername(''); setNotice('Invitación enviada.'); } }); }}>
-      <label>Usuario<input aria-label="Usuario a invitar" value={username} onChange={event => setUsername(event.target.value.toLowerCase())} required minLength={3} maxLength={32} pattern="[a-z0-9_]{3,32}" autoCapitalize="none" autoComplete="off" disabled={pending} /></label>
-      <label>Acceso<select aria-label="Rol de la invitación" value={role} onChange={event => setRole(event.target.value as 'reader' | 'editor')} disabled={pending}><option value="reader">Lector</option><option value="editor">Editor</option></select></label>
-      <button className="outline-button" disabled={pending || !username.trim()}>{pending ? <LoaderCircle size={17} className="saving-spinner" /> : <UserPlus size={17} />}Invitar</button>
+      <label>{t('Usuario')}<input aria-label={t('Usuario a invitar')} value={username} onChange={event => setUsername(event.target.value.toLowerCase())} required minLength={3} maxLength={32} pattern="[a-z0-9_]{3,32}" autoCapitalize="none" autoComplete="off" disabled={pending} /></label>
+      <label>{t('Acceso')}<select aria-label={t('Rol de la invitación')} value={role} onChange={event => setRole(event.target.value as 'reader' | 'editor')} disabled={pending}><option value="reader">{t('Lector')}</option><option value="editor">{t('Editor')}</option></select></label>
+      <button className="outline-button" disabled={pending || !username.trim()}>{pending ? <LoaderCircle size={17} className="saving-spinner" /> : <UserPlus size={17} />}{t('Invitar')}</button>
     </form>
-    <ul className="collaboration-members">{members.map(member => <li key={member.id}><div><strong>{member.username}</strong><small>{member.status === 'pending' ? 'Pendiente' : 'Aceptada'}</small></div><select aria-label={'Acceso de ' + member.username} value={member.role} disabled={pending} onChange={event => void mutate(base + '/' + member.id, 'PATCH', { role: event.target.value })}><option value="reader">Lector</option><option value="editor">Editor</option></select><button className="icon-button" aria-label={'Retirar acceso de ' + member.username} disabled={pending} onClick={() => void mutate(base + '/' + member.id, 'DELETE')}><X size={18} /></button></li>)}</ul>
-    {error && <p className="account-error" role="alert">{error}</p>}
-    {notice && <p className="collaboration-notice" role="status"><Check size={15} />{notice}</p>}
+    <ul className="collaboration-members">{members.map(member => <li key={member.id}><div><strong>{member.username}</strong><small>{member.status === 'pending' ? t('Pendiente') : t('Aceptada')}</small></div><select aria-label={t('Acceso de {{username}}', { username: member.username })} value={member.role} disabled={pending} onChange={event => void mutate(base + '/' + member.id, 'PATCH', { role: event.target.value })}><option value="reader">{t('Lector')}</option><option value="editor">{t('Editor')}</option></select><button className="icon-button" aria-label={t('Retirar acceso de {{username}}', { username: member.username })} disabled={pending} onClick={() => void mutate(base + '/' + member.id, 'DELETE')}><X size={18} /></button></li>)}</ul>
+    {error && <p className="account-error" role="alert">{t(error)}</p>}
+    {notice && <p className="collaboration-notice" role="status"><Check size={15} />{t(notice)}</p>}
   </section>;
 }

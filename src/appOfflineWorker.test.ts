@@ -95,7 +95,8 @@ async function worker(options: { badScript?: boolean; offline?: boolean; tabs?: 
 
 test('service worker precaches the shell, all lazy and worker chunks, and public assets', async () => {
   const app = await worker(); await app.event('install');
-  for (const path of ['/index.html', '/assets/main.js', '/assets/ModelWorkshop.js', '/assets/boolean.worker.js', '/assets/main.css', '/favicon.svg', '/environments/sunset-fairway-1k.hdr']) assert.ok(app.calls.includes(path), path);
+  for (const path of ['/index.html', '/assets/main.js', '/assets/ModelWorkshop.js', '/assets/boolean.worker.js', '/assets/main.css', '/favicon.svg', '/environments/sunset-fairway-1k.hdr', '/manifest.es.webmanifest', '/manifest.en.webmanifest']) assert.ok(app.calls.includes(path), path);
+  for (const locale of ['es', 'en']) for (const image of ['library', 'setup', 'editor', 'workshop', 'offline', 'sharing']) assert.ok(app.calls.includes(`/help/${locale}/${image}.jpg`));
   assert.ok(!app.calls.some(path => path.endsWith('.md') || path.startsWith('/api/')));
   await app.event('activate'); assert.ok(!app.entries.has('3d-space-static-old')); assert.ok(!app.entries.has('3d-space-v2-static-previous')); assert.ok(app.entries.has('unrelated-app'));
 });
@@ -110,7 +111,7 @@ test('service worker never intercepts API, external, mutations, or unknown paths
 
 test('offline navigation returns the cached shell and lazy editor modules without fetching', async () => {
   const app = await worker(); await app.event('install'); const before = app.calls.length; app.setOffline(true);
-  for (const path of ['/', '/editor?room=id&setup=1', '/designs', '/login', '/privacy', '/terms']) {
+  for (const path of ['/', '/editor?room=id&setup=1', '/designs', '/login', '/privacy', '/terms', '/help']) {
     const response = await app.request(path, 'navigate'); assert.equal(response?.status, 200); assert.equal(await response?.text(), '<html>3D Space</html>');
   }
   assert.equal((await app.request('/assets/ModelWorkshop.js'))?.status, 200); assert.equal(app.calls.length, before);

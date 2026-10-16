@@ -426,9 +426,9 @@ export function toggleSceneInteraction(room: Room, selection: Selection): Room {
   return validateRoom({ ...room, openings: room.openings.map(p => p.id === item.id ? { ...p, open: !p.open } : p) });
 }
 
-export function addLight(room: Room): Room {
+export function addLight(room: Room, name = `Luz ${room.lights.length + 1}`): Room {
   const point = interiorPoint(room.vertices);
-  return validateRoom({ ...room, lights: [...room.lights, { ...point, id: itemId(), name: `Luz ${room.lights.length + 1}`, y: room.height - 0.3, lumens: 800, temperature: 2700, enabled: true }] });
+  return validateRoom({ ...room, lights: [...room.lights, { ...point, id: itemId(), name, y: room.height - 0.3, lumens: 800, temperature: 2700, enabled: true }] });
 }
 
 export function addFurniture(room: Room, type: FurnitureItem['type'], bedSize: BedSize = 'double', variant?: string): Room {

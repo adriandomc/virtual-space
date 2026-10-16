@@ -11,6 +11,7 @@ export default defineConfig({
   retries: 0,
   reporter: 'list',
   use: {
+    locale: 'es-MX',
     baseURL: 'http://127.0.0.1:5188',
     serviceWorkers: 'allow',
     trace: 'retain-on-failure',

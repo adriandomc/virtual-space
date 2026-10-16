@@ -1,3 +1,4 @@
+import { t, useLocale } from './i18n';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { LoaderCircle } from 'lucide-react';
 import { AccountRequestError } from './accountApi';
@@ -9,6 +10,7 @@ const RoomScene = lazy(() => import('./RoomScene'));
 const ignore = () => {};
 
 export default function Embed() {
+  useLocale();
   const id = new URL(window.location.href).searchParams.get('room') ?? '';
   const [design, setDesign] = useState<PublicDesign | null>(null);
   const [loading, setLoading] = useState(true);
@@ -31,7 +33,7 @@ export default function Embed() {
       } catch (cause) {
         if (!active) return;
         if (cause instanceof AccountRequestError && [401, 403, 404].includes(cause.status)) setDesign(null);
-        setError(cause instanceof AccountRequestError ? cause.message : 'No se pudo cargar el diseño.');
+        setError(cause instanceof AccountRequestError ? cause.message : "No se pudo cargar el diseño.");
       } finally { clearTimeout(timeout); pending = false; if (active) setLoading(false); }
     };
     void load();
@@ -42,16 +44,16 @@ export default function Embed() {
   }, [id, attempt]);
 
   const room = design && (quality && quality !== design.room.renderQuality ? { ...design.room, renderQuality: quality } : design.room);
-  return <main className="embed-view" aria-label="Visor 3D">
+  return <main className="embed-view" aria-label={t('Visor 3D')}>
     {room ? <>
-      <Suspense fallback={<div className="embed-loading" aria-label="Cargando"><LoaderCircle size={24} className="saving-spinner" /></div>}>
+      <Suspense fallback={<div className="embed-loading" aria-label={t('Cargando')}><LoaderCircle size={24} className="saving-spinner" /></div>}>
         <RoomScene room={room} roomId={id} publicView mode={mode} animateView selection={null} onSelect={ignore} onChange={ignore} onModelError={setError} readOnly transformMode="translate" resetKey={0} />
       </Suspense>
       <div className="embed-controls">
-        <div className="embed-mode" role="group" aria-label="Vista"><button type="button" aria-pressed={mode === 'orbit'} onClick={() => setMode('orbit')}>Visor</button><button type="button" aria-pressed={mode === 'walk'} onClick={() => setMode('walk')}>Recorrido</button></div>
-        <select aria-label="Modo de renderizado" value={quality ?? room.renderQuality} onChange={event => setQuality(event.target.value as Room['renderQuality'])}><option value="standard">Estándar</option><option value="realistic">Realista</option><option value="hyperrealistic">Hiperrealista</option></select>
+        <div className="embed-mode" role="group" aria-label={t('Vista')}><button type="button" aria-pressed={mode === 'orbit'} onClick={() => setMode('orbit')}>{t('Visor')}</button><button type="button" aria-pressed={mode === 'walk'} onClick={() => setMode('walk')}>{t('Recorrido')}</button></div>
+        <select aria-label={t('Modo de renderizado')} value={quality ?? room.renderQuality} onChange={event => setQuality(event.target.value as Room['renderQuality'])}><option value="standard">{t('Estándar')}</option><option value="realistic">{t('Realista')}</option><option value="hyperrealistic">{t('Hiperrealista')}</option></select>
       </div>
-      {error && <div className="embed-notice" role="status"><span>{error}</span><button type="button" onClick={() => setAttempt(value => value + 1)}>Reintentar</button></div>}
-    </> : <div className="embed-empty">{loading ? <LoaderCircle size={24} className="saving-spinner" aria-label="Cargando" /> : <><p role="alert">{error || 'Este diseño no está disponible.'}</p><button type="button" onClick={() => { setLoading(true); setAttempt(value => value + 1); }}>Reintentar</button></>}</div>}
+      {error && <div className="embed-notice" role="status"><span>{t(error)}</span><button type="button" onClick={() => setAttempt(value => value + 1)}>{t('Reintentar')}</button></div>}
+    </> : <div className="embed-empty">{loading ? <LoaderCircle size={24} className="saving-spinner" aria-label={t('Cargando')} /> : <><p role="alert">{t(error || 'Este diseño no está disponible.')}</p><button type="button" onClick={() => { setLoading(true); setAttempt(value => value + 1); }}>{t('Reintentar')}</button></>}</div>}
   </main>;
 }

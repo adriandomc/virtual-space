@@ -3,12 +3,24 @@ import react from '@vitejs/plugin-react';
 import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { languages, translationCatalogs, type Locale } from './src/translations';
+
+async function localizedManifest(locale: Locale) {
+  const template = JSON.parse(await readFile('public/manifest.webmanifest', 'utf8'));
+  const strings = translationCatalogs[locale];
+  return JSON.stringify({ ...template, name: strings['3D Space'], short_name: strings['3D Space'], lang: locale, description: strings['Creador de espacios 3D gratuito y de código abierto'] });
+}
 
 function appOffline(): Plugin {
   return {
     name: 'app-offline', apply: 'build', enforce: 'post',
     async generateBundle(_, bundle) {
       const files = new Map<string, Uint8Array | string>();
+      for (const { code } of languages) {
+        const source = await localizedManifest(code), fileName = `manifest.${code}.webmanifest`;
+        this.emitFile({ type: 'asset', fileName, source });
+        files.set('/' + fileName, source);
+      }
       for (const [name, output] of Object.entries(bundle)) files.set('/' + name, output.type === 'chunk' ? output.code : output.source);
       const visit = async (directory: string, prefix = '') => {
         for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -22,7 +34,7 @@ function appOffline(): Plugin {
       const source = `const CACHE = '3d-space-v2-static-${hash.digest('hex').slice(0, 20)}';
 const FILES = ${JSON.stringify([...files.keys()])};
 const ALLOWED = new Set(FILES);
-const PAGES = new Set(['/', '/editor', '/designs', '/login', '/privacy', '/terms']);
+const PAGES = new Set(['/', '/editor', '/designs', '/login', '/privacy', '/terms', '/help']);
 function valid(response, path) {
   if (!response.ok) return false;
   const type = response.headers.get('content-type') || '';
@@ -115,4 +127,15 @@ self.addEventListener('fetch', event => {
   };
 }
 
-export default defineConfig({ plugins: [react(), appOffline()], resolve: { alias: [{ find: /^three$/, replacement: 'three/webgpu' }] }, server: { proxy: { '/api': { target: 'http://127.0.0.1:8080', changeOrigin: false, ws: true } } } });
+const devManifests: Plugin = {
+  name: 'localized-manifests',
+  async configureServer(server) {
+    const manifests = new Map<string, string>(await Promise.all(languages.map(async ({ code }) => [`/manifest.${code}.webmanifest`, await localizedManifest(code)] as const)));
+    server.middlewares.use((request, response, next) => {
+      const body = manifests.get((request.url ?? '').split('?')[0]);
+      if (!body) return next();
+      response.setHeader('Content-Type', 'application/manifest+json'); response.end(body);
+    });
+  },
+};
+export default defineConfig({ plugins: [react(), devManifests, appOffline()], resolve: { alias: [{ find: /^three$/, replacement: 'three/webgpu' }] }, server: { proxy: { '/api': { target: 'http://127.0.0.1:8080', changeOrigin: false, ws: true } } } });
