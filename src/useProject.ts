@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createDefaultProject, validateProjectDocument, projectToRoom, updateProjectRoom, type ProjectDocument } from './projectDocument';
 import type { Room } from './types';
 import { shareAddress } from './routes';
@@ -12,11 +12,13 @@ import { assertRoomReadyToShare, exportOfflineProject, importOfflineProject, roo
 import { serializeProjectBackup, type ProjectBackup } from './projectBackup';
 import { registerBeforeAppUpdate, setAppUpdateReady, beginAppActivity } from './appOffline';
 import { validateSketchBlob } from './imageValidation';
+import { appActivityReason, appVersion, assertCurrentAppVersion, subscribeAppVersion } from './appActivity';
 
 type Status = 'loading' | 'saving' | 'saved' | 'error' | 'offline' | 'conflict' | 'syncing';
 const sketchAddress = (id: string, levelId: string, hasSketch: boolean, version: number) => hasSketch ? '/api/rooms/' + encodeURIComponent(id) + '/levels/' + encodeURIComponent(levelId) + '/sketch?v=' + version : null;
 
 export default function useProject() {
+  const version = useSyncExternalStore(subscribeAppVersion, appVersion);
   const [project, setProjectState] = useState<ProjectDocument>(createDefaultProject);
   const [selectedLevelId, selectLevel] = useState(() => new URL(window.location.href).searchParams.get('level') ?? '');
   const activeLevelId = project.levels.some(level => level.id === selectedLevelId) ? selectedLevelId : project.activeLevelId;
@@ -257,6 +259,7 @@ export default function useProject() {
   const setProject = useCallback((next: ProjectDocument) => {
     if (!canEdit || recovery.current) return false;
     try {
+      assertCurrentAppVersion();
       lastError.current = ''; setError('');
       const validated = validateProjectDocument(next);
       if (solo.current) solo.current.change(validated);
@@ -304,6 +307,7 @@ export default function useProject() {
   const uploadSketch = useCallback(async (file: File | null) => {
     const release = beginAppActivity(), levelId = activeLevelRef.current;
     try {
+    assertCurrentAppVersion();
     if (!canEdit) throw new Error('Espera a que se restablezca la conexión.');
     if (file && (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || file.size > 10 * 1024 * 1024)) throw new Error('Usa una imagen PNG, JPG o WebP de hasta 10 MB.');
     if (file) await validateSketchBlob(file);
@@ -320,6 +324,7 @@ export default function useProject() {
     } finally { release(); }
   }, [id, canEdit, failure, finishStatus]);
   const setSharing = useCallback(async (enabled: boolean) => {
+    assertCurrentAppVersion();
     if (offlineForced()) throw new Error('Desactiva el modo sin conexión para compartir.');
     if (!canManage) throw new Error('Solo el propietario puede cambiar los permisos.');
     if (solo.current?.hasPending) throw new Error('Espera a que se sincronicen los cambios y modelos antes de compartir.');
@@ -366,6 +371,7 @@ export default function useProject() {
     } finally { release(); }
   }, [id]);
   const importProject = useCallback(async (backup: ProjectBackup) => {
+    assertCurrentAppVersion();
     if (!solo.current || !canEdit) throw new Error('Abre un diseño privado para importar la copia.');
     const previous = solo.current; previous.destroy(); solo.current = null;
     await previous.settled();
@@ -380,5 +386,5 @@ export default function useProject() {
     window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn);
   }, []);
 
-  return { project, setProject, activeLevelId, setActiveLevelId, room, setRoom, ready, status, error, recoveryProject, readOnly: !canEdit || !!recoveryProject, canManage, role, connected, roomId: id, shareUrl: shareAddress(new URL(window.location.href), id), shared, setSharing, uploadSketch, sketchUrl, retry, offlineAllowed, pendingOffline: pendingOffline || pendingAssets || !!recoveryProject, discardOffline, downloadOfflineBackup, importProject };
+  return { project, setProject, activeLevelId, setActiveLevelId, room, setRoom, ready, status, error, recoveryProject, readOnly: !canEdit || !!recoveryProject || version !== 'current' && !appActivityReason(), canManage, role, connected, roomId: id, shareUrl: shareAddress(new URL(window.location.href), id), shared, setSharing, uploadSketch, sketchUrl, retry, offlineAllowed, pendingOffline: pendingOffline || pendingAssets || !!recoveryProject, discardOffline, downloadOfflineBackup, importProject };
 }

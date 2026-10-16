@@ -8,6 +8,7 @@ import { listOfflineDesigns, pendingSketches, offlineProjectKey, readOfflineProj
 import type { OfflineAssetRecord } from '../offlineAssets';
 import { offlineForced } from '../offlineMode';
 import { offlineActivity, signal, type OfflineSummary } from './state';
+import { assertCurrentAppVersion } from '../appActivity';
 
 export const hasPending = (record: OfflineProjectRecord) => Boolean(record.localOnly || record.deleted || record.draft || pendingSketches(record) || record.inflight);
 export const assetKey = (accountId: string, roomId: string, id: string) => `${accountId}:${roomId}:${id}`;
@@ -89,6 +90,7 @@ export async function persistOfflineProject(record: OfflineProjectRecord) {
   await atomicOffline(record.accountId, await projectWrites(checked));
 }
 export async function createDesignLocal(project = createBlankProject(), designId?: string, expectedAccountId?: string) {
+  assertCurrentAppVersion();
   const user = await identity(), id = designId ?? crypto.randomUUID();
   if (expectedAccountId && user.id !== expectedAccountId) throw new Error('La cuenta activa cambió.');
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) throw new Error('La identidad del diseño no es válida.');

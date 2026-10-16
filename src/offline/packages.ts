@@ -1,5 +1,5 @@
 import { accountRequest, AccountRequestError, isNetworkError } from '../accountApi';
-import { beginAppActivity } from '../appActivity';
+import { assertCurrentAppVersion, beginAppActivity } from '../appActivity';
 import { validateProjectDocument, projectAssetIds } from '../projectDocument';
 import type { ProjectSnapshot } from '../liveProject';
 import type { ModelAsset } from '../modelAssets';
@@ -59,6 +59,7 @@ export async function exportOfflineProject(id: string, localOnly = false): Promi
   } finally { release(); }
 }
 export async function importOfflineProject(id: string, backup: ProjectBackup) {
+  assertCurrentAppVersion();
   const release = beginAppActivity();
   try {
   const record = await readOfflineProject(id);
@@ -76,6 +77,7 @@ export async function importOfflineProject(id: string, backup: ProjectBackup) {
   } finally { release(); }
 }
 export async function copyDesign(id: string, suffix = ' (copia)') {
+  assertCurrentAppVersion();
   const release = beginAppActivity();
   try {
   const user = await identity();

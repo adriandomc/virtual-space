@@ -1,6 +1,6 @@
 import { refreshOfflineMode, offlineFetch, offlineForced } from './offlineMode';
 import { retireTestStorage } from './retiredStorage';
-import { appActivityReason, appStartupIdle, subscribeAppStartup } from './appActivity';
+import { appActivityReason, appStartupIdle, setAppVersion, subscribeAppStartup } from './appActivity';
 import { hasStoredOfflineChanges } from './offlinePending';
 export { registerAppActivity, beginAppActivity, setAppUpdateReady } from './appActivity';
 
@@ -45,6 +45,7 @@ export function registerAppOffline() {
   started = (async () => {
     if (!import.meta.env?.PROD) { publish({ ready: true }); return; }
     if (!('serviceWorker' in navigator)) throw new Error('Este navegador no permite preparar la aplicación sin conexión.');
+    setAppVersion(navigator.serviceWorker.controller ? 'checking' : 'current');
     publish({ installed: window.matchMedia('(display-mode: standalone)').matches || !!(navigator as Navigator & { standalone?: boolean }).standalone });
     window.addEventListener('beforeinstallprompt', event => { event.preventDefault(); prompt = event as InstallPrompt; publish({ installable: true }); });
     window.addEventListener('appinstalled', () => { prompt = undefined; publish({ installed: true, installable: false }); });
@@ -79,11 +80,17 @@ export function registerAppOffline() {
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       publish({ update: !!registration?.waiting });
       if (freeze?.kind === 'update') window.location.reload();
-      else if (navigator.serviceWorker.controller) void inspectController().catch(() => {});
+      else if (navigator.serviceWorker.controller) {
+        setAppVersion('checking');
+        void inspectController().catch(() => { reloadRequired = true; setAppVersion('outdated'); publish({ update: true }); });
+      }
     });
     await refreshOfflineMode();
     registration = offlineForced() ? await navigator.serviceWorker.getRegistration('/') : await navigator.serviceWorker.register('/service-worker.js', { scope: '/', updateViaCache: 'none' });
-    if (!registration) return;
+    if (!registration) {
+      if (navigator.serviceWorker.controller) { reloadRequired = true; setAppVersion('outdated'); publish({ update: true }); }
+      return;
+    }
     const verify = async () => {
       const active = registration?.active;
       if (!active) return;
@@ -111,7 +118,7 @@ export function registerAppOffline() {
     } catch (cause) {
       if (cause instanceof Error && cause.message.includes('datos de prueba')) publish({ error: cause.message });
     }
-  })().catch(cause => { started = undefined; publish({ error: cause instanceof Error ? cause.message : 'No se pudo preparar la aplicación.' }); });
+  })().catch(cause => { started = undefined; if (!navigator.serviceWorker?.controller) setAppVersion('current'); else { reloadRequired = true; setAppVersion('outdated'); } publish({ update: reloadRequired, error: cause instanceof Error ? cause.message : 'No se pudo preparar la aplicación.' }); });
   return started;
 }
 export async function waitForAppOffline(): Promise<void> {
@@ -126,7 +133,9 @@ export async function waitForAppOffline(): Promise<void> {
 async function inspectController(worker = navigator.serviceWorker.controller ?? registration?.active) {
   if (!worker) return;
   const result = await message(worker, 'SPACE_STATUS');
-  reloadRequired = !!(build && result.build && result.build !== build);
+  if (worker !== (navigator.serviceWorker.controller ?? registration?.active)) return;
+  reloadRequired = !!(build && (result.build ? result.build !== build : navigator.serviceWorker.controller));
+  setAppVersion(reloadRequired ? 'outdated' : 'current');
   publish({ ready: !!result.ready, update: !!registration?.waiting || reloadRequired, ...(result.ready ? { error: '' } : {}) });
   void message(worker, 'SPACE_HELLO').catch(() => {});
   if (reloadRequired) void automaticUpdate();

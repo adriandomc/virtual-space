@@ -7,13 +7,13 @@ import { planUpdateActivityReason } from './planDraft';
 
 const source = readFile(new URL('./appOffline.ts', import.meta.url), 'utf8').then(text => ts.transpileModule(text.replaceAll('import.meta.env?.PROD', 'true').replaceAll('import.meta.env?.VITE_BUILD_ID', '"test-build"'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText);
 
-async function app(options: { activeBuild?: string; waiting?: boolean } = {}) {
+async function app(options: { activeBuild?: string; waiting?: boolean; statusGate?: Promise<void>; versions?: string[]; uncontrolled?: boolean; legacy?: boolean; forced?: boolean; missingRegistration?: boolean } = {}) {
   const listeners = new Map<string, Function>(), pending: { message: { type: string; id: string }; reply: (value: unknown) => void }[] = [];
   const exports: Record<string, any> = {};
-  let forced = false, reloads = 0, idle = false, storedPending = false, activity = '';
+  let forced = !!options.forced, reloads = 0, idle = false, storedPending = false, activity = '', version = 'current';
   let startupListener: (() => void) | undefined;
   const registration = {
-    active: { postMessage: (_message: unknown, ports: { postMessage(value: unknown): void }[]) => ports[0].postMessage({ ready: true, build: options.activeBuild }) },
+    active: { postMessage: (message: { type: string }, ports: { postMessage(value: unknown): void }[]) => { const reply = () => ports[0].postMessage({ ready: true, build: options.legacy ? undefined : options.activeBuild ?? 'test-build' }); if (message.type === 'SPACE_STATUS' && options.statusGate) void options.statusGate.then(reply); else reply(); } },
     waiting: options.waiting === false ? null : { postMessage: (message: { type: string; id: string }, ports: { postMessage(value: unknown): void }[]) => pending.push({ message, reply: value => ports[0].postMessage(value) }) } as object | null,
     addEventListener() {},
   };
@@ -21,7 +21,7 @@ async function app(options: { activeBuild?: string; waiting?: boolean } = {}) {
     exports, module: { exports }, Error, crypto, setTimeout, clearTimeout,
     require: (name: string) => {
       if (name === './offlineMode') return { offlineForced: () => forced, refreshOfflineMode: async () => {}, offlineFetch: async () => ({ ok: false }) };
-      if (name === './appActivity') return { appActivityReason: () => activity, appStartupIdle: () => idle && !activity, subscribeAppStartup: (callback: () => void) => { startupListener = callback; } };
+      if (name === './appActivity') return { setAppVersion: (value: string) => { version = value; options.versions?.push(value); }, appActivityReason: () => activity, appStartupIdle: () => idle && !activity, subscribeAppStartup: (callback: () => void) => { startupListener = callback; } };
       if (name === './offlinePending') return { hasStoredOfflineChanges: async () => storedPending };
       if (name === './retiredStorage') return { retireTestStorage: async () => {} };
       throw new Error('Unexpected test dependency: ' + name);
@@ -30,12 +30,12 @@ async function app(options: { activeBuild?: string; waiting?: boolean } = {}) {
       port1: { onmessage?: (event: { data: unknown }) => void; close(): void } = { close() {} };
       port2 = { postMessage: (data: unknown) => this.port1.onmessage?.({ data }) };
     },
-    navigator: { onLine: true, serviceWorker: { controller: registration.active, register: async () => registration, addEventListener: (type: string, callback: Function) => listeners.set(type, callback) } },
+    navigator: { onLine: true, serviceWorker: { get controller() { return options.uncontrolled ? null : registration.active; }, getRegistration: async () => options.missingRegistration ? undefined : registration, register: async () => registration, addEventListener: (type: string, callback: Function) => listeners.set(type, callback) } },
     window: { matchMedia: () => ({ matches: false }), addEventListener() {}, location: { reload: () => { reloads++; } } },
   });
   await exports.registerAppOffline();
   return {
-    api: exports, pending, registration, idle: (value: boolean) => { idle = value; startupListener?.(); }, stored: (value: boolean) => { storedPending = value; }, editing: (value: string) => { activity = value; }, reloads: () => reloads, force: () => { forced = true; },
+    api: exports, pending, registration, version: () => version, idle: (value: boolean) => { idle = value; startupListener?.(); }, stored: (value: boolean) => { storedPending = value; }, editing: (value: string) => { activity = value; }, reloads: () => reloads, force: () => { forced = true; },
     message(type: string, id: string, automatic = false) { const replies: any[] = []; listeners.get('message')!({ data: { type, id, automatic }, ports: [{ postMessage(value: unknown) { replies.push(value); } }] }); return replies; },
     activate() { registration.waiting = null; listeners.get('controllerchange')!(); },
   };
@@ -169,4 +169,33 @@ test('a build mismatch cannot blur an unfinished field when reloading without a 
     assert.equal(value.reloads(), 0); assert.equal(value.api.getAppOfflineState().error, 'Finish this field');
     assert.ok(states.every(updating => !updating));
   } finally { unsubscribe(); }
+});
+
+test('a controlled startup checks its worker version before allowing new edits', async () => {
+  let release!: () => void; const versions: string[] = [], gate = new Promise<void>(resolve => { release = resolve; });
+  const starting = app({ statusGate: gate, versions }); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(versions, ['checking']); release(); const value = await starting; assert.equal(value.version(), 'current');
+  const stale = await app({ activeBuild: 'different-build', waiting: false }); assert.equal(stale.version(), 'outdated'); assert.equal(stale.reloads(), 0); assert.equal(stale.api.getAppOfflineState().updating, false);
+  const legacy = await app({ legacy: true }); assert.equal(legacy.version(), 'outdated');
+});
+
+test('a first visit without a controller remains editable while initial preparation runs', async () => {
+  let release!: () => void; const versions: string[] = [], gate = new Promise<void>(resolve => { release = resolve; });
+  const starting = app({ uncontrolled: true, statusGate: gate, versions }); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(versions, ['current']); release(); assert.equal((await starting).version(), 'current');
+});
+
+test('a controller change blocks new edits synchronously while verifying without freezing existing drafts', async () => {
+  const options: { statusGate?: Promise<void>; activeBuild?: string } = {}, value = await app(options);
+  let release!: () => void; options.statusGate = new Promise<void>(resolve => { release = resolve; }); options.activeBuild = 'changed-build';
+  value.editing('Existing unfinished draft'); value.activate();
+  assert.equal(value.version(), 'checking'); assert.equal(value.api.getAppOfflineState().updating, false); assert.equal(value.reloads(), 0);
+  release(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(value.version(), 'outdated'); await assert.rejects(value.api.confirmLocalSaved(), /Existing unfinished draft/);
+  assert.equal(value.api.getAppOfflineState().updating, false); assert.equal(value.reloads(), 0);
+});
+
+test('a missing forced-mode registration never leaves a controlled page checking indefinitely', async () => {
+  const value = await app({ forced: true, missingRegistration: true });
+  assert.equal(value.version(), 'outdated'); assert.equal(value.api.getAppOfflineState().update, true); assert.equal(value.reloads(), 0);
 });

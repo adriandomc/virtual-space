@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { ArrowLeft, Box, Download, LoaderCircle, Plus, RefreshCw, Trash2, Upload } from 'lucide-react';
 import { copyModel, deleteModel, listModels, uploadModel, type ModelAsset } from './customModel';
 import { loadLibraryModelBlob } from './offlineAssets';
-import { beginAppActivity, registerAppActivity } from './appActivity';
+import { assertCurrentAppVersion, beginAppActivity, registerAppActivity } from './appActivity';
 import './modelLibrary.css';
 
 type Props = { roomId: string; canManage?: boolean; disabled?: boolean; onSelect: (asset: ModelAsset) => void; onCreate: () => void; onBack?: () => void };
@@ -30,6 +30,7 @@ export default function ModelLibrary(props: Props) {
   }, [roomId, scope]);
   const select = async (asset: ModelAsset) => {
     if (disabled || busy) return;
+    try { assertCurrentAppVersion(); } catch (cause) { setError((cause as Error).message); return; }
     if (!asset.roomId || asset.roomId === roomId) { onSelect(asset); return; }
     const release = beginAppActivity();
     setBusy(true); setError('');
@@ -45,6 +46,7 @@ export default function ModelLibrary(props: Props) {
     const release = beginAppActivity();
     setBusy(true); setError('');
     try {
+      assertCurrentAppVersion();
       const asset = await uploadModel(file, roomId);
       if (active.current && latest.current.roomId === roomId) {
         setModels(items => [asset, ...items]);
@@ -61,6 +63,7 @@ export default function ModelLibrary(props: Props) {
     catch (cause) { if (active.current) setError(cause instanceof Error ? cause.message : "No se pudo eliminar el modelo."); }
     finally { release(); if (active.current) setBusy(false); }
   };
+  const create = () => { try { assertCurrentAppVersion(); onCreate(); } catch (cause) { setError((cause as Error).message); } };
   const download = async (asset: ModelAsset) => {
     if (busy) return;
     const release = beginAppActivity();
@@ -77,7 +80,7 @@ export default function ModelLibrary(props: Props) {
   return <section className="model-library" aria-label={t('Mis modelos')}>
     <div className="model-library-heading">{onBack && <button type="button" onClick={onBack} aria-label={t('Volver')} className="model-library-icon"><ArrowLeft size={20} /></button>}<h3>{t('Modelos')}</h3><button type="button" onClick={() => void refresh()} disabled={busy || loading} aria-label={t('Actualizar modelos')} className="model-library-icon"><RefreshCw size={18} /></button></div>
     <div className="model-library-tabs" aria-label={t('Biblioteca de modelos')}><button type="button" aria-pressed={scope === 'room'} disabled={busy} onClick={() => setScope('room')}>{t('Este diseño')}</button><button type="button" aria-pressed={scope === 'mine'} disabled={busy} onClick={() => setScope('mine')}>{t('Mis modelos')}</button></div>
-    <div className="model-library-actions"><button type="button" onClick={() => fileInput.current?.click()} disabled={disabled || busy || loading}><Upload size={18} />{busy ? t('Guardando…') : t('Subir modelo')}</button><button type="button" onClick={onCreate} disabled={disabled || busy}><Plus size={18} />{t('Crear modelo')}</button></div>
+    <div className="model-library-actions"><button type="button" onClick={() => fileInput.current?.click()} disabled={disabled || busy || loading}><Upload size={18} />{busy ? t('Guardando…') : t('Subir modelo')}</button><button type="button" onClick={create} disabled={disabled || busy}><Plus size={18} />{t('Crear modelo')}</button></div>
     <span className="model-library-filetype">.glb · 20 MB</span>
     <input ref={fileInput} type="file" accept=".glb,model/gltf-binary" onChange={event => void upload(event)} hidden disabled={disabled || busy || loading} aria-label={t('Subir modelo GLB')} />
     {error && <p className="model-library-error" role="alert">{t(error)}<button type="button" onClick={() => void refresh()} disabled={busy || loading}>{t('Reintentar')}</button></p>}

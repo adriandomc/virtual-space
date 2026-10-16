@@ -3,14 +3,15 @@ import { Component, useEffect, useRef, useState, useSyncExternalStore, type Reac
 import { LoaderCircle, RefreshCw, X } from 'lucide-react';
 import { getAppOfflineState, subscribeAppOffline, updateAppOffline } from './appOffline';
 import { offlineForced, subscribeOfflineMode } from './offlineMode';
-import { setAppUpdateReady } from './appActivity';
+import { appVersion, setAppUpdateReady, subscribeAppVersion } from './appActivity';
 
 function AppUpdateNotice() {
   useLocale();
   const state = useSyncExternalStore(subscribeAppOffline, getAppOfflineState);
+  const version = useSyncExternalStore(subscribeAppVersion, appVersion);
   const forced = useSyncExternalStore(subscribeOfflineMode, offlineForced);
   const [dismissed, setDismissed] = useState(false), [pending, setPending] = useState(false);
-  if (!state.update || forced || dismissed) return null;
+  if (!state.update || forced || dismissed && version !== 'outdated') return null;
   async function update() {
     if (pending || state.updating || offlineForced()) return;
     setPending(true);
@@ -18,7 +19,8 @@ function AppUpdateNotice() {
     finally { setPending(false); }
   }
   return <aside className="app-update-notice" role="status" aria-label={t('Actualización disponible')} aria-busy={pending || state.updating}>
-    <div className="app-update-notice-actions"><span>{t('Actualización disponible')}</span><button type="button" className="outline-button" disabled={pending || state.updating} onClick={() => void update()}>{pending ? <LoaderCircle size={17} className="saving-spinner" /> : <RefreshCw size={17} />}{t('Actualizar ahora')}</button><button type="button" className="icon-button" aria-label={t('Recordar más tarde')} disabled={pending || state.updating} onClick={() => setDismissed(true)}><X size={18} /></button></div>
+    <div className="app-update-notice-actions"><span>{t('Actualización disponible')}</span><button type="button" className="outline-button" disabled={pending || state.updating} onClick={() => void update()}>{pending ? <LoaderCircle size={17} className="saving-spinner" /> : <RefreshCw size={17} />}{t('Actualizar ahora')}</button>{version !== 'outdated' && <button type="button" className="icon-button" aria-label={t('Recordar más tarde')} disabled={pending || state.updating} onClick={() => setDismissed(true)}><X size={18} /></button>}</div>
+    {version === 'outdated' && <p>{t('Actualiza la aplicación antes de seguir editando. Tus cambios anteriores se conservan.')}</p>}
     {state.error && <p role="alert">{t(state.error)}</p>}
   </aside>;
 }

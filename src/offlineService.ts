@@ -13,14 +13,17 @@ import { offlineForced, subscribeOfflineMode } from './offlineMode';
 import { assetKey, deleteDesignLocked, identity, projectLock } from './offline/repository';
 import { syncOfflineAccount } from './offline/sync';
 import { signal } from './offline/state';
+import { assertCurrentAppVersion } from './appActivity';
 
 export async function deleteDesign(id: string) {
+  assertCurrentAppVersion();
   const user = await identity();
   await projectLock(user.id, id, () => deleteDesignLocked(id));
   if (!offlineForced()) await syncOfflineAccount();
 }
 
 export async function deleteOfflineModel(id: string) {
+  assertCurrentAppVersion();
   const user = await identity();
   const record = (await listOfflineMetadata<OfflineAssetRecord>('assets')).find(asset => asset.accountId === user.id && asset.asset.id === id);
   if (!record) { await accountRequest('/api/models/' + id, { method: 'DELETE' }); return; }

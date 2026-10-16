@@ -122,7 +122,7 @@ test('a missing old application module can be recovered through the update notic
   } finally { await page.close(); await deployment.close(); }
 });
 
-test('forced offline mode hides a pending update and does not check workers or request account data', async ({ page, context }) => {
+test('forced offline mode hides updates and makes no explicit worker checks or account requests', async ({ page, context }) => {
   const deployment = await pwaDeployment();
   try {
     await sample(context.request); await oldApplication(page, deployment.origin); await prepareDesigns(page);
@@ -135,6 +135,14 @@ test('forced offline mode hides a pending update and does not check workers or r
     await dialog.getByRole('button', { name: 'Cerrar ajustes', exact: true }).click();
     await expect(page.getByText('Sin conexión · Diseños disponibles en este dispositivo', { exact: true })).toBeVisible();
     await expect(notice(page)).toHaveCount(0);
+    await page.addInitScript(() => {
+      const calls: string[] = [];
+      Object.defineProperty(window, '__explicitWorkerChecks', { value: calls });
+      for (const [prototype, name] of [[ServiceWorkerContainer.prototype, 'register'], [ServiceWorkerRegistration.prototype, 'update']] as const) {
+        const original = (prototype as unknown as Record<string, Function>)[name];
+        (prototype as unknown as Record<string, Function>)[name] = function (...args: unknown[]) { calls.push(name); return original.apply(this, args); };
+      }
+    });
     const start = deployment.requests.length;
     await page.reload(); await expect(page.getByText('Sin conexión · Diseños disponibles en este dispositivo', { exact: true })).toBeVisible();
     const other = await context.newPage(); await other.goto('about:blank'); await page.bringToFront(); await other.close();
@@ -143,7 +151,9 @@ test('forced offline mode hides a pending update and does not check workers or r
     await offlineSettings.getByRole('button', { name: 'Cerrar ajustes', exact: true }).click();
     await page.waitForTimeout(1000);
     expect(await page.evaluate(() => navigator.onLine)).toBe(true);
-    expect(deployment.requests.slice(start).filter(request => request.path.startsWith('/api/') || request.path === '/service-worker.js')).toEqual([]);
+    expect(deployment.requests.slice(start).filter(request => request.path.startsWith('/api/'))).toEqual([]);
+    // The browser may perform its own worker update check on navigation, outside application code.
+    expect(await page.evaluate(() => (window as unknown as { __explicitWorkerChecks: string[] }).__explicitWorkerChecks)).toEqual([]);
     await expect(build(page)).toHaveAttribute('content', 'old');
   } finally { await page.close(); await deployment.close(); }
 });

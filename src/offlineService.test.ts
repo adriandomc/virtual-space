@@ -8,7 +8,7 @@ import { accountRequest } from './accountApi';
 import { atomicOffline, clearOffline, listOffline, listOfflineKeys, readOffline, setOfflineAccess, writeOffline } from './offlineStorage';
 import { readOfflineProject, type OfflineProjectRecord } from './offlineProject';
 import { assertRoomReadyToShare, copyDesign, createDesignLocal, clearOfflineAccount, deleteDesign, exportOfflineProject, importOfflineProject, listDesigns, pendingOfflineCount, persistOfflineProject, roomHasOfflineChanges, syncOfflineAccount } from './offlineService';
-import { appActivityReason } from './appActivity';
+import { appActivityReason, setAppVersion } from './appActivity';
 import { listOfflineModels, uploadOfflineModel, type OfflineAssetRecord } from './offlineAssets';
 import { addLevel } from './projectOperations';
 import { patchProject, snapshotFixture } from './projectTestFixture';
@@ -47,6 +47,20 @@ test('forced mode creates, reloads, lists, imports and exports without any API r
     await syncOfflineAccount();
     assert.equal(requests, 0); assert.equal(await pendingOfflineCount(), 1);
   } finally { globalThis.fetch = fetch; await setOfflineMode(false); }
+});
+
+test('unchecked or outdated pages cannot start mutations but retain local saving, reading and export', async () => {
+  await reset(); await force(); const { id } = await createDesignLocal(), record = (await readOfflineProject(id))!;
+  const backup = await exportOfflineProject(id);
+  try {
+    for (const version of ['checking', 'outdated'] as const) {
+      setAppVersion(version);
+      await assert.rejects(createDesignLocal()); await assert.rejects(copyDesign(id)); await assert.rejects(deleteDesign(id)); await assert.rejects(importOfflineProject(id, backup));
+      record.draft = { ...record.draft!, name: 'Durable work from before ' + version }; await persistOfflineProject(record);
+      assert.equal((await listDesigns()).length, 1); assert.equal((await exportOfflineProject(id)).project.name, record.draft.name);
+      assert.equal((await readOfflineProject(id))?.draft?.name, record.draft.name); assert.equal(await pendingOfflineCount(), 1);
+    }
+  } finally { setAppVersion('current'); await setOfflineMode(false); }
 });
 
 test('atomic import rolls back assets, room and sketch when its final write fails', async () => {
@@ -152,7 +166,7 @@ test('logout guard preserves pending work and account-specific cleanup preserves
   assert.deepEqual(await readOffline('meta', 'other-setting'), { accountId: 'other', keep: true });
 });
 
-test('all closed new projects synchronize, including a GLB not inserted in any room', async () => {
+test('all closed new projects synchronize even on an outdated page, including a GLB not inserted in any room', async () => {
   await reset(); await force();
   const first = await createDesignLocal(), second = await createDesignLocal();
   const asset = await uploadOfflineModel(new File([glb()], 'Tabla.glb'), first.id);
@@ -177,12 +191,12 @@ test('all closed new projects synchronize, including a GLB not inserted in any r
     return json(snapshot);
   };
   try {
-    await setOfflineMode(false); await syncOfflineAccount();
+    setAppVersion('outdated'); await setOfflineMode(false); await syncOfflineAccount();
     assert.equal(remote.size, 2); assert.ok(remote.has(second.id));
     assert.equal(await pendingOfflineCount(), 0);
     const assets = await listOffline<OfflineAssetRecord>('assets'); assert.equal(assets[0].pending, false);
     assert.ok(requests.findIndex(request => request === 'POST /api/rooms') < requests.findIndex(request => request.startsWith('POST /api/models')));
-  } finally { globalThis.fetch = fetch; }
+  } finally { globalThis.fetch = fetch; setAppVersion('current'); }
 });
 
 test('the facade and synchronization module share one durable synchronization queue', async () => {

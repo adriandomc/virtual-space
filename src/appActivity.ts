@@ -1,5 +1,12 @@
 type Check = () => boolean | string;
 const checks = new Set<Check>();
+type AppVersion = 'current' | 'checking' | 'outdated';
+let version: AppVersion = 'current';
+const versionListeners = new Set<() => void>();
+export const appVersion = () => version;
+export function subscribeAppVersion(listener: () => void) { versionListeners.add(listener); return () => { versionListeners.delete(listener); }; }
+export function setAppVersion(value: AppVersion) { if (version !== value) { version = value; versionListeners.forEach(listener => listener()); } }
+export function assertCurrentAppVersion() { if (version !== 'current') throw new Error(version === 'checking' ? 'Espera a que termine la operación actual.' : 'Actualiza la aplicación antes de seguir editando. Tus cambios anteriores se conservan.'); }
 let touched = false;
 if (typeof window !== 'undefined') {
   try {

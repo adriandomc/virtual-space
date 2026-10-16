@@ -106,5 +106,6 @@
   "Hay otras cargas en curso. Inténtalo de nuevo.": "Other uploads are in progress. Try again later.",
   "La imagen supera las dimensiones permitidas.": "The image exceeds the allowed dimensions.",
   "El nivel cambió. Vuelve a seleccionar el croquis.": "The level changed. Select the sketch again.",
-  "Hay demasiados cambios recientes. Tu trabajo se conserva; vuelve a intentarlo más tarde.": "There have been too many recent changes. Your work is preserved; try again later."
+  "Hay demasiados cambios recientes. Tu trabajo se conserva; vuelve a intentarlo más tarde.": "There have been too many recent changes. Your work is preserved; try again later.",
+  "Actualiza la aplicación antes de seguir editando. Tus cambios anteriores se conservan.": "Update the application before making further edits. Your previous changes are preserved."
 }

@@ -161,6 +161,8 @@ A prepared application stages the new generation's full visual assets before ins
 
 The production service worker caches the app, localized help and bundled visual assets. Graphics preferences and the selected language stay in browser storage and are not sent as analytics or copied into another device profile. IndexedDB stores editable records separately from binary assets. Installation and storage persistence remain browser-controlled; exports are the user's independent backup. Local work does not count as server account activity until authenticated synchronization occurs.
 
+Forced offline mode makes no application-initiated worker registration/update checks or account-data requests. The browser can still perform its own worker check during navigation, as described in the [service-worker lifecycle](https://web.dev/articles/service-worker-lifecycle); the application does not request activation while forced offline. Browser tests distinguish these browser-owned checks from application calls.
+
 ## API boundaries
 
 - `GET/POST /api/rooms` lists or creates designs. Creation accepts `{ id, project }`, with matching identifiers.
