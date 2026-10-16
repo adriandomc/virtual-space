@@ -121,8 +121,8 @@ test('every locale has the same nonempty catalog entries and interpolation varia
 
 test('all literal translation keys in the interface exist in every locale', () => {
   const missing: string[] = [];
-  for (const file of interfaceFiles) {
-    const source = ts.createSourceFile(file, readFileSync(new URL(file, sourceDirectory), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  for (const file of sources) {
+    const source = ts.createSourceFile(file, readFileSync(new URL(file, sourceDirectory), 'utf8'), ts.ScriptTarget.Latest, true, file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
     const visit = (node: ts.Node) => {
       if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 't' && node.arguments[0] && ts.isStringLiteralLike(node.arguments[0])) {
         const key = node.arguments[0].text;
