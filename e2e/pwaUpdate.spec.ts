@@ -1,8 +1,8 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { createBlankProject } from '../src/onboardingModel';
-import { TERMS_VERSION } from '../src/legalPolicy';
+import { createBlankProject } from '../src/domain/project/onboardingModel';
+import { TERMS_VERSION } from '../src/domain/policies/legalPolicy';
 import { pwaDeployment } from './fixtures/pwaDeployment';
 
 const headers = { Origin: 'http://127.0.0.1:5188', 'Content-Type': 'application/json' };

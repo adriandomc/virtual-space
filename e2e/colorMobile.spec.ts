@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
-import { createDefaultProject } from '../src/projectDocument';
-import { TERMS_VERSION } from '../src/legalPolicy';
+import { createDefaultProject } from '../src/domain/project/projectDocument';
+import { TERMS_VERSION } from '../src/domain/policies/legalPolicy';
 
 test('mobile color editing reveals the scene and restores the properties panel and focus on Cancel or Escape', async ({ page, context }) => {
   await page.setViewportSize({ width: 390, height: 844 });

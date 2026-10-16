@@ -1,11 +1,11 @@
 import { expect, test, type APIRequestContext, type Page, type Request } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
-import { createBlankProject } from '../src/onboardingModel';
-import { addCustomFurniture } from '../src/model';
-import { TERMS_VERSION } from '../src/legalPolicy';
-import { projectToRoom, updateProjectRoom } from '../src/projectDocument';
-import { addLevel } from '../src/projectOperations';
-import { parseProjectBackup } from '../src/projectBackup';
+import { createBlankProject } from '../src/domain/project/onboardingModel';
+import { addCustomFurniture } from '../src/domain/project/model';
+import { TERMS_VERSION } from '../src/domain/policies/legalPolicy';
+import { projectToRoom, updateProjectRoom, type ProjectDocument } from '../src/domain/project/projectDocument';
+import { addLevel } from '../src/domain/project/projectOperations';
+import { parseProjectBackup } from '../src/client/projects/projectBackup';
 
 const origin = 'http://127.0.0.1:5188';
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=', 'base64');
@@ -26,7 +26,7 @@ async function account(request: APIRequestContext) {
 }
 async function design(request: APIRequestContext, name: string, levelCount = 1) {
   const { setupStep: _step, ...empty } = createBlankProject();
-  const id = randomUUID(); let project = { ...empty, id, name };
+  const id = randomUUID(); let project: ProjectDocument = { ...empty, id, name };
   while (project.levels.length < levelCount) project = addLevel(project, { copy: true, name: 'Planta ' + (project.levels.length + 1) });
   const response = await request.post('/api/rooms', { headers: jsonHeaders, data: { id, project } }); expect(response.status(), await response.text()).toBe(201);
   return { id, project };

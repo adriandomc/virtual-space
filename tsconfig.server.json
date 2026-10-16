@@ -1,4 +1,5 @@
 {
+  "extends": "./tsconfig.json",
   "compilerOptions": {
     "target": "ES2022",
     "lib": ["ES2022"],
@@ -10,5 +11,6 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["src/server.ts", "src/maintenance.ts", "src/operations.ts", "src/model.ts", "src/types.ts"]
+  "include": ["src/server/**/*.ts"],
+  "exclude": ["**/*.test.ts"]
 }

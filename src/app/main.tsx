@@ -1,0 +1,36 @@
+import React from 'react';
+import { t } from '../shared/i18n/i18n';
+import ReactDOM from 'react-dom/client';
+import { LoaderCircle } from 'lucide-react';
+import { siteRoute } from '../shared/routes';
+import { registerAppOffline } from '../client/pwa/appOffline';
+import { bootstrapOfflineMode } from '../client/offline/offlineMode';
+import AppRecovery, { AppFrame } from './AppRecovery';
+import './styles.css';
+import '../client/offline/offline.css';
+
+const Landing = React.lazy(() => import('../features/landing/Landing'));
+const Embed = React.lazy(() => import('../features/embed/Embed'));
+const AccountApp = React.lazy(() => import('../features/accounts/AccountApp'));
+const Privacy = React.lazy(() => import('../features/legal/Privacy'));
+const Terms = React.lazy(() => import('../features/legal/Terms'));
+const Help = React.lazy(() => import('../features/help/Help'));
+const route = siteRoute(new URL(window.location.href));
+if (route.page === 'embed') document.body.classList.add('embed-page');
+const viewport = window.visualViewport;
+const syncViewportHeight = () => document.documentElement.style.setProperty('--app-height', Math.round(viewport && viewport.scale === 1 ? viewport.height : window.innerHeight) + 'px');
+viewport?.addEventListener('resize', syncViewportHeight);
+window.addEventListener('resize', syncViewportHeight);
+syncViewportHeight();
+import.meta.hot?.dispose(() => { viewport?.removeEventListener('resize', syncViewportHeight); window.removeEventListener('resize', syncViewportHeight); });
+
+if (route.redirect) window.location.replace(route.redirect);
+else {
+ const root = ReactDOM.createRoot(document.getElementById('root')!);
+ root.render(<main className="project-loading" aria-label={t('Cargando')}><LoaderCircle size={25} className="saving-spinner" /></main>);
+ void (route.page === 'embed' ? Promise.resolve() : bootstrapOfflineMode()).then(() => { if (route.page !== 'embed') void registerAppOffline(); root.render(
+  <React.StrictMode><AppRecovery><AppFrame><React.Suspense fallback={<main className="project-loading" aria-label={t('Cargando')}><LoaderCircle size={25} className="saving-spinner" /></main>}>
+    {route.page === 'embed' ? <Embed /> : route.page === 'landing' ? <Landing /> : route.page === 'privacy' ? <Privacy /> : route.page === 'terms' ? <Terms /> : route.page === 'help' ? <Help /> : <AccountApp page={route.page} />}
+  </React.Suspense></AppFrame></AppRecovery></React.StrictMode>,
+ ); }).catch(() => root.render(<main className="project-loading"><p>{t('No se pudo abrir el almacenamiento de este dispositivo.')}</p><button className="primary-button" onClick={() => window.location.reload()}>{t('Reintentar')}</button></main>));
+}
