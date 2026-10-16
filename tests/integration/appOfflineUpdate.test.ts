@@ -8,7 +8,7 @@ import { planUpdateActivityReason } from '../../src/features/construction/planDr
 const source = readFile(new URL('../../src/client/pwa/appOffline.ts', import.meta.url), 'utf8').then(text => ts.transpileModule(text.replaceAll('import.meta.env?.PROD', 'true').replaceAll('import.meta.env?.VITE_BUILD_ID', '"test-build"'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText);
 
 async function app(options: { activeBuild?: string; waiting?: boolean; statusGate?: Promise<void>; versions?: string[]; uncontrolled?: boolean; legacy?: boolean; forced?: boolean; missingRegistration?: boolean; registrationError?: boolean; online?: boolean } = {}) {
-  const listeners = new Map<string, Function>(), pending: { message: { type: string; id: string }; reply: (value: unknown) => void }[] = [];
+  const listeners = new Map<string, Function>(), pending: { message: { type: string; id: string; automatic?: boolean }; reply: (value: unknown) => void }[] = [];
   const exports: Record<string, any> = {};
   let forced = !!options.forced, reloads = 0, idle = false, storedPending = false, activity = '', version = 'current', registrationReads = 0;
   const workerRequests: string[] = [];
@@ -66,6 +66,23 @@ test('a late save handshake cannot erase the rejection already delivered through
   assert.equal(value.reloads(), 0);
 });
 
+test('a manual click during automatic staging retries with manual guards instead of inheriting startup rejection', async () => {
+  const value = await app(), automatic = value.api.updateAppOffline(true);
+  const manual = value.api.updateAppOffline();
+  assert.notEqual(manual, automatic);
+  assert.equal(value.pending.length, 1);
+  assert.equal(value.pending[0].message.automatic, true);
+  value.pending[0].reply({ error: 'Continúa trabajando. Puedes actualizar después.' });
+  await automatic;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(value.pending.length, 2);
+  assert.equal(value.pending[1].message.automatic, false);
+  value.pending[1].reply({ error: 'Guarda los cambios de las otras pestañas antes de continuar.' });
+  await manual;
+  assert.match(value.api.getAppOfflineState().error, /Guarda/);
+  assert.equal(value.reloads(), 0);
+});
+
 test('a delayed healthy worker status never clears a newer update rejection', async () => {
   const options: { statusGate?: Promise<void> } = {}, value = await app(options), request = value.api.updateAppOffline();
   let release!: () => void; options.statusGate = new Promise<void>(resolve => { release = resolve; }); value.activate();
@@ -73,6 +90,27 @@ test('a delayed healthy worker status never clears a newer update rejection', as
   release(); await new Promise(resolve => setImmediate(resolve));
   assert.equal(value.api.getAppOfflineState().error, 'Guarda el campo pendiente antes de continuar.');
   assert.equal(value.api.getAppOfflineState().updating, false); assert.equal(value.reloads(), 0);
+});
+
+test('a queued manual update releases only its rejected automatic freeze before a delayed cancellation', async () => {
+  const value = await app(), automatic = value.api.updateAppOffline(true), oldId = value.pending[0].message.id;
+  value.message('SPACE_SAVE_UPDATE', oldId);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(value.api.getAppOfflineState().updating, true);
+  const manual = value.api.updateAppOffline();
+  value.pending[0].reply({ error: 'Continúa trabajando. Puedes actualizar después.' });
+  await automatic;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(value.pending.length, 2);
+  const newId = value.pending[1].message.id;
+  value.message('SPACE_SAVE_UPDATE', newId);
+  await new Promise(resolve => setImmediate(resolve));
+  value.message('SPACE_CANCEL_UPDATE', oldId);
+  assert.equal(value.api.getAppOfflineState().updating, true);
+  value.pending[1].reply({ error: 'Guarda los cambios de las otras pestañas antes de continuar.' });
+  await manual;
+  assert.equal(value.api.getAppOfflineState().updating, false);
+  assert.match(value.api.getAppOfflineState().error, /Guarda/);
 });
 
 test('an explicit negative update acknowledgement always exposes a recovery reason', async () => {

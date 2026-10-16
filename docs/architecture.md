@@ -51,6 +51,8 @@ Model access lives in `client/models/modelRepository.ts`; it returns domain meta
 
 The existing offline repository, preparation, synchronization and package modules share one durable queue. The existing command service remains the sole authority for canonical project/Yjs transactions, revisions, access and receipts. No alternate persistence path was introduced by the layout change.
 
+PWA updates retain their request intent and freeze ID. A manual action overlapping automatic staging runs its own guards after that attempt settles; a rejected request releases only its own freeze, even if a cancellation arrives later through another channel. Other tabs and unfinished drafts remain protected.
+
 ## Adding or changing a feature
 
 Keep UI and interaction code in its owning feature. Put rules shared with persistence/import/server in domain modules, browser I/O in client modules and Node I/O in server modules. Extract cohesive responsibilities when they make ownership clearer; do not introduce generic controllers, contexts or barrel files just to hide import paths.

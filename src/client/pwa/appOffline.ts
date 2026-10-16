@@ -10,6 +10,7 @@ let state: AppOfflineState = { ready: false, update: false, updating: false, err
 let registration: ServiceWorkerRegistration | undefined;
 let started: Promise<void> | undefined;
 let updateRequest: Promise<void> | undefined;
+let automaticRequest = false;
 let prompt: InstallPrompt | undefined;
 let freeze: { kind: 'update' | 'mode'; id: string } | undefined;
 let modeFreeze: { id: string; worker?: ServiceWorker } | undefined;
@@ -179,15 +180,18 @@ export async function releaseLocalSaveFreeze() {
   finally { try { await refreshOfflineMode(); } finally { unfreeze('mode', held.id); } }
 }
 export function updateAppOffline(automatic = false): Promise<void> {
-  if (updateRequest) return updateRequest;
+  // A manual click must run manual guards after an overlapping startup attempt settles.
+  if (updateRequest) return !automatic && automaticRequest ? updateRequest.then(() => updateAppOffline()) : updateRequest;
   const worker = registration?.waiting;
   if ((!worker && !reloadRequired) || state.updating || offlineForced()) return Promise.resolve();
   publish({ error: '' });
+  automaticRequest = automatic;
+  const id = crypto.randomUUID();
   updateRequest = (async () => {
     try {
       if (!worker) {
         const reason = appActivityReason(); if (reason) throw new Error(reason);
-        const id = crypto.randomUUID(); freeze = { kind: 'update', id }; publish({ updating: true });
+        freeze = { kind: 'update', id }; publish({ updating: true });
         try {
           await confirmLocalSaved();
           const pending = automatic && await hasStoredOfflineChanges();
@@ -195,9 +199,9 @@ export function updateAppOffline(automatic = false): Promise<void> {
           window.location.reload(); return;
         } finally { unfreeze('update', id); }
       }
-      const result = await message(worker, 'SPACE_UPDATE', crypto.randomUUID(), automatic);
+      const result = await message(worker, 'SPACE_UPDATE', id, automatic);
       if (result.error || !result.ready) throw new Error(result.error || 'Guarda los cambios de las otras pestañas antes de continuar.');
-    } catch (cause) { publish({ error: cause instanceof Error ? cause.message : 'No se pudo actualizar.' }); }
+    } catch (cause) { unfreeze('update', id); publish({ error: cause instanceof Error ? cause.message : 'No se pudo actualizar.' }); }
   })().finally(() => { updateRequest = undefined; });
   return updateRequest;
 }
