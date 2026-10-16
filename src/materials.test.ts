@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as THREE from 'three/webgpu';
-import { createCeilingMaterial, createFabricMaterial, createFloorMaterial, createFurnitureMaterial, createWallMaterial, createWoodMaterial, disposeArchitecturalTextures } from './materials';
+import { architecturalTexturePath, createCeilingMaterial, createCeilingFinishMaterial, createSlabMaterials, createWallFinishMaterial, createFabricMaterial, createFloorMaterial, createRoofInteriorMaterial, createFurnitureMaterial, createWallMaterial, createWoodMaterial, disposeArchitecturalTextures, setMaterialTextureResolution } from './materials';
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { createDefaultRoom } from './model';
 import type { FloorFinish } from './types';
 
@@ -112,5 +114,57 @@ test('furniture wood, plastic and metal preserve HEX and physical response in ev
     }
   }
   assert.equal(disposed, 9);
+  disposeArchitecturalTextures();
+});
+
+test('lower texture quality downloads real 512 variants and keeps high quality within authored resolution', async () => {
+  const manifest: { path: string; variants: Record<string, { path: string; bytes: number; sha256: string; width: number; height: number }> }[] = JSON.parse(await readFile(new URL('../public/materials/manifest.json', import.meta.url), 'utf8'));
+  let lowBytes = 0, originalBytes = 0;
+  for (const entry of manifest) for (const [resolution, variant] of Object.entries(entry.variants)) {
+    const bytes = await readFile(new URL('../public' + variant.path, import.meta.url));
+    assert.equal(bytes.length, variant.bytes); assert.equal(createHash('sha256').update(bytes).digest('hex'), variant.sha256);
+    assert.ok(Math.max(variant.width, variant.height) <= Number(resolution) + 1);
+    if (resolution === '512') lowBytes += variant.bytes; else originalBytes += variant.bytes;
+  }
+  assert.ok(lowBytes < originalBytes / 4, 'mobile variants reduce actual downloads');
+  assert.equal(architecturalTexturePath('wood', 'color', 512), '/materials/512/wood/color.jpg');
+  assert.equal(architecturalTexturePath('wood', 'color', 2048), '/materials/wood/color.jpg');
+  setMaterialTextureResolution(512);
+  const low = createWoodMaterial('#abcdef', 'hyperrealistic'); assert.match(low.map!.name, /^\/materials\/512\//);
+  low.dispose(); setMaterialTextureResolution(2048); disposeArchitecturalTextures();
+});
+
+test('roof interior finishes retain selected physical material in every visual mode', () => {
+  for (const quality of ['standard', 'realistic', 'hyperrealistic'] as const) for (const material of ['wood', 'marble', 'concrete'] as const) {
+    const interior = createRoofInteriorMaterial({ color: '#abcdef', material }, quality);
+    assert.equal(interior.color.getHexString(), 'abcdef'); assert.equal(interior.side, THREE.DoubleSide);
+    // Plaster keeps a uniform paint tint; its realistic relief and hyperrealistic maps add detail independently.
+    assert.equal(Boolean(interior.colorNode), material !== 'concrete' || quality === 'hyperrealistic');
+    if (quality !== 'standard') { assert.ok(interior.normalNode); assert.ok(interior.roughnessNode); }
+    if (quality === 'hyperrealistic') assert.equal(interior.map!.name, '/materials/' + (material === 'concrete' ? 'plaster' : material) + '/color.jpg');
+    interior.dispose();
+  }
+  disposeArchitecturalTextures();
+});
+
+test('both wall sides and ceilings use their explicit finish without changing shader quality', () => {
+  for (const quality of ['standard', 'realistic', 'hyperrealistic'] as const) for (const factory of [createWallFinishMaterial, createCeilingFinishMaterial]) for (const material of ['wood', 'tile-grid', 'tile-brick', 'tile-checker', 'marble', 'concrete'] as const) {
+    const surface = factory({ color: '#3478ab', material }, quality); assert.equal(surface.color.getHexString(), '3478ab'); assert.equal(surface.side, THREE.DoubleSide); assert.equal(surface.lights, true);
+    if (quality === 'hyperrealistic') assert.equal(surface.map!.name, '/materials/' + (material === 'concrete' ? 'plaster' : material.startsWith('tile-') ? 'stone' : material) + '/color.jpg');
+    else assert.equal(surface.map, null);
+    if (quality !== 'standard') assert.ok(surface.normalNode);
+    surface.dispose();
+  }
+  disposeArchitecturalTextures();
+});
+
+test('one slab keeps independent top and underside finishes in every visual mode', () => {
+  for (const quality of ['standard', 'realistic', 'hyperrealistic'] as const) {
+    const [top, underside, edge] = createSlabMaterials({ color: '#674320', material: 'wood' }, { color: '#d7e8f9', material: 'marble' }, quality);
+    assert.equal(top.color.getHexString(), '674320'); assert.equal(underside.color.getHexString(), 'd7e8f9'); assert.equal(edge, top); assert.notEqual(top, underside);
+    assert.equal(Boolean(top.map), quality === 'hyperrealistic'); assert.equal(Boolean(underside.map), quality === 'hyperrealistic');
+    if (quality === 'hyperrealistic') { assert.match(top.map!.name, /wood\/color.jpg$/); assert.match(underside.map!.name, /marble\/color.jpg$/); }
+    new Set([top, underside, edge]).forEach(material => material.dispose());
+  }
   disposeArchitecturalTextures();
 });

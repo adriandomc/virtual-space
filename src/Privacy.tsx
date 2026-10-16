@@ -21,7 +21,7 @@ export default function Privacy() {
     <header className="privacy-header"><a href="/" aria-label={t("3D Space, inicio")}><Brand className="privacy-brand" /></a><LanguageSelector /><a className="privacy-back" href="/"><ArrowLeft size={18} />{t("Volver al inicio")}</a></header>
     <main className="privacy-main">
       <article className="privacy-document">
-        <header><h1>{t("Aviso de privacidad")}</h1><p className="privacy-updated">{t("Última actualización: 15 de octubre de 2026")}</p></header>
+        <header><h1>{t("Aviso de privacidad")}</h1><p className="privacy-updated">{t("Última actualización: 16 de octubre de 2026")}</p></header>
         {!complete && <p className="privacy-draft" role="status">{t("Aviso en preparación: falta confirmar los datos del responsable y la configuración del servidor.")}</p>}
         <p className="privacy-summary">{t("3D Space no incorpora analíticas de uso, publicidad ni rastreadores. Los diseños son privados por defecto y sólo se muestran a otras personas cuando decides compartirlos.")}</p>
         <nav className="privacy-index" aria-label={t("Secciones del aviso")}><a href="#datos">{t("Datos")}</a><a href="#cookies">{t("Cookies")}</a><a href="#opciones">{t("Tus opciones")}</a><a href="#contacto">{t("Contacto")}</a></nav>
@@ -64,6 +64,7 @@ export default function Privacy() {
 
         <section id="cookies"><h2>{t("Cookies")}</h2>
           <p>{t('El idioma elegido se guarda en este navegador para recordar tu preferencia. No se utiliza para analíticas ni se envía al servidor.')}</p>
+          <p>{t("Las preferencias de gráficos, como sombras, texturas, detalle y límite de fotogramas, se guardan únicamente en este navegador para adaptar el rendimiento. No se envían al servidor ni se utilizan para analíticas. Los ajustes visuales del diseño, su construcción de hasta 12 niveles y los croquis de cada nivel sí forman parte de los datos que guardas o sincronizas.")}</p>
           <p>{t("Al iniciar sesión o crear una cuenta se utiliza una cookie propia de autenticación, denominada")} <code>{t("__Host-vs_session")}</code>{t(". Permite reconocer tu sesión y acceder a tus diseños. No se crean cookies de analítica o publicidad, ni cookies de terceros desde la aplicación.")}</p>
           <dl className="privacy-details">
             <div><dt>{t("Acceso normal")}</dt><dd>{t("Cookie de sesión, sin una fecha de conservación permanente en el navegador. Su cierre depende del navegador, incluida la restauración de sesiones. El acceso deja de ser válido como máximo a los 30 días.")}</dd></div>

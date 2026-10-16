@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
+    "postinstall": "node scripts/patch-three.mjs",
     "dev": "vite --host 0.0.0.0",
     "dev:server": "tsx src/server.ts",
     "build": "tsc -b && vite build && npm run build:server",
@@ -17,12 +18,14 @@
     "test:e2e:webkit": "npm run build && playwright test --project=webkit"
   },
   "dependencies": {
+    "@zip.js/zip.js": "^2.24.0",
     "i18next": "^26.4.7",
     "lucide-react": "^0.468.0",
+    "polygon-clipping": "^0.15.7",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-i18next": "^17.0.20",
-    "three": "^0.180.0",
+    "three": "0.180.0",
     "three-bvh-csg": "^0.0.18",
     "three-mesh-bvh": "^0.9.7",
     "ws": "^8.22.0",

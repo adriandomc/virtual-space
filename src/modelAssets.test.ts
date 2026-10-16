@@ -7,7 +7,9 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
 import { createModelAssets, MODEL_ACCOUNT_BYTES, MODEL_MAX_BYTES, validateGlb } from './modelAssets';
-import { createDefaultRoom } from './model';
+import { createDefaultProject } from './projectDocument';
+import { patchProject } from './projectTestFixture';
+import { writeProject } from './projectRepository';
 import * as THREE from 'three/webgpu';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 
@@ -29,7 +31,7 @@ function makeGlb(document: unknown, binary: Buffer) {
 }
 
 test('self-contained GLB validation returns physical bounds and stable node keys', () => {
-  assert.deepEqual(validateGlb(glbFixture()), { width: 1, height: 1, depth: 1, triangles: 1, texturePixels: 0, nodes: [{ key: '0', name: 'Frente', mesh: true }] });
+  assert.deepEqual(validateGlb(glbFixture()), { width: 1, height: 1, depth: 1, triangles: 1, texturePixels: 0, meshInstances: 1, materials: 0, nodes: [{ key: '0', name: 'Frente', mesh: true }] });
   const result = validateGlb(glbFixture(document => { document.nodes[0].translation = [2, 3, 4]; document.nodes[0].scale = [2, 3, 4]; }));
   assert.deepEqual([result.width, result.height, result.depth], [2, 3, 4]);
 });
@@ -90,7 +92,7 @@ function storageFixture() {
   initializeTestDatabase(database);
   const owner = randomUUID(), editor = randomUUID(), outsider = randomUUID(), roomId = randomUUID(), anotherRoom = randomUUID();
   for (const id of [owner, editor, outsider]) insertTestUser(database, id);
-  const room = createDefaultRoom();
+  const room = createDefaultProject(undefined, undefined, roomId);
   insertTestRoom(database, roomId, owner, { room: JSON.stringify(room) });
   insertTestRoom(database, anotherRoom, owner, { room: JSON.stringify(room) });
   const service = createModelAssets(database, {
@@ -127,13 +129,13 @@ test('room-owned model assets allow editors, hide unused models from public link
     assert.throws(() => service.read(asset.id, null, roomId), /no existe/);
     assert.throws(() => service.read(asset.id, outsider, roomId), /no existe/);
     const custom = { id: 'custom-1', type: 'custom' as const, material: null, color: null, name: 'Modelo', assetId: asset.id, width: 1, depth: 1, height: 1, x: 0, z: 0, rotation: 0 };
-    const changed = { ...room, furniture: [custom] };
-    service.validateRoomReferences(changed, editor, roomId);
-    assert.throws(() => service.validateRoomReferences(changed, owner, anotherRoom), /no está disponible/);
-    database.prepare('UPDATE rooms SET room=? WHERE id=?').run(JSON.stringify(changed), roomId);
+    const changed = patchProject(room, { furniture: [custom] });
+    service.validateProjectReferences(changed, editor, roomId);
+    assert.throws(() => service.validateProjectReferences(changed, owner, anotherRoom), /no está disponible/);
+    writeProject(database, changed);
     assert.deepEqual(service.read(asset.id, null, roomId), data);
     assert.throws(() => service.remove(asset.id, owner), /Retíralo/);
-    assert.throws(() => service.validateRoomReferences({ ...changed, furniture: [{ ...custom, parts: { '999': { color: '#ffffff' } } }] }, editor, roomId), /parte no válida/);
+    assert.throws(() => service.validateProjectReferences(patchProject(changed, { furniture: [{ ...custom, parts: { '1': { color: '#ffffff' } } }] }), editor, roomId), /parte no válida/);
     database.prepare('DELETE FROM users WHERE id=?').run(editor);
     assert.deepEqual(service.read(asset.id, owner), data, 'deleting the uploader does not delete the room owner’s model');
     database.prepare('DELETE FROM rooms WHERE id=?').run(roomId);
@@ -181,8 +183,8 @@ test('room GPU texture budget counts shared instances once and bounds different 
       database.prepare('UPDATE model_assets SET metadata=? WHERE id=?').run(JSON.stringify(metadata), asset.id);
     }
     const custom = { id: 'custom-a', type: 'custom' as const, material: null, color: null, name: 'Modelo', assetId: first.id, width: 1, depth: 1, height: 1, x: 0, z: 0, rotation: 0 };
-    assert.doesNotThrow(() => service.validateRoomReferences({ ...room, furniture: [custom, { ...custom, id: 'custom-b' }] }, owner, roomId));
-    assert.throws(() => service.validateRoomReferences({ ...room, furniture: [custom, { ...custom, id: 'custom-b', assetId: second.id }] }, owner, roomId), /demasiadas texturas/);
+    assert.doesNotThrow(() => service.validateProjectReferences(patchProject(room, { furniture: [custom, { ...custom, id: 'custom-b' }] }), owner, roomId));
+    assert.throws(() => service.validateProjectReferences(patchProject(room, { furniture: [custom, { ...custom, id: 'custom-b', assetId: second.id }] }), owner, roomId), /demasiadas texturas/);
   } finally { database.close(); }
 });
 

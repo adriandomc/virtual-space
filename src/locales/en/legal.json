@@ -137,5 +137,7 @@
   "Pendiente de confirmar": "Pending confirmation",
   "La configuración de los registros de acceso del servidor está pendiente de confirmar.": "The server access log configuration has yet to be confirmed.",
   "La configuración y el plazo de conservación de los respaldos están pendientes de confirmar.": "The backup configuration and retention period have yet to be confirmed.",
-  "El idioma elegido se guarda en este navegador para recordar tu preferencia. No se utiliza para analíticas ni se envía al servidor.": "Your selected language is saved in this browser to remember your preference. It is not used for analytics or sent to the server."
+  "El idioma elegido se guarda en este navegador para recordar tu preferencia. No se utiliza para analíticas ni se envía al servidor.": "Your selected language is saved in this browser to remember your preference. It is not used for analytics or sent to the server.",
+  "Las preferencias de gráficos, como sombras, texturas, detalle y límite de fotogramas, se guardan únicamente en este navegador para adaptar el rendimiento. No se envían al servidor ni se utilizan para analíticas. Los ajustes visuales del diseño, su construcción de hasta 12 niveles y los croquis de cada nivel sí forman parte de los datos que guardas o sincronizas.": "Graphics preferences, such as shadows, textures, detail and frame-rate limits, are stored only in this browser to adapt performance. They are not sent to the server or used for analytics. The design visual settings, its construction of up to 12 levels and the reference images for each level are part of the data you save or sync.",
+  "Última actualización: 16 de octubre de 2026": "Last updated: October 16, 2026"
 }

@@ -108,6 +108,8 @@ test('mobile settings and Information lead to an English setup, editor and model
   await page.getByLabel('Design name', { exact: true }).fill('My unchanged project name');
   await page.getByLabel('Design name', { exact: true }).press('Tab');
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect(page.getByRole('list', { name: 'New design steps', exact: true }).getByRole('listitem').filter({ hasText: 'Roof' })).toHaveAttribute('aria-current', 'step');
+  await page.getByRole('button', { name: 'Skip', exact: true }).click();
   await expect(page.getByRole('list', { name: 'New design steps', exact: true }).getByRole('listitem').filter({ hasText: 'Colors' })).toHaveAttribute('aria-current', 'step');
   await page.getByRole('button', { name: 'Skip', exact: true }).click();
   await expect(page.getByRole('list', { name: 'New design steps', exact: true }).getByRole('listitem').filter({ hasText: 'Furniture' })).toHaveAttribute('aria-current', 'step');
@@ -115,7 +117,7 @@ test('mobile settings and Information lead to an English setup, editor and model
   await page.getByRole('button', { name: 'Skip', exact: true }).click();
   await expect(page.getByLabel('Project name', { exact: true })).toHaveValue('My unchanged project name');
   await page.getByRole('button', { name: 'Items', exact: true }).click();
-  await expect(page.locator('.tree-item').filter({ hasText: 'Main light' })).toHaveCount(1);
+  await expect(page.locator('.tree-item').filter({ hasText: 'Main light' })).toHaveCount(0);
   await expect(page.locator('.tree-item').filter({ hasText: 'Luz principal' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Close items', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Walk through', exact: true })).toBeVisible();

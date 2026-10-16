@@ -5,7 +5,8 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve, sep } from 'node:path';
 import test from 'node:test';
-import { createDefaultRoom } from './model';
+import { createDefaultProject } from './projectDocument';
+import { patchProject } from './projectTestFixture';
 import { createServer } from './server';
 
 function modelFixture() {
@@ -29,7 +30,7 @@ test('embedded viewer is the only frameable document and public reads never use 
   const server = createServer({ dataDir: join(directory, 'data'), staticDir, secureCookie: false, maintenance: false });
   await new Promise<void>(accept => server.listen(0, '127.0.0.1', accept));
   const address = server.address(); assert.ok(address && typeof address !== 'string');
-  const base = 'http://127.0.0.1:' + address.port, id = randomUUID(), room = createDefaultRoom(), roomPath = '/api/rooms/' + id;
+  const base = 'http://127.0.0.1:' + address.port, id = randomUUID(), room = createDefaultProject(undefined, undefined, id), roomPath = '/api/rooms/' + id;
   const registration = await fetch(base + '/api/auth/register', { method: 'POST', headers: { Origin: base, 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'embed_owner', password: 'Safe-test-password', confirmPassword: 'Safe-test-password', termsVersion: TERMS_VERSION }) });
   assert.equal(registration.status, 201);
   const cookie = registration.headers.get('set-cookie')!.split(';')[0];
@@ -54,7 +55,7 @@ test('embedded viewer is the only frameable document and public reads never use 
       const rejected = await fetch(base + '/embed', { method: 'POST' });
       assert.equal(rejected.status, 405); protectedResponse(rejected);
     });
-    assert.equal((await send('/api/rooms', 'POST', { id, room })).status, 201);
+    assert.equal((await send('/api/rooms', 'POST', { id, project: room })).status, 201);
     const glb = modelFixture();
     const upload = async (name: string) => {
       const response = await fetch(base + '/api/models?room=' + id, { method: 'POST', headers: { ...headers, 'Content-Type': 'model/gltf-binary', 'X-Model-Name': name }, body: glb });
@@ -70,10 +71,10 @@ test('embedded viewer is the only frameable document and public reads never use 
       assert.equal((await send(assetPath + '&metadata=1')).status, 404);
       assert.equal((await send('/api/models/' + assetId)).status, 200);
     });
-    const updated = await send(roomPath, 'PUT', { revision: 1, room: { ...room, furniture: [{ id: 'model', type: 'custom', material: null, color: null, assetId, name: 'Visible', width: 1, depth: 1, height: 1, x: 0, z: 0, rotation: 0 }] } });
+    const updated = await send(roomPath, 'PUT', { revision: 1, operationId: randomUUID(), project: patchProject(room, { furniture: [{ id: 'model', type: 'custom', material: null, color: null, assetId, name: 'Visible', width: 1, depth: 1, height: 1, x: 0, z: 0, rotation: 0 }] }) });
     assert.equal(updated.status, 200, await updated.text());
-    assert.equal((await fetch(base + roomPath + '/sketch', { method: 'PUT', headers: { ...headers, 'Content-Type': 'image/png' }, body: png })).status, 200);
-    assert.equal((await send(roomPath + '/sketch?public=1')).status, 404);
+    assert.equal((await fetch(base + roomPath + '/levels/' + room.activeLevelId + '/sketch', { method: 'PUT', headers: { ...headers, 'Content-Type': 'image/png', 'X-Room-Revision': '2', 'X-Sketch-Version': '0', 'X-Sketch-Request-Id': randomUUID() }, body: png })).status, 200);
+    assert.equal((await send(roomPath + '/levels/' + room.activeLevelId + '/sketch?public=1')).status, 404);
     assert.equal((await send(roomPath + '/share', 'POST', { enabled: true })).status, 200);
     await t.test('public mode remains a reader and exposes only referenced models from that public room', async () => {
       const response = await send(roomPath + '?public=1'); protectedResponse(response);
@@ -86,19 +87,19 @@ test('embedded viewer is the only frameable document and public reads never use 
       assert.equal((await send('/api/models/' + unusedId + '?room=' + id + '&public=1')).status, 404);
       assert.equal((await send('/api/models/' + assetId + '?public=1')).status, 404);
       assert.equal((await send('/api/models/' + assetId + '?room=' + randomUUID() + '&public=1')).status, 404);
-      assert.equal((await send(roomPath + '/sketch?public=1')).status, 200);
+      assert.equal((await send(roomPath + '/levels/' + room.activeLevelId + '/sketch?public=1')).status, 200);
     });
     await t.test('public-mode mutations cannot acquire edit rights from a cookie', async () => {
-      assert.equal((await send(roomPath + '?public=1', 'PUT', { revision: 2, room })).status, 403);
+      assert.equal((await send(roomPath + '?public=1', 'PUT', { revision: 2, project: room, operationId: randomUUID() })).status, 403);
       assert.equal((await send(roomPath + '?public=1', 'DELETE')).status, 403);
       assert.equal((await send(roomPath + '/share?public=1', 'POST', { enabled: false })).status, 403);
-      assert.equal((await send(roomPath + '/sketch?public=1', 'DELETE')).status, 403);
+      assert.equal((await send(roomPath + '/levels/' + room.activeLevelId + '/sketch?public=1', 'DELETE')).status, 403);
       assert.equal((await send(assetPath, 'DELETE')).status, 403);
       assert.equal((await (await send(roomPath)).json()).revision, 2);
     });
     await t.test('revoking public access immediately rejects room, sketch and model reads', async () => {
       assert.equal((await send(roomPath + '/share', 'POST', { enabled: false })).status, 200);
-      for (const path of [roomPath + '?public=1', roomPath + '/sketch?public=1', assetPath, assetPath + '&metadata=1']) {
+      for (const path of [roomPath + '?public=1', roomPath + '/levels/' + room.activeLevelId + '/sketch?public=1', assetPath, assetPath + '&metadata=1']) {
         const response = await send(path); assert.equal(response.status, 404); protectedResponse(response);
       }
       assert.equal((await send(roomPath)).status, 200);

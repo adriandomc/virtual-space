@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import test from 'node:test';
 import { addOpening, createDefaultRoom } from './model';
+import { projectFixture } from './projectTestFixture';
 import { createServer } from './server';
 
 test('rechaza borradores incompletos sin modificar el diseño guardado y admite ceros válidos', async () => {
@@ -27,34 +28,34 @@ test('rechaza borradores incompletos sin modificar el diseño guardado y admite 
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const id = randomUUID(), path = '/api/rooms/' + id;
-    const room = { ...addOpening(createDefaultRoom(), 'door', 0, { width: 0.9, height: 2.1, sill: 0, doorStyle: 'right' }), name: 'Mi diseño' };
-    const created = await send('/api/rooms', 'POST', { id, room });
+    const room = projectFixture({ ...addOpening(createDefaultRoom(), 'door', 0, { width: 0.9, height: 2.1, sill: 0, doorStyle: 'right' }), name: 'Mi diseño' }, id);
+    const created = await send('/api/rooms', 'POST', { id, project: room });
     assert.equal(created.status, 201);
     assert.equal((await created.json()).revision, 1);
 
     for (const invalidRoom of [
       { ...room, name: '' },
       { ...room, name: ' \t\n ' },
-      { ...room, height: null },
-      { ...room, height: NaN },
-      { ...room, openings: room.openings.map((opening, index) => index === 0 ? { ...opening, width: null } : opening) },
-      { ...room, openings: room.openings.map((opening, index) => index === 0 ? { ...opening, width: NaN } : opening) },
-      { ...room, floorColor: '#12' },
+      { ...room, levels: [{ ...room.levels[0], height: null }] },
+      { ...room, levels: [{ ...room.levels[0], height: NaN }] },
+      { ...room, levels: [{ ...room.levels[0], openings: room.levels[0].openings.map((opening, index) => index === 0 ? { ...opening, width: null } : opening) }] },
+      { ...room, levels: [{ ...room.levels[0], openings: room.levels[0].openings.map((opening, index) => index === 0 ? { ...opening, width: NaN } : opening) }] },
+      { ...room, levels: [{ ...room.levels[0], surfaces: room.levels[0].surfaces.map(surface => ({ ...surface, finish: { ...surface.finish, color: '#12' } })) }] },
     ]) {
-      const rejected = await send(path, 'PUT', { room: invalidRoom, revision: 1 });
+      const rejected = await send(path, 'PUT', { project: invalidRoom, revision: 1, operationId: randomUUID() });
       assert.equal(rejected.status, 400);
       const saved = await (await send(path)).json();
       assert.equal(saved.revision, 1);
-      assert.deepEqual(saved.room, room);
+      assert.deepEqual(saved.project, room);
     }
 
-    const validRoom = { ...room, name: 'Cocina', lights: room.lights.map(light => ({ ...light, lumens: 0 })) };
-    const updated = await send(path, 'PUT', { room: validRoom, revision: 1 });
+    const validRoom = { ...room, name: 'Cocina', levels: [{ ...room.levels[0], lights: room.levels[0].lights.map(light => ({ ...light, lumens: 0 })) }] };
+    const updated = await send(path, 'PUT', { project: validRoom, revision: 1, operationId: randomUUID() });
     assert.equal(updated.status, 200);
     assert.equal((await updated.json()).revision, 2);
     const saved = await (await send(path)).json();
     assert.equal(saved.revision, 2);
-    assert.deepEqual(saved.room, validRoom);
+    assert.deepEqual(saved.project, validRoom);
   } finally {
     await new Promise<void>((accept, reject) => server.close(error => error ? reject(error) : accept()));
     assert.ok(resolve(dataDir).startsWith(resolve(tmpdir()) + sep));

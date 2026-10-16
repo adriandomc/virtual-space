@@ -3,6 +3,7 @@ import { lazy, Suspense, useEffect, useState } from 'react';
 import { LoaderCircle } from 'lucide-react';
 import { AccountRequestError } from './accountApi';
 import { fetchPublicDesign, type PublicDesign } from './embedProject';
+import { projectToRoom } from './projectDocument';
 import type { Room } from './types';
 import './embed.css';
 
@@ -43,11 +44,12 @@ export default function Embed() {
     return () => { active = false; controller?.abort(); clearInterval(timer); window.removeEventListener('online', refresh); window.removeEventListener('focus', refresh); document.removeEventListener('visibilitychange', refresh); };
   }, [id, attempt]);
 
-  const room = design && (quality && quality !== design.room.renderQuality ? { ...design.room, renderQuality: quality } : design.room);
+  const project = design && (quality && quality !== design.project.renderQuality ? { ...design.project, renderQuality: quality } : design.project);
+  const room = project && projectToRoom(project);
   return <main className="embed-view" aria-label={t('Visor 3D')}>
     {room ? <>
       <Suspense fallback={<div className="embed-loading" aria-label={t('Cargando')}><LoaderCircle size={24} className="saving-spinner" /></div>}>
-        <RoomScene room={room} roomId={id} publicView mode={mode} animateView selection={null} onSelect={ignore} onChange={ignore} onModelError={setError} readOnly transformMode="translate" resetKey={0} />
+        <RoomScene project={project!} activeLevelId={project!.activeLevelId} presentation={{ walls: 'full', roofs: true, levels: 'all' }} room={room} roomId={id} publicView mode={mode} animateView selection={null} onSelect={ignore} onChange={ignore} onModelError={setError} readOnly transformMode="translate" resetKey={0} />
       </Suspense>
       <div className="embed-controls">
         <div className="embed-mode" role="group" aria-label={t('Vista')}><button type="button" aria-pressed={mode === 'orbit'} onClick={() => setMode('orbit')}>{t('Visor')}</button><button type="button" aria-pressed={mode === 'walk'} onClick={() => setMode('walk')}>{t('Recorrido')}</button></div>

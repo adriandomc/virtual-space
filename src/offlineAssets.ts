@@ -1,5 +1,5 @@
 import type { ModelAsset } from './modelAssets';
-import type { Room } from './types';
+import type { ProjectDocument } from './projectDocument';
 import { AccountRequestError, accountRequest, isNetworkError } from './accountApi';
 import { cacheOfflineAsset, getOfflineAccess, listOffline, listOfflineMetadata, readOffline, removeOffline, setOfflineAccess, updateOffline, writeOffline } from './offlineStorage';
 import { offlineModelMetadata } from './offlineModelValidation';
@@ -133,8 +133,8 @@ export async function reconcileOfflineModels(roomId: string, assets: ModelAsset[
   const allowed = access(roomId);
   if (!allowed) return;
   const ids = new Set(assets.map(asset => asset.id));
-  const projects = await listOffline<{ accountId: string; draft?: Room | null; snapshot: { room: Room }; sketchDraft?: unknown; inflight?: unknown; inflightSketch?: unknown }>('projects');
-  const needed = new Set(projects.filter(project => project.accountId === allowed.accountId && (project.draft || project.sketchDraft || project.inflight || project.inflightSketch)).flatMap(project => (project.draft ?? project.snapshot.room).furniture.filter(item => item.type === 'custom').map(item => item.assetId)));
+  const projects = await listOffline<{ accountId: string; draft?: ProjectDocument | null; snapshot: { project: ProjectDocument }; sketchDrafts?: unknown; inflight?: unknown; inflightSketches?: unknown }>('projects');
+  const needed = new Set(projects.filter(project => project.accountId === allowed.accountId && (project.draft || Object.keys(project.sketchDrafts ?? {}).length || project.inflight || Object.keys(project.inflightSketches ?? {}).length)).flatMap(project => (project.draft ?? project.snapshot.project).levels.flatMap(level => level.furniture).filter(item => item.type === 'custom').map(item => item.assetId)));
   await onlineCache(async () => {
     for (const record of await listOffline<OfflineAssetRecord>('assets')) {
       if (!stillAllowed(roomId, allowed.accountId)) return;
@@ -171,12 +171,13 @@ export async function copyOfflineModel(asset: ModelAsset, roomId: string): Promi
   return uploadOfflineModel(new File([blob], asset.name + '.glb', { type: 'model/gltf-binary' }), roomId);
 }
 
-export async function flushOfflineAssets(roomId: string, room: Room): Promise<Room> {
+export async function flushOfflineAssets(roomId: string, project: ProjectDocument): Promise<ProjectDocument> {
   const allowed = access(roomId);
-  if (!allowed) return room;
-  const records = (await listOffline<OfflineAssetRecord>('assets')).filter(record => record.accountId === allowed.accountId && record.roomId === roomId);
-  for (const record of records) {
-    if (record.deleted) continue;
+  if (!allowed) return project;
+  const records = (await listOfflineMetadata<OfflineAssetRecord>('assets')).filter(record => record.accountId === allowed.accountId && record.roomId === roomId && record.pending && !record.deleted);
+  for (const metadata of records) {
+    const record = await readOffline<OfflineAssetRecord>('assets', key(allowed.accountId, roomId, metadata.asset.id));
+    if (!record || !record.pending || record.deleted) continue;
     if (!stillAllowed(roomId, allowed.accountId)) throw new Error('El acceso al diseño cambió. Vuelve a abrirlo.');
     if (record.pending) {
       let uploading = false;
@@ -194,5 +195,5 @@ export async function flushOfflineAssets(roomId: string, room: Room): Promise<Ro
       changed();
     }
   }
-  return room;
+  return project;
 }

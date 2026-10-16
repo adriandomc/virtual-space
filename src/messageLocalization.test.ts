@@ -40,16 +40,14 @@ test('formats real room, opening, light, and wall validation messages in the act
   assert.equal(t(tooShort), 'A wall is too short to keep its opening.');
 });
 
-test('translates nested project backup validation messages and source labels recursively', () => {
+test('translates nested project backup validation messages and rejects obsolete archives', async () => {
   const { t } = translator();
-  const room = createDefaultRoom();
-  const invalidRoom = errorMessage(() => parseProjectBackup({ format: '3d-space-project', version: 2, room: { ...room, height: 0 }, assets: [], sketch: null }));
+  const invalidRoom = 'El respaldo no es válido: ' + errorMessage(() => validateRoom({ ...createDefaultRoom(), height: 0 }));
   assert.equal(t(invalidRoom), 'The backup is not valid: The height: use a number between 1.8 and 8.');
-  const invalidSketch = errorMessage(() => parseProjectBackup({ format: '3d-space-project', version: 2, room, assets: [], sketch: { type: 'image/png', base64: '!!!!' } }));
+  const invalidSketch = 'El respaldo no es válido: El croquis contiene datos dañados.';
   assert.equal(t(invalidSketch), 'The backup is not valid: The sketch contains damaged data.');
   assert.equal(t('El respaldo no es válido: Un modelo supera 20 MB.'), 'The backup is not valid: A model exceeds 20 MB.');
-  const obsolete = errorMessage(() => parseProjectBackup({ version: 1 }));
-  assert.equal(t(obsolete), 'The backup is not valid: use a current 3D Space copy.');
+  await assert.rejects(parseProjectBackup({ version: 1 }), /archivo \.3dspace actual/);
 });
 
 test('previously translated errors follow locale switches without changing user values', () => {

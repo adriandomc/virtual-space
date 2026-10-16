@@ -211,7 +211,7 @@ export function getCatalogParts(type: string, variant?: string): CatalogPart[] {
   return parts;
 }
 
-export function buildCatalogGeometry(group: THREE.Group, item: CatalogItem, materials: { body: THREE.Material; face: THREE.Material; handles: THREE.Material }, quality: Room['renderQuality']): boolean {
+export function buildCatalogGeometry(group: THREE.Group, item: CatalogItem, materials: { body: THREE.Material; face: THREE.Material; handles: THREE.Material }, quality: Room['renderQuality'], detail: 'low' | 'medium' | 'high' = 'high'): boolean {
   const parts = getCatalogParts(item.type, item.variant);
   if (!parts.length) return false;
   const architectural = quality === 'hyperrealistic';
@@ -220,7 +220,7 @@ export function buildCatalogGeometry(group: THREE.Group, item: CatalogItem, mate
   for (const part of parts) {
     const size: [number, number, number] = [part.size[0] * item.width, part.size[1] * item.height, part.size[2] * item.depth];
     let geometry: THREE.BufferGeometry;
-    if (part.kind === 'box') geometry = architectural ? new RoundedBoxGeometry(...size, 2, Math.min(0.008, ...size.map(value => value / 4))) : new THREE.BoxGeometry(...size);
+    if (part.kind === 'box') geometry = architectural && detail !== 'low' ? new RoundedBoxGeometry(...size, detail === 'medium' ? 1 : 2, Math.min(0.008, ...size.map(value => value / 4))) : new THREE.BoxGeometry(...size);
     else if (part.kind === 'wedge') {
       const shape = new THREE.Shape();
       shape.moveTo(-size[0] / 2, -size[2] / 2); shape.lineTo(size[0] / 2, -size[2] / 2); shape.lineTo(-size[0] / 2, size[2] / 2); shape.closePath();
@@ -229,7 +229,7 @@ export function buildCatalogGeometry(group: THREE.Group, item: CatalogItem, mate
       geometry.translate(0, -size[1] / 2, 0);
       geometry.rotateY(Math.PI);
     } else {
-      geometry = new THREE.CylinderGeometry(0.5, 0.5, 1, architectural ? 40 : 24);
+      geometry = new THREE.CylinderGeometry(0.5, 0.5, 1, detail === 'low' ? 12 : detail === 'medium' ? 20 : architectural ? 40 : 24);
       if (part.kind === 'ellipse' || part.axis === 'z') geometry.rotateX(Math.PI / 2);
       if (part.axis === 'x') geometry.rotateZ(Math.PI / 2);
       geometry.scale(...size);

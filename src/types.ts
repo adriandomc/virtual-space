@@ -1,5 +1,5 @@
 export type Point = { x: number; z: number };
-export type Selection = { kind: 'wall'; index: number } | { kind: 'floor' | 'ceiling' } | { kind: 'furniture' | 'opening' | 'light'; id: string };
+export type Selection = { kind: 'wall'; index: number; id?: string } | { kind: 'floor' | 'ceiling'; id?: string } | { kind: 'furniture' | 'opening' | 'light' | 'stair' | 'roof'; id: string };
 export type EditingSettings = { snap: boolean; step: number; bounds: boolean };
 export type FloorFinish = 'wood' | 'tile-grid' | 'tile-brick' | 'tile-checker' | 'marble' | 'concrete';
 export type DoorStyle = 'right' | 'left' | 'frame';
@@ -45,8 +45,8 @@ export type FurnitureItem = {
   rotation: number;
 };
 export type Room = {
-  version: 2;
-  setupStep?: 0 | 1 | 2;
+  version: 3;
+  setupStep?: 0 | 1 | 2 | 3;
   name: string;
   vertices: Point[];
   wallColors: string[];
@@ -61,5 +61,12 @@ export type Room = {
   openings: Opening[];
   lights: RoomLight[];
   sun: { enabled: boolean; hour: number; azimuth: number; intensity: number };
+  /** Internal, disposable LevelScene metadata. Never persist this projection. */
+  levelId?: string;
+  elevation?: number;
+  wallIds?: string[];
+  wallSegments?: { id: string; start: Point; end: Point; leftColor: string; rightColor: string; thickness: number; height: number }[];
+  surfaces?: import('./projectDocument.js').ProjectSurface[];
+  roofIds?: string[];
 };
 export type ViewMode = 'orbit' | 'walk' | 'plan';

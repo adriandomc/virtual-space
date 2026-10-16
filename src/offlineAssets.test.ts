@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { IDBObjectStore } from 'fake-indexeddb';
-import { createDefaultRoom } from './model';
+import { createDefaultProject } from './projectDocument';
 import { flushOfflineAssets, forgetOfflineModel, listOfflineModels, loadLibraryModelBlob, loadModelBlob, reconcileOfflineModels, uploadOfflineModel, type OfflineAssetRecord } from './offlineAssets';
 import { clearOffline, listOffline, setOfflineAccess, writeOffline } from './offlineStorage';
 import { inspectOfflineGlb, offlineModelMetadata } from './offlineModelValidation';
@@ -126,8 +126,8 @@ test('offline uploads persist their GLB and reuse the same id when synchronizati
     assert.equal(records.length, 1); assert.equal(records[0].pending, true);
     assert.equal((await loadModelBlob(asset.id, 'room')).size, asset.size);
     assert.equal((await listOfflineModels('room', 'room'))[0].id, asset.id);
-    const room = createDefaultRoom();
-    room.furniture = [{ id: 'table', type: 'custom', color: null, material: null, assetId: asset.id, width: 1, height: 1, depth: 1, x: 0, z: 0, rotation: 0 }];
+    const room = createDefaultProject();
+    room.levels[0].furniture = [{ id: 'table', levelId: room.activeLevelId, type: 'custom', color: null, material: null, assetId: asset.id, width: 1, height: 1, depth: 1, x: 0, z: 0, rotation: 0 }];
     const requestedIds: string[] = [];
     globalThis.fetch = async (_url, options) => {
       const headers = options?.headers as Record<string, string>;

@@ -1,4 +1,14 @@
 .room-scene { position: absolute; inset: 0; overflow: hidden; background: #e9ece4; }
+.graphics-settings { display: grid; gap: 14px; }
+.graphics-settings h3 { display: flex; align-items: center; gap: 9px; }
+.graphics-settings p { font-size: 15px; line-height: 1.6; }
+.graphics-settings .graphics-note { font-size: 14px; color: #64735c; }
+.graphics-mode { display: flex; gap: 4px; padding: 4px; border-radius: 8px; background: #edf1e6; }
+.graphics-mode button { flex: 1; min-height: 44px; padding: 9px 12px; border-radius: 5px; }
+.graphics-mode button[aria-pressed=true] { background: #fffef9; color: #3d592d; box-shadow: 0 1px 4px #20301d12; }
+.graphics-field { display: grid; grid-template-columns: minmax(0, 1fr) minmax(125px, .9fr); align-items: center; gap: 12px; font-size: 15px; }
+.graphics-field select { min-width: 0; min-height: 44px; width: 100%; padding: 9px; border: 1px solid #d4ddca; border-radius: 7px; background: #fffefa; color: inherit; font-size: 15px; }
+@media (max-width: 380px) { .graphics-field { grid-template-columns: 1fr; gap: 6px; } }
 .room-scene canvas { display: block; width: 100%; height: 100%; touch-action: none; outline-offset: -3px; }
 .room-scene canvas:focus-visible { outline: 2px solid #778e65; outline-offset: -3px; }
 .scene-loading, .scene-error { position: absolute; z-index: 2; inset: 0; display: flex; align-items: center; justify-content: center; gap: 12px; color: #58604f; padding: 32px; text-align: center; background: #e9ece4; font-size: 16px; }

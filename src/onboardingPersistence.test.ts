@@ -7,7 +7,8 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import test from 'node:test';
 import { createDefaultRoom, resizeRoom } from './model';
-import { createBlankRoom } from './onboardingModel';
+import { createBlankProject } from './onboardingModel';
+import { createDefaultProject, projectToRoom, updateProjectRoom } from './projectDocument';
 import { createServer } from './server';
 
 async function listen(server: Server) {
@@ -32,33 +33,34 @@ test('la preparación se reanuda después de reiniciar y al finalizar conserva e
       assert.equal(response.status, expectedStatus, JSON.stringify(result));
       return result;
     }
-    const id = randomUUID(), existingId = randomUUID(), initial = createBlankRoom(), existing = createDefaultRoom();
+    const id = randomUUID(), existingId = randomUUID(), initial = { ...createBlankProject(), id }, existing = createDefaultProject(undefined, undefined, existingId);
     const path = '/api/rooms/' + id;
-    const created = await send('/api/rooms', 'POST', { id, room: initial }, 201);
-    assert.equal(created.room.setupStep, 0);
-    await send('/api/rooms', 'POST', { id: existingId, room: existing }, 201);
-    const changed = { ...resizeRoom(initial, 7.2, 5.4), setupStep: 1 as const, name: 'Mi diseño preparado', height: 3.2, wallColors: initial.wallColors.map(() => '#4b6875'), ceilingColor: '#ece6db', floorColor: '#c3b29b', floorFinish: 'tile-grid' as const };
-    const saved = await send(path, 'PUT', { room: changed, revision: created.revision });
+    const created = await send('/api/rooms', 'POST', { id, project: initial }, 201);
+    assert.equal(created.project.setupStep, 0);
+    await send('/api/rooms', 'POST', { id: existingId, project: existing }, 201);
+    const view = projectToRoom(initial);
+    const changed = updateProjectRoom(initial, initial.activeLevelId, { ...resizeRoom(view, 7.2, 5.4), setupStep: 1 as const, name: 'Mi diseño preparado', height: 3.2, wallColors: view.wallColors.map(() => '#4b6875'), ceilingColor: '#ece6db', floorColor: '#c3b29b', floorFinish: 'tile-grid' as const });
+    const saved = await send(path, 'PUT', { project: changed, revision: created.revision, operationId: randomUUID() });
     assert.equal(saved.revision, created.revision + 1);
 
     await close(server);
     server = createServer(options); base = await listen(server);
     const resumed = await send(path);
-    assert.deepEqual(resumed.room, changed);
+    assert.deepEqual(resumed.project, changed);
     assert.equal(resumed.revision, saved.revision);
     const pendingLibrary = await send('/api/rooms');
     assert.equal(pendingLibrary.rooms.find((room: { id: string }) => room.id === id).setupStep, 1);
     assert.equal(Object.hasOwn(pendingLibrary.rooms.find((room: { id: string }) => room.id === existingId), 'setupStep'), false);
-    assert.deepEqual((await send('/api/rooms/' + existingId)).room, existing);
+    assert.deepEqual((await send('/api/rooms/' + existingId)).project, existing);
 
     const { setupStep: _step, ...completed } = changed;
-    await send(path, 'PUT', { room: completed, revision: resumed.revision });
+    await send(path, 'PUT', { project: completed, revision: resumed.revision, operationId: randomUUID() });
     const finished = await send(path);
-    assert.deepEqual(finished.room, completed);
-    assert.equal(Object.hasOwn(finished.room, 'setupStep'), false);
+    assert.deepEqual(finished.project, completed);
+    assert.equal(Object.hasOwn(finished.project, 'setupStep'), false);
     const finishedLibrary = await send('/api/rooms');
     assert.equal(Object.hasOwn(finishedLibrary.rooms.find((room: { id: string }) => room.id === id), 'setupStep'), false);
-    assert.deepEqual((await send('/api/rooms/' + existingId)).room, existing);
+    assert.deepEqual((await send('/api/rooms/' + existingId)).project, existing);
   } finally {
     await close(server);
     assert.equal(dirname(resolve(directory)), resolve(tmpdir()));

@@ -3,15 +3,15 @@ import { mix, pass, vec4 } from 'three/tsl';
 import { ao } from 'three/addons/tsl/display/GTAONode.js';
 import { denoise } from 'three/addons/tsl/display/DenoiseNode.js';
 
-export function createArchitecturalPostProcessing(renderer: THREE.WebGPURenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera) {
+export function createArchitecturalPostProcessing(renderer: THREE.WebGPURenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera, detail: 'low' | 'medium' | 'high' = 'high') {
   const small = renderer.domElement.clientWidth <= 700 || typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches;
   const scenePass = pass(scene, camera, { samples: 0 });
   const depth = scenePass.getTextureNode('depth');
   // Three r180 reconstructs normals from depth when null; its type declaration omits this supported case.
   const normals = null as unknown as THREE.Node;
   const occlusion = ao(depth, normals, camera);
-  occlusion.resolutionScale = 0.5;
-  occlusion.samples.value = small ? 8 : 16;
+  occlusion.resolutionScale = detail === 'low' ? 0.25 : 0.5;
+  occlusion.samples.value = small || detail !== 'high' ? 8 : 16;
   occlusion.radius.value = 0.32;
   occlusion.thickness.value = 0.12;
   occlusion.distanceFallOff.value = 0.7;

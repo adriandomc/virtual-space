@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto';
 import { IDBObjectStore } from 'fake-indexeddb';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { cacheOfflineAsset, clearOffline, getOfflineAccess, listOffline, onOfflinePurge, readOffline, removeOffline, setOfflineAccess, updateOffline, writeOffline } from './offlineStorage';
+import { atomicOffline, cacheOfflineAsset, clearOffline, getOfflineAccess, listOffline, onOfflinePurge, readOffline, removeOffline, setOfflineAccess, updateOffline, writeOffline } from './offlineStorage';
 
 test('offline records commit before resolving, remain separated by keys, and delete completely', async () => {
   await clearOffline();
@@ -106,4 +106,35 @@ test('late asset caching cannot erase a pending deletion or replace its recovery
   await cacheOfflineAsset(key, { accountId: 'owner', roomId: 'room', blob: new Blob(['stale response']), pending: false });
   const record = await readOffline<{ blob: Blob; deleted?: boolean }>('assets', key);
   assert.equal(record?.deleted, true); assert.equal(await record?.blob.text(), 'original');
+});
+
+test('normalized project reads cannot mix metadata and levels from different committed saves', async () => {
+  for (const list of [false, true]) {
+    await clearOffline(); await writeOffline('meta', 'identity', { id: 'owner' });
+    const metadata = (name: string) => ({ accountId: 'owner', snapshot: { project: { name, levels: [] } }, levelRefs: { snapshot: ['owner:room:level'] } });
+    await atomicOffline('owner', [
+      { store: 'projects', key: 'owner:room', value: metadata('old metadata') },
+      { store: 'levels', key: 'owner:room:level', value: { accountId: 'owner', level: { name: 'old level' } } },
+    ]);
+    const method = list ? 'getAll' : 'get', original = IDBObjectStore.prototype[method];
+    let written: Promise<void> | undefined;
+    IDBObjectStore.prototype[method] = function (this: IDBObjectStore, ...args: any[]) {
+      const request = original.apply(this, args as never);
+      if (this.name === 'projects') request.addEventListener('success', () => {
+        const tx = this.transaction.db.transaction(['projects', 'levels'], 'readwrite');
+        tx.objectStore('projects').put(metadata('new metadata'), 'owner:room');
+        tx.objectStore('levels').put({ accountId: 'owner', level: { name: 'new level' } }, 'owner:room:level');
+        written = new Promise<void>((accept, reject) => { tx.oncomplete = () => accept(); tx.onabort = () => reject(tx.error); });
+      }, { once: true });
+      return request;
+    } as typeof original;
+    try {
+      const result: any = list ? (await listOffline('projects'))[0] : await readOffline('projects', 'owner:room');
+      assert.equal(result.snapshot.project.name, 'old metadata');
+      assert.equal(result.snapshot.project.levels[0].name, 'old level');
+      await written;
+    } finally { IDBObjectStore.prototype[method] = original; }
+    const latest: any = await readOffline('projects', 'owner:room');
+    assert.equal(latest.snapshot.project.name, 'new metadata'); assert.equal(latest.snapshot.project.levels[0].name, 'new level');
+  }
 });

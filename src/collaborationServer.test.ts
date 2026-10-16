@@ -10,11 +10,15 @@ import test from 'node:test';
 import { WebSocket } from 'ws';
 import * as Y from 'yjs';
 import { createServer } from './server';
-import { createDefaultRoom } from './model';
-import { readYRoom, writeYRoom } from './collaborativeRoom';
-import type { Room } from './types';
+import { createDefaultProject, type ProjectDocument, type ProjectLevel } from './projectDocument';
+import { readProject } from './projectRepository';
+import { addLevel, addWall } from './projectOperations';
+import { structureCommand } from './projectProtocol';
+import { readProjectScope, writeProjectScope } from './collaborativeProject';
+const readYRoom = (doc: Y.Doc) => readProjectScope(doc) as ProjectLevel;
+const writeYRoom = (doc: Y.Doc, next: ProjectLevel, previous: ProjectLevel) => writeProjectScope(doc, next, previous);
 
-type Message = { type: string; update: string; id?: string; revision?: number; status?: number; role?: string; canEdit?: boolean; canManage?: boolean; room?: Room; [key: string]: unknown };
+type Message = { type: string; update: string; id?: string; revision?: number; status?: number; role?: string; canEdit?: boolean; canManage?: boolean; project?: ProjectDocument; states: Record<string,string>; [key: string]: unknown };
 const close = (server: Server) => new Promise<void>((accept, reject) => server.close(error => error ? reject(error) : accept()));
 async function listen(server: Server) {
   await new Promise<void>(accept => server.listen(0, '127.0.0.1', accept));
@@ -23,9 +27,10 @@ async function listen(server: Server) {
 }
 function live(base: string, id: string, cookie?: string, origin: string | undefined = base) {
   const socket = new WebSocket(base.replace('http:', 'ws:') + '/api/rooms/' + id + '/live', { headers: { ...(cookie ? { Cookie: cookie } : {}), ...(origin ? { Origin: origin } : {}) } });
+  let scope = '';
   const messages: Message[] = [], pending: { type: string; accept: (value: Message) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }[] = [];
   socket.on('message', data => {
-    const message = JSON.parse(data.toString()) as Message;
+    const message = JSON.parse(data.toString()) as Message; if (message.project) scope = message.project.activeLevelId;
     const waiter = pending.find(value => value.type === message.type);
     if (waiter) { pending.splice(pending.indexOf(waiter), 1); clearTimeout(waiter.timer); waiter.accept(message); }
     else messages.push(message);
@@ -41,15 +46,15 @@ function live(base: string, id: string, cookie?: string, origin: string | undefi
         pending.push(waiter);
       });
     },
-    send(update: Uint8Array, id = randomUUID()) { socket.send(JSON.stringify({ type: 'update', update: Buffer.from(update).toString('base64'), id })); return id; },
+    send(update: Uint8Array, id = randomUUID()) { socket.send(JSON.stringify({ type: 'update', scope, update: Buffer.from(update).toString('base64'), id })); return id; },
   };
 }
-function edit(doc: Y.Doc, callback: (room: Room) => Room) {
+function edit(doc: Y.Doc, callback: (room: ProjectLevel) => ProjectLevel) {
   const previous = readYRoom(doc), vector = Y.encodeStateVector(doc);
   writeYRoom(doc, callback(previous), previous);
   return Y.encodeStateAsUpdate(doc, vector);
 }
-function document(message: Message) { const doc = new Y.Doc(); Y.applyUpdate(doc, Buffer.from(message.update, 'base64')); return doc; }
+function document(message: Message) { const doc = new Y.Doc(); Y.applyUpdate(doc, Buffer.from(message.states[message.project!.activeLevelId], 'base64')); return doc; }
 async function rejectedConnection(base: string, id: string, cookie?: string, origin: string | undefined = base) {
   const client = live(base, id, cookie, origin);
   return new Promise<number>((accept, reject) => {
@@ -67,9 +72,9 @@ test('invitaciones, permisos y colaboración durable sin sobrescribir cambios aj
     const response = await request('/api/auth/register', undefined, 'POST', { username, password: 'Testing-password', confirmPassword: 'Testing-password', termsVersion: TERMS_VERSION });
     assert.equal(response.status, 201); cookies[username] = response.headers.get('set-cookie')!.split(';')[0];
   }
-  const id = randomUUID(), path = '/api/rooms/' + id, room = createDefaultRoom();
-  room.furniture = [{ id: 'wardrobe', type: 'wardrobe', variant: 'wardrobe-classic', material: 'wood', color: '#b8a084', width: 1, depth: 0.6, height: 2, x: 0, z: 0, rotation: 0 }];
-  assert.equal((await request('/api/rooms', 'owner', 'POST', { id, room })).status, 201);
+  const id = randomUUID(), path = '/api/rooms/' + id, room = createDefaultProject(undefined, undefined, id);
+  room.levels[0].furniture = [{ id: 'wardrobe', levelId: room.activeLevelId, type: 'wardrobe', variant: 'wardrobe-classic', material: 'wood', color: '#b8a084', width: 1, depth: 0.6, height: 2, x: 0, z: 0, rotation: 0 }];
+  assert.equal((await request('/api/rooms', 'owner', 'POST', { id, project: room })).status, 201);
   let editorMemberId = '', readerMemberId = '';
   let ownerLive: ReturnType<typeof live>, editorLive: ReturnType<typeof live>, readerLive: ReturnType<typeof live>;
   let ownerDoc!: Y.Doc, editorDoc!: Y.Doc;
@@ -114,21 +119,21 @@ test('invitaciones, permisos y colaboración durable sin sobrescribir cambios aj
       ownerDoc = document(one); editorDoc = document(two);
     });
     await t.test('dos editores modifican campos distintos y reciben confirmación después del guardado', async () => {
-      const one = edit(ownerDoc, value => ({ ...value, furniture: [{ ...value.furniture[0], x: 1 }], wallColors: value.wallColors.map((color, index) => index === 0 ? '#112233' : color) }));
-      const two = edit(editorDoc, value => ({ ...value, furniture: [{ ...value.furniture[0], color: '#aabbcc' }], wallColors: value.wallColors.map((color, index) => index === 1 ? '#abcdef' : color) }));
+      const one = edit(ownerDoc, value => ({ ...value, furniture: [{ ...value.furniture[0], x: 1 }], walls: value.walls.map((wall, index) => index === 0 ? { ...wall, left: { ...wall.left, color: '#112233' } } : wall) }));
+      const two = edit(editorDoc, value => ({ ...value, furniture: [{ ...value.furniture[0], color: '#aabbcc' }], walls: value.walls.map((wall, index) => index === 1 ? { ...wall, left: { ...wall.left, color: '#abcdef' } } : wall) }));
       const oneId = ownerLive.send(one), twoId = editorLive.send(two);
       const [oneAck, twoAck, ownerRemote, editorRemote] = await Promise.all([ownerLive.next('ack'), editorLive.next('ack'), ownerLive.next('update'), editorLive.next('update')]);
       assert.equal(oneAck.id, oneId); assert.equal(twoAck.id, twoId);
       Y.applyUpdate(ownerDoc, Buffer.from(ownerRemote.update, 'base64')); Y.applyUpdate(editorDoc, Buffer.from(editorRemote.update, 'base64'));
       assert.deepEqual(readYRoom(ownerDoc), readYRoom(editorDoc));
       const stored = await (await request(path, 'owner')).json();
-      assert.equal(stored.revision, 3); assert.equal(stored.room.furniture[0].x, 1); assert.equal(stored.room.furniture[0].color, '#aabbcc');
-      assert.deepEqual(stored.room.wallColors.slice(0, 2), ['#112233', '#abcdef']);
+      assert.equal(stored.revision, 3); assert.equal(stored.project.levels[0].furniture[0].x, 1); assert.equal(stored.project.levels[0].furniture[0].color, '#aabbcc');
+      assert.deepEqual(stored.project.levels[0].walls.slice(0, 2).map((wall: any) => wall.left.color), ['#112233', '#abcdef']);
       const database = new DatabaseSync(join(dataDir, 'accounts.sqlite'));
-      const row = database.prepare('SELECT room, y_state FROM rooms WHERE id=?').get(id)!;
-      assert.deepEqual(JSON.parse(String(row.room)), stored.room);
+      const row = database.prepare('SELECT document,y_state FROM project_levels WHERE room_id=? AND id=?').get(id, room.activeLevelId)!;
+      assert.deepEqual(readProject(database, id), stored.project);
       const restored = new Y.Doc(); Y.applyUpdate(restored, row.y_state as Uint8Array);
-      assert.deepEqual(readYRoom(restored), stored.room); restored.destroy(); database.close();
+      assert.deepEqual(readYRoom(restored), stored.project.levels[0]); restored.destroy(); database.close();
     });
     await t.test('lectores no escriben y un cambio inválido no corrompe ni bloquea el resto', async () => {
       readerLive.send(edit(editorDoc, value => ({ ...value, name: 'No autorizado' })));
@@ -152,11 +157,11 @@ test('invitaciones, permisos y colaboración durable sin sobrescribir cambios aj
     });
     await t.test('HTTP sigue controlando revisiones y publica sus cambios al canal en vivo', async () => {
       const current = await (await request(path, 'owner')).json();
-      assert.equal((await request(path, 'editor', 'PUT', { revision: 1, room: { ...current.room, name: 'Versión vieja' } })).status, 409);
-      const changed = { ...current.room, ceilingColor: '#445566' };
-      assert.equal((await request(path, 'editor', 'PUT', { revision: current.revision, room: changed })).status, 200);
-      const remote = await ownerLive.next('update'); Y.applyUpdate(ownerDoc, Buffer.from(remote.update, 'base64'));
-      assert.equal(readYRoom(ownerDoc).ceilingColor, '#445566');
+      assert.equal((await request(path, 'editor', 'PUT', { revision: 1, project: { ...current.project, name: 'Versión vieja' }, operationId: randomUUID() })).status, 409);
+      const changed = { ...current.project, levels: current.project.levels.map((level: ProjectLevel) => ({ ...level, name: 'HTTP level' })) };
+      assert.equal((await request(path, 'editor', 'PUT', { revision: current.revision, project: changed, operationId: randomUUID() })).status, 200);
+      const remote = await ownerLive.next('sync'); ownerDoc.destroy(); ownerDoc = document(remote);
+      assert.equal(readYRoom(ownerDoc).name, 'HTTP level');
     });
     await t.test('el acceso público recibe cambios sin poder escribir y se corta al revocarlo', async () => {
       await request(path + '/share', 'owner', 'POST', { enabled: true });
@@ -193,7 +198,7 @@ test('invitaciones, permisos y colaboración durable sin sobrescribir cambios aj
       await close(server); server = createServer({ dataDir, now: () => clock, maintenance: false }); base = await listen(server);
       const after = await (await request(path, 'owner')).json(); assert.deepEqual(after, before);
       const reconnect = live(base, id, cookies.owner), sync = await reconnect.next('sync'), restored = document(sync);
-      assert.deepEqual(readYRoom(restored), before.room);
+      assert.deepEqual(readYRoom(restored), before.project.levels[0]);
       assert.equal((await request(path, 'editor')).status, 404);
       reconnect.socket.terminate(); restored.destroy();
     });
@@ -217,21 +222,21 @@ test('el canal limita conexiones, tamaño de mensajes y frecuencia sin alterar e
   const server = createServer({ dataDir: join(directory, 'data'), maintenance: false }), base = await listen(server);
   const registration = await fetch(base + '/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ username: 'owner', password: 'Testing-password', confirmPassword: 'Testing-password', termsVersion: TERMS_VERSION }) });
   const cookie = registration.headers.get('set-cookie')!.split(';')[0], headers = { 'Content-Type': 'application/json', Origin: base, Cookie: cookie };
-  const id = randomUUID(), room = createDefaultRoom(), sockets: WebSocket[] = [];
-  await fetch(base + '/api/rooms', { method: 'POST', headers, body: JSON.stringify({ id, room }) });
+  const id = randomUUID(), room = createDefaultProject(undefined, undefined, id), sockets: WebSocket[] = [];
+  await fetch(base + '/api/rooms', { method: 'POST', headers, body: JSON.stringify({ id, project: room }) });
   try {
     for (let index = 0; index < 10; index++) { const client = live(base, id, cookie); await client.next('sync'); sockets.push(client.socket); }
     assert.equal(await rejectedConnection(base, id, cookie), 429);
     for (const socket of sockets) { const closed = new Promise<void>(accept => socket.once('close', () => accept())); socket.close(); await closed; }
     const huge = live(base, id, cookie); await huge.next('sync');
     const oversizedClose = new Promise<number>(accept => huge.socket.once('close', code => accept(code)));
-    huge.socket.send('x'.repeat(1024 * 1024 + 1)); assert.equal(await oversizedClose, 1009);
+    huge.socket.send('x'.repeat(6 * 1024 * 1024 + 1)); assert.equal(await oversizedClose, 1009);
     const rapid = live(base, id, cookie); await rapid.next('sync');
     const rateClose = new Promise<number>(accept => rapid.socket.once('close', code => accept(code)));
     for (let index = 0; index < 1201; index++) rapid.socket.send(JSON.stringify({ type: 'sync' }));
     assert.equal((await rapid.next('error')).status, 429); assert.equal(await rateClose, 4008);
     const unchanged = await (await fetch(base + '/api/rooms/' + id, { headers })).json();
-    assert.equal(unchanged.revision, 1); assert.deepEqual(unchanged.room, room);
+    assert.equal(unchanged.revision, 1); assert.deepEqual(unchanged.project, room);
     const deleted = live(base, id, cookie); await deleted.next('sync');
     const deletedClose = new Promise<number>(accept => deleted.socket.once('close', code => accept(code)));
     assert.equal((await fetch(base + '/api/rooms/' + id, { method: 'DELETE', headers })).status, 200);
@@ -253,7 +258,7 @@ test('las notificaciones llegan por SSE, son privadas y terminan al cerrar sesi�
     assert.equal(response.status, 201); cookies[username] = response.headers.get('set-cookie')!.split(';')[0];
   }
   const id = randomUUID(), path = '/api/rooms/' + id;
-  await request('/api/rooms', 'owner', 'POST', { id, room: createDefaultRoom() });
+  await request('/api/rooms', 'owner', 'POST', { id, project: createDefaultProject(undefined, undefined, id) });
   const controller = new AbortController();
   let extra: ReadableStreamDefaultReader<Uint8Array> | undefined;
   try {
@@ -305,4 +310,42 @@ test('las notificaciones llegan por SSE, son privadas y terminan al cerrar sesi�
     assert.equal(dirname(resolve(directory)), resolve(tmpdir())); assert.ok(basename(directory).startsWith('virtual-space-notifications-'));
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+
+test('structural commands use affected-level CAS, durable receipts and atomic canonical/Y-state commits', async () => {
+  const directory = mkdtempSync(join(tmpdir(), '3d-space-v3-structural-')), dataDir = join(directory, 'data');
+  const server = createServer({ dataDir, maintenance: false }), base = await listen(server), id = randomUUID();
+  const registration = await fetch(base + '/api/auth/register', { method: 'POST', headers: { Origin: base, 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'structural_owner', password: 'Testing-password', confirmPassword: 'Testing-password', termsVersion: TERMS_VERSION }) });
+  const cookie = registration.headers.get('set-cookie')!.split(';')[0], headers = { Cookie: cookie, Origin: base, 'Content-Type': 'application/json' };
+  const project = addLevel(createDefaultProject(undefined, undefined, id), { copy: true });
+  assert.equal((await fetch(base + '/api/rooms', { method: 'POST', headers, body: JSON.stringify({ id, project }) })).status, 201);
+  const first = live(base, id, cookie), second = live(base, id, cookie);
+  const database = new DatabaseSync(join(dataDir, 'accounts.sqlite'));
+  try {
+    const one = await first.next('sync'), two = await second.next('sync');
+    const lower = project.levels[0].id, upper = project.levels[1].id;
+    const commandA = structureCommand(project, addWall(project, lower, { x: -2.5, z: 0 }, { x: 2.5, z: 0 }), one.structureRevisions as Record<string, number>, Number(one.structureRevision))!;
+    const commandB = structureCommand(project, addWall(project, upper, { x: 0, z: -2 }, { x: 0, z: 2 }), two.structureRevisions as Record<string, number>, Number(two.structureRevision))!;
+    assert.equal(commandA.expectedStructureRevision, undefined); assert.deepEqual(Object.keys(commandA.expected), [lower]); assert.deepEqual(Object.keys(commandB.expected), [upper]);
+    const operationId = randomUUID(); first.socket.send(JSON.stringify({ ...commandA, id: operationId }));
+    assert.equal((await first.next('ack')).revision, 2); await first.next('sync'); await second.next('sync');
+    second.socket.send(JSON.stringify({ ...commandB, id: randomUUID() }));
+    assert.equal((await second.next('ack')).revision, 3); const authoritative = await first.next('sync'); await second.next('sync');
+    const saved = readProject(database, id); assert.equal(saved.levels[0].walls.length, 7); assert.equal(saved.levels[1].walls.length, 7);
+    first.socket.send(JSON.stringify({ ...commandA, id: operationId })); assert.equal((await first.next('ack')).revision, 2);
+    assert.equal(database.prepare('SELECT revision FROM rooms WHERE id=?').get(id)!.revision, 3);
+    first.socket.send(JSON.stringify({ ...commandB, id: operationId })); assert.equal((await first.next('error')).status, 409);
+    second.socket.send(JSON.stringify({ ...commandB, id: randomUUID() })); assert.equal((await second.next('error')).status, 409);
+    const doc = document(authoritative), currentLevel = readYRoom(doc), vector = Y.encodeStateVector(doc);
+    writeProjectScope(doc, { ...currentLevel, points: currentLevel.points.map((point, index) => index ? point : { ...point, x: point.x - .1 }) }, currentLevel);
+    first.send(Y.encodeStateAsUpdate(doc, vector)); assert.equal((await first.next('error')).status, 409); doc.destroy();
+    const before = JSON.stringify(readProject(database, id));
+    const current = authoritative.project!, change = structureCommand(current, addWall(current, lower, { x: 0, z: -2 }, { x: 0, z: 0 }), authoritative.structureRevisions as Record<string, number>, Number(authoritative.structureRevision))!;
+    database.exec("CREATE TRIGGER fail_commit BEFORE UPDATE ON rooms BEGIN SELECT RAISE(ABORT,'simulated storage failure'); END");
+    first.socket.send(JSON.stringify({ ...change, id: randomUUID() })); assert.equal((await first.next('error')).status, 400); database.exec('DROP TRIGGER fail_commit');
+    assert.equal(JSON.stringify(readProject(database, id)), before); assert.equal(database.prepare('SELECT revision FROM rooms WHERE id=?').get(id)!.revision, 3);
+    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM mutation_receipts WHERE room_id=?').get(id)!.count, 2);
+    assert.equal(database.prepare('PRAGMA foreign_key_check').all().length, 0);
+  } finally { first.socket.terminate(); second.socket.terminate(); database.close(); await close(server); rmSync(directory, { recursive: true, force: true }); }
 });

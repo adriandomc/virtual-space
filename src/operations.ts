@@ -55,7 +55,7 @@ export function closeService(dataDir: string, confirmation: string) {
       backups.push(join(backupDir, name));
     }
   }
-  const owned = ['erasures.json', 'maintenance-status.json', '.maintenance-status.tmp', 'prelaunch-reset.json', ...readdirSync(directory).filter(name => /^\.erasures-[0-9a-f-]{36}\.tmp$/.test(name))].map(name => join(directory, name));
+  const owned = ['erasures.json', 'maintenance-status.json', '.maintenance-status.tmp', 'prelaunch-reset.json', 'prelaunch-reset-v3.json', ...readdirSync(directory).filter(name => /^\.erasures-[0-9a-f-]{36}\.tmp$/.test(name))].map(name => join(directory, name));
   for (const path of owned) if (existsSync(path) && (!lstatSync(path).isFile() || lstatSync(path).isSymbolicLink())) throw new Error('Invalid service metadata file.');
   const databasePath = join(directory, 'accounts.sqlite'), database = new DatabaseSync(databasePath);
   try {
@@ -71,15 +71,15 @@ export function resetPrelaunch(dataDir: string, confirmation: string, now = Date
   const directory = offlineDirectory(dataDir);
   if (confirmation !== '--confirm=reset-3d-space-test-data') throw new Error('Explicit prelaunch reset confirmation is required.');
   if (!Number.isSafeInteger(now) || now < 0) throw new Error('Invalid reset timestamp.');
-  const marker = join(directory, 'prelaunch-reset.json');
+  const marker = join(directory, 'prelaunch-reset-v3.json');
   if (existsSync(marker)) throw new Error('The one-time prelaunch reset has already completed.');
   for (const name of readdirSync(directory)) {
-    if (!['accounts.sqlite', 'backups', 'erasures.json', 'maintenance-status.json', '.maintenance-status.tmp'].includes(name) && !/^\.erasures-[0-9a-f-]{36}\.tmp$/.test(name)) throw new Error('Unrecognized service files: review the directory before reset.');
+    if (!['accounts.sqlite', 'backups', 'erasures.json', 'maintenance-status.json', '.maintenance-status.tmp', 'prelaunch-reset.json'].includes(name) && !/^\.erasures-[0-9a-f-]{36}\.tmp$/.test(name)) throw new Error('Unrecognized service files: review the directory before reset.');
   }
   const source = new DatabaseSync(join(directory, 'accounts.sqlite'), { readOnly: true });
   try {
     const objects = source.prepare("SELECT type, name FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*'").all();
-    if (objects.some(row => row.type !== 'table' && row.type !== 'index' || row.type === 'table' && !['users', 'sessions', 'request_limits', 'rooms', 'room_members', 'model_assets'].includes(String(row.name))) || !['salt', 'password_hash', 'username'].every(name => source.prepare('PRAGMA table_info(users)').all().some(row => row.name === name)) || !['room', 'owner_id', 'revision'].every(name => source.prepare('PRAGMA table_info(rooms)').all().some(row => row.name === name))) throw new Error('This is not a recognized 3D Space test database.');
+    if (objects.some(row => row.type !== 'table' && row.type !== 'index' || row.type === 'table' && !['users', 'sessions', 'request_limits', 'rooms', 'room_members', 'model_assets', 'project_levels', 'project_sketches', 'mutation_receipts'].includes(String(row.name))) || !['salt', 'password_hash', 'username'].every(name => source.prepare('PRAGMA table_info(users)').all().some(row => row.name === name)) || !['room', 'owner_id', 'revision'].every(name => source.prepare('PRAGMA table_info(rooms)').all().some(row => row.name === name))) throw new Error('This is not a recognized 3D Space test database.');
   } finally { source.close(); }
   const removed = closeService(directory, '--confirm=erase-all');
   const database = new DatabaseSync(join(directory, 'accounts.sqlite'));

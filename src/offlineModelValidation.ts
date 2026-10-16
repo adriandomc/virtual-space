@@ -1,13 +1,15 @@
 import * as THREE from 'three/webgpu';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { ModelAsset } from './modelAssets';
+import { preflightGlb } from './glbPreflight';
 
 const invalid = () => { throw new Error('El modelo GLB no es válido para guardarlo sin conexión.'); };
 const integer = (value: unknown, max = Number.MAX_SAFE_INTEGER): number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && value <= max ? value : invalid();
 type Json = Record<string, any>;
 
 /** Bound parsing before GLTFLoader allocates geometry or decodes embedded images. */
-export function inspectOfflineGlb(bytes: ArrayBuffer): { document: Json; texturePixels: number } {
+export function inspectOfflineGlb(bytes: ArrayBuffer): { document: Json; texturePixels: number; meshInstances: number; materials: number; triangles: number } {
+  const preflight = preflightGlb(new Uint8Array(bytes));
   const view = new DataView(bytes);
   if (bytes.byteLength > 20 * 1024 * 1024) throw new Error('El modelo debe pesar como máximo 20 MB.');
   if (bytes.byteLength < 28 || view.getUint32(0, true) !== 0x46546c67 || view.getUint32(4, true) !== 2 || view.getUint32(8, true) !== bytes.byteLength) invalid();
@@ -110,11 +112,11 @@ export function inspectOfflineGlb(bytes: ArrayBuffer): { document: Json; texture
     const value = pixels[integer(texture.source, pixels.length - 1)];
     if (!value || (texturePixels += value) > 16 * 1024 * 1024) invalid();
   }
-  return { document, texturePixels };
+  return { document, texturePixels, meshInstances: preflight.primitiveInstances, materials: preflight.materials, triangles: preflight.triangles };
 }
 
 export async function offlineModelMetadata(file: Blob, id: string, roomId: string, name: string): Promise<ModelAsset> {
-  const bytes = await file.arrayBuffer(), { texturePixels, document } = inspectOfflineGlb(bytes);
+  const bytes = await file.arrayBuffer(), { texturePixels, document, meshInstances, materials, triangles: expandedTriangles } = inspectOfflineGlb(bytes);
   const manager = new THREE.LoadingManager();
   manager.setURLModifier(url => { if (!url.startsWith('blob:')) invalid(); return url; });
   let gltf;
@@ -145,7 +147,7 @@ export async function offlineModelMetadata(file: Blob, id: string, roomId: strin
     });
     const size = bounds.getSize(new THREE.Vector3());
     if (!triangles || size.toArray().some(value => !Number.isFinite(value) || value < 0 || value > 10000)) invalid();
-    return { id, roomId, name: name.replace(/\.glb$/i, '').trim().slice(0, 80) || 'Modelo', size: file.size, createdAt: new Date().toISOString(), width: Math.max(.01, size.x), height: Math.max(.01, size.y), depth: Math.max(.01, size.z), triangles, texturePixels, nodes };
+    return { id, roomId, name: name.replace(/\.glb$/i, '').trim().slice(0, 80) || 'Modelo', size: file.size, createdAt: new Date().toISOString(), width: Math.max(.01, size.x), height: Math.max(.01, size.y), depth: Math.max(.01, size.z), triangles: expandedTriangles, texturePixels, meshInstances, materials, nodes };
   } finally {
     gltf.scene.traverse(object => {
       if (!(object instanceof THREE.Mesh)) return;

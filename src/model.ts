@@ -1,5 +1,6 @@
 import type { BedSize, FloorFinish, FurnitureItem, ModelPart, Opening, Point, Room, Selection } from './types.js';
 import { getFurniturePreset, isFurnitureVariant } from './furnitureCatalog.js';
+import { SpatialIndex } from './spatialIndex.js';
 
 const EPS = 1e-7;
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
@@ -16,7 +17,7 @@ export const FURNITURE_COLORS: Record<FurnitureItem['type'], string> = { bed: '#
 
 export function createDefaultRoom(): Room {
   return {
-    version: 2, name: 'Mi habitación',
+    version: 3, name: 'Mi habitación',
     vertices: [{ x: -2.5, z: -2 }, { x: 2.5, z: -2 }, { x: 2.5, z: 2 }, { x: -2.5, z: 2 }],
     wallColors: ['#f5f5f2', '#f5f5f2', '#f5f5f2', '#f5f5f2'],
     height: 2.8, thickness: 0.15, floorColor: '#edede8', ceilingColor: '#ffffff', floorFinish: 'concrete', renderQuality: 'standard', editing: { snap: true, step: 0.1, bounds: true }, furniture: [],
@@ -42,9 +43,16 @@ function signedArea(vertices: Point[]) {
 }
 
 export const polygonArea = (vertices: Point[]) => Math.abs(signedArea(vertices));
+export function wallCount(room: Room) { return room.wallSegments?.length ?? room.vertices.length; }
+export function roomWallEndpoints(room: Room, index: number): [Point, Point] {
+  const segment = room.wallSegments?.[index];
+  if (segment) return [segment.start, segment.end];
+  const a = room.vertices[index], b = room.vertices[(index + 1) % room.vertices.length];
+  if (!a || !b) throw new Error('La pared ya no existe.');
+  return [a, b];
+}
 export function wallLength(room: Room, index: number) {
-  const a = room.vertices[index];
-  const b = room.vertices[(index + 1) % room.vertices.length];
+  const [a, b] = roomWallEndpoints(room, index);
   return Math.hypot(b.x - a.x, b.z - a.z);
 }
 
@@ -169,11 +177,28 @@ export function furniturePlacementIssues(room: Room, item: FurnitureItem): { out
   };
 }
 
+type PlacementCache = { index: SpatialIndex; items: Map<string, { signature: string; item: FurnitureItem; box: ReturnType<typeof bounds> }>; invalid: Set<string>; outline: string };
+const placementCaches = new Map<string, PlacementCache>();
 export function invalidFurnitureIds(room: Room): Set<string> {
-  return new Set(room.furniture.filter(item => {
-    const issues = furniturePlacementIssues(room, item);
-    return issues.outside || issues.overlap;
-  }).map(item => item.id));
+  const key = room.levelId ?? 'preview', cache = placementCaches.get(key) ?? { index: new SpatialIndex(), items: new Map(), invalid: new Set(), outline: '' };
+  placementCaches.delete(key); placementCaches.set(key, cache);
+  while (placementCaches.size > 24) placementCaches.delete(placementCaches.keys().next().value!);
+  const affected = new Set<string>(), ids = new Set(room.furniture.map(item => item.id)), outline = JSON.stringify([room.vertices, room.thickness]);
+  for (const [id, previous] of cache.items) if (!ids.has(id)) { for (const neighbor of cache.index.query(previous.box)) affected.add(neighbor); cache.index.remove(id); cache.items.delete(id); cache.invalid.delete(id); }
+  for (const item of room.furniture) {
+    const signature = [item.x, item.z, item.width, item.depth, item.rotation].join(','), previous = cache.items.get(item.id);
+    if (previous?.signature === signature) continue;
+    if (previous) for (const neighbor of cache.index.query(previous.box)) affected.add(neighbor);
+    const box = bounds(furnitureCorners(item)); cache.index.set(item.id, box); cache.items.set(item.id, { signature, item, box }); affected.add(item.id);
+    for (const neighbor of cache.index.query(box)) affected.add(neighbor);
+  }
+  if (cache.outline !== outline) { cache.outline = outline; for (const id of ids) affected.add(id); }
+  for (const id of affected) {
+    const entry = cache.items.get(id); if (!entry) continue;
+    const overlap = [...cache.index.query(entry.box)].some(otherId => otherId !== id && furnitureOverlaps(entry.item, cache.items.get(otherId)!.item));
+    if (overlap || !furnitureInside(entry.item, room.vertices, room.thickness / 2)) cache.invalid.add(id); else cache.invalid.delete(id);
+  }
+  return new Set(cache.invalid);
 }
 
 export function furnitureWalkable(point: Point, room: Room, margin = Math.max(0.2, room.thickness / 2 + 0.12)) {
@@ -288,10 +313,10 @@ const overlapping = (a: Opening, b: Opening) => a.wall === b.wall && a.offset < 
 
 export function validateRoom(value: unknown): Room {
   const raw = record(value, 'El proyecto');
-  if (raw.version !== 2) throw new Error('La versión del proyecto no es compatible.');
+  if (raw.version !== 3) throw new Error('La versión del proyecto no es compatible.');
   if ('showFurniture' in raw) throw new Error('El proyecto contiene campos de una versión anterior.');
-  if (raw.setupStep !== undefined && raw.setupStep !== 0 && raw.setupStep !== 1 && raw.setupStep !== 2) throw new Error('El paso de preparación no es válido.');
-  const vertices = array(raw.vertices, 3, 24, 'El contorno').map((value, i) => {
+  if (raw.setupStep !== undefined && raw.setupStep !== 0 && raw.setupStep !== 1 && raw.setupStep !== 2 && raw.setupStep !== 3) throw new Error('El paso de preparación no es válido.');
+  const vertices = array(raw.vertices, 3, raw.levelId ? 256 : 24, 'El contorno').map((value, i) => {
     const p = record(value, `Punto ${i + 1}`);
     return { x: number(p.x, -50, 50, `Punto ${i + 1}, X`), z: number(p.z, -50, 50, `Punto ${i + 1}, Z`) };
   });
@@ -314,8 +339,15 @@ export function validateRoom(value: unknown): Room {
   if (!['wood', 'tile-grid', 'tile-brick', 'tile-checker', 'marble', 'concrete'].includes(floorFinish as string)) throw new Error('Selecciona un acabado de piso válido.');
   const renderQuality = raw.renderQuality;
   if (renderQuality !== 'standard' && renderQuality !== 'realistic' && renderQuality !== 'hyperrealistic') throw new Error('Selecciona una calidad visual válida.');
-  const wallColors = array(raw.wallColors, vertices.length, vertices.length, 'Los colores de pared').map((c, i) => color(c, `Color de pared ${i + 1}`));
-  const openings = array(raw.openings, 0, 48, 'Las puertas y ventanas').map((value, i): Opening => {
+  const wallSegments = raw.wallSegments === undefined ? undefined : array(raw.wallSegments, 0, 256, 'Las paredes').map(value => {
+    const segment = record(value, 'La pared'), start = record(segment.start, 'Inicio de pared'), end = record(segment.end, 'Final de pared');
+    const result = { id: text(segment.id, 'Identificador de pared'), start: { x: number(start.x, -50, 50, 'Inicio X'), z: number(start.z, -50, 50, 'Inicio Z') }, end: { x: number(end.x, -50, 50, 'Final X'), z: number(end.z, -50, 50, 'Final Z') }, thickness: number(segment.thickness, .05, .6, 'Espesor de pared'), height: number(segment.height, .2, 8, 'Altura de pared'), leftColor: color(segment.leftColor, 'Color interior'), rightColor: color(segment.rightColor, 'Color exterior') };
+    if (Math.hypot(result.end.x - result.start.x, result.end.z - result.start.z) < .05) throw new Error('La pared es demasiado corta.');
+    return result;
+  });
+  const count = wallSegments?.length ?? vertices.length;
+  const wallColors = array(raw.wallColors, count, count, 'Los colores de pared').map((c, i) => color(c, `Color de pared ${i + 1}`));
+  const openings = array(raw.openings, 0, raw.levelId ? 96 : 48, 'Las puertas y ventanas').map((value, i): Opening => {
     const p = record(value, `Abertura ${i + 1}`);
     if (p.type !== 'door' && p.type !== 'window') throw new Error('El tipo de abertura debe ser puerta o ventana.');
     const doorStyle = p.doorStyle;
@@ -324,9 +356,10 @@ export function validateRoom(value: unknown): Room {
       if (doorStyle === 'frame' && 'open' in p) throw new Error('Un marco no admite estado de puerta.');
       if (doorStyle !== 'frame') boolean(p.open, 'El estado de puerta');
     } else if ('doorStyle' in p || 'open' in p) throw new Error('El estilo y estado de puerta sólo corresponde a las puertas.');
-    const wall = number(p.wall, 0, vertices.length - 1, `Pared de abertura ${i + 1}`);
+    const wall = number(p.wall, 0, count - 1, `Pared de abertura ${i + 1}`);
     if (!Number.isInteger(wall)) throw new Error('El índice de pared debe ser entero.');
-    const length = Math.hypot(vertices[wall].x - vertices[(wall + 1) % vertices.length].x, vertices[wall].z - vertices[(wall + 1) % vertices.length].z);
+    const a = wallSegments?.[wall]?.start ?? vertices[wall], b = wallSegments?.[wall]?.end ?? vertices[(wall + 1) % vertices.length];
+    const length = Math.hypot(a.x - b.x, a.z - b.z);
     const width = number(p.width, 0.3, length, `Ancho de abertura ${i + 1}`);
     const openingHeight = number(p.height, 0.3, height, `Altura de abertura ${i + 1}`);
     const sill = number(p.sill, 0, height - openingHeight, `Antepecho de abertura ${i + 1}`);
@@ -348,7 +381,8 @@ export function validateRoom(value: unknown): Room {
   if (new Set(furniture.map(p => p.id)).size !== furniture.length) throw new Error('Los muebles necesitan identificadores únicos.');
   const sun = record(raw.sun, 'El sol');
   return {
-    version: 2, ...(raw.setupStep === undefined ? {} : { setupStep: raw.setupStep }), name: text(raw.name, 'El nombre'), vertices, wallColors, height,
+    ...(raw.levelId === undefined ? {} : { levelId: text(raw.levelId, 'Nivel'), elevation: number(raw.elevation, 0, 96, 'Elevación'), wallIds: wallSegments?.map(wall => wall.id), wallSegments, surfaces: raw.surfaces as Room['surfaces'], roofIds: raw.roofIds as Room['roofIds'] }),
+    version: 3, ...(raw.setupStep === undefined ? {} : { setupStep: raw.setupStep }), name: text(raw.name, 'El nombre'), vertices, wallColors, height,
     thickness: number(raw.thickness, 0.05, 0.6, 'El espesor'), floorColor: color(raw.floorColor, 'El color de piso'), ceilingColor: color(raw.ceilingColor, 'El color de techo'), floorFinish: floorFinish as FloorFinish, renderQuality, editing, furniture, openings, lights,
     sun: { enabled: boolean(sun.enabled, 'El sol'), hour: number(sun.hour, 0, 24, 'La hora'), azimuth: number(sun.azimuth, 0, 360, 'La orientación solar'), intensity: number(sun.intensity, 0, 10, 'La intensidad solar') },
   };
@@ -357,7 +391,7 @@ export function validateRoom(value: unknown): Room {
 export function fitRoom(room: Room): Room {
   validateRoom({ ...room, openings: [], lights: [], furniture: [] });
   const fitted = room.openings.map(opening => {
-    if (!Number.isInteger(opening.wall) || opening.wall < 0 || opening.wall >= room.vertices.length) throw new Error('La pared de una abertura ya no existe.');
+    if (!Number.isInteger(opening.wall) || opening.wall < 0 || opening.wall >= wallCount(room)) throw new Error('La pared de una abertura ya no existe.');
     const length = wallLength(room, opening.wall);
     if (length < 0.3) throw new Error('Una pared es demasiado corta para conservar su abertura.');
     const width = clamp(opening.width, 0.3, length);
@@ -366,7 +400,7 @@ export function fitRoom(room: Room): Room {
     return { ...opening, width, height, sill, offset: clamp(opening.offset, 0, length - width) };
   });
   const packed: Opening[] = [];
-  for (let wall = 0; wall < room.vertices.length; wall++) {
+  for (let wall = 0; wall < wallCount(room); wall++) {
     const items = fitted.filter(p => p.wall === wall).sort((a, b) => a.offset - b.offset);
     const pack = (preserve: boolean) => {
       const placed: Opening[] = [];
@@ -393,11 +427,12 @@ export function resizeRoom(room: Room, width: number, depth: number): Room {
   const box = bounds(room.vertices), cx = (box.minX + box.maxX) / 2, cz = (box.minZ + box.maxZ) / 2;
   const scale = (p: Point) => ({ x: cx + (p.x - cx) * width / box.width, z: cz + (p.z - cz) * depth / box.depth });
   const vertices = room.vertices.map(scale);
-  return fitRoom({ ...room, vertices, openings: room.openings.map(p => ({ ...p, offset: p.offset * wallLength({ ...room, vertices }, p.wall) / wallLength(room, p.wall) })), lights: room.lights.map(p => ({ ...p, ...scale(p) })) });
+  const scaled = { ...room, vertices, ...(room.wallSegments ? { wallSegments: room.wallSegments.map(segment => ({ ...segment, start: scale(segment.start), end: scale(segment.end) })) } : {}) };
+  return fitRoom({ ...scaled, openings: room.openings.map(p => ({ ...p, offset: p.offset * wallLength(scaled, p.wall) / wallLength(room, p.wall) })), lights: room.lights.map(p => ({ ...p, ...scale(p) })) });
 }
 
 export function addOpening(room: Room, type: 'door' | 'window', wall: number, options: { width: number; height: number; sill?: number; doorStyle?: 'right' | 'left' | 'frame' }): Room {
-  if (!Number.isInteger(wall) || wall < 0 || wall >= room.vertices.length) throw new Error('Selecciona una pared válida.');
+  if (!Number.isInteger(wall) || wall < 0 || wall >= wallCount(room)) throw new Error('Selecciona una pared válida.');
   const height = number(options?.height, 0.3, room.height, 'La altura de abertura');
   const sill = number(options.sill ?? 0, 0, room.height - height, 'La altura desde piso');
   const doorStyle = type === 'door' ? options.doorStyle ?? 'right' : undefined;
@@ -465,7 +500,7 @@ export function snapPlanPoint(previous: Point | null, point: Point, options: { g
 
 export function itemWorldPosition(room: Room, selection: Selection): { x: number; y: number; z: number } | null {
   if (selection.kind === 'wall') {
-    const a = room.vertices[selection.index], b = room.vertices[(selection.index + 1) % room.vertices.length];
+    const [a, b] = roomWallEndpoints(room, selection.index);
     return a && b ? { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2, y: room.height / 2 } : null;
   }
   if (selection.kind === 'floor' || selection.kind === 'ceiling') return { ...interiorPoint(room.vertices), y: selection.kind === 'floor' ? 0 : room.height };
@@ -480,7 +515,7 @@ export function itemWorldPosition(room: Room, selection: Selection): { x: number
   if (selection.kind !== 'opening') return null;
   const item = room.openings.find(p => p.id === selection.id);
   if (!item) return null;
-  const a = room.vertices[item.wall], b = room.vertices[(item.wall + 1) % room.vertices.length], t = (item.offset + item.width / 2) / wallLength(room, item.wall);
+  const [a, b] = roomWallEndpoints(room, item.wall), t = (item.offset + item.width / 2) / wallLength(room, item.wall);
   return { x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t, y: item.sill + item.height / 2 };
 }
 
@@ -522,10 +557,10 @@ export function moveSceneItem(room: Room, selection: Selection, target: Point & 
   if (!item) throw new Error('Esta abertura ya no existe.');
   const sill = item.type === 'door' ? 0 : target.y === undefined ? item.sill : clamp(snap(target.y - item.height / 2), 0, room.height - item.height);
   let closest: Opening | null = null, distance = Infinity;
-  for (let wall = 0; wall < room.vertices.length; wall++) {
+  for (let wall = 0; wall < wallCount(room); wall++) {
     const length = wallLength(room, wall);
     if (length < item.width) continue;
-    const a = room.vertices[wall], b = room.vertices[(wall + 1) % room.vertices.length], dx = (b.x - a.x) / length, dz = (b.z - a.z) / length;
+    const [a, b] = roomWallEndpoints(room, wall), dx = (b.x - a.x) / length, dz = (b.z - a.z) / length;
     const desired = clamp(snap((position.x - a.x) * dx + (position.z - a.z) * dz - item.width / 2), 0, length - item.width);
     const others = room.openings.filter(p => p.id !== item.id && p.wall === wall);
     const offsets = [desired, 0, length - item.width, ...others.flatMap(p => [p.offset + p.width, p.offset - item.width])].filter(offset => offset >= -EPS && offset <= length - item.width + EPS).sort((a, b) => Math.abs(a - desired) - Math.abs(b - desired));

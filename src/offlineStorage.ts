@@ -1,12 +1,12 @@
-export type OfflineStore = 'projects' | 'assets' | 'blobs' | 'meta';
+export type OfflineStore = 'projects' | 'levels' | 'assets' | 'blobs' | 'meta';
 export type OfflineAccess = { accountId: string; allowed: boolean };
 
-const stores: OfflineStore[] = ['projects', 'assets', 'blobs', 'meta'];
+const stores: OfflineStore[] = ['projects', 'levels', 'assets', 'blobs', 'meta'];
 const access = new Map<string, OfflineAccess>();
 const purgeListeners = new Set<() => void>();
 let database: Promise<IDBDatabase> | undefined;
 let accountId: string | undefined;
-const channel = typeof window !== 'undefined' && typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('3d-space-v2') : undefined;
+const channel = typeof window !== 'undefined' && typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('3d-space-v3') : undefined;
 function setAccount(id: string | undefined) {
   if (accountId === id) return;
   accountId = id;
@@ -45,7 +45,7 @@ function open(): Promise<IDBDatabase> {
   if (database) return database;
   database = new Promise<IDBDatabase>((resolve, reject) => {
     if (typeof indexedDB === 'undefined') { reject(storageError(undefined)); return; }
-    const request = indexedDB.open('3d-space-v2', 1);
+    const request = indexedDB.open('3d-space-v3', 1);
     request.onupgradeneeded = () => {
       for (const store of stores) if (!request.result.objectStoreNames.contains(store)) request.result.createObjectStore(store);
     };
@@ -77,6 +77,7 @@ async function run<T>(names: OfflineStore[], mode: IDBTransactionMode, operation
 }
 
 export async function readOffline<T>(store: OfflineStore, key: string): Promise<T | undefined> {
+  if (store === 'projects') return (await readProjectRecords<T>(key))[0];
   const value = await run<T | undefined>([store], 'readonly', tx => tx.objectStore(store).get(key));
   if (store === 'meta' && key === 'identity') identity(value);
   return hydrate<T>(store, value);
@@ -95,6 +96,56 @@ async function hydrate<T>(store: OfflineStore, value: unknown): Promise<T | unde
   }
   return value as T;
 }
+/** Metadata and its mutable level slots must come from the same committed snapshot. */
+async function readProjectRecords<T>(key?: string): Promise<T[]> {
+  const db = await open();
+  return new Promise((accept, reject) => {
+    const tx = db.transaction(['projects', 'levels'], 'readonly'), store = tx.objectStore('projects');
+    const request = key === undefined ? store.getAll() : store.get(key);
+    let records: any[] = [], failure: unknown;
+    const levels = new Map<string, IDBRequest<{ level: unknown } | undefined>>();
+    request.onsuccess = () => {
+      records = key === undefined ? request.result : request.result === undefined ? [] : [request.result];
+      try {
+        for (const record of records) if (record?.levelRefs) {
+          if (typeof record.levelRefs !== 'object' || Array.isArray(record.levelRefs)) throw new Error('Falta un nivel guardado en este dispositivo.');
+          for (const [slot, keys] of Object.entries(record.levelRefs)) {
+            if (!['snapshot', 'draft', 'inflight'].includes(slot) || !Array.isArray(keys) || keys.length > 12 || keys.some(key => typeof key !== 'string')) throw new Error('Falta un nivel guardado en este dispositivo.');
+            for (const ref of keys) if (!levels.has(ref)) levels.set(ref, tx.objectStore('levels').get(ref));
+          }
+        }
+      } catch (cause) { failure = cause; tx.abort(); }
+    };
+    tx.oncomplete = () => {
+      try {
+        accept(records.map(record => {
+          if (!record?.levelRefs) return record;
+          const copy = { ...record };
+          for (const [slot, keys] of Object.entries(record.levelRefs) as [string, string[]][]) {
+            const rows = keys.map(ref => levels.get(ref)?.result);
+            if (rows.some(row => !row?.level)) throw new Error('Falta un nivel guardado en este dispositivo.');
+            const project = slot === 'snapshot' ? copy.snapshot?.project : slot === 'draft' ? copy.draft : copy.inflight?.project;
+            if (!project) throw new Error('Falta un nivel guardado en este dispositivo.');
+            const hydrated = { ...project, levels: rows.map(row => row!.level) };
+            if (slot === 'snapshot') copy.snapshot = { ...copy.snapshot, project: hydrated };
+            else if (slot === 'draft') copy.draft = hydrated;
+            else copy.inflight = { ...copy.inflight, project: hydrated };
+          }
+          return copy;
+        }));
+      } catch (cause) { reject(storageError(cause)); }
+    };
+    tx.onabort = () => reject(storageError(failure ?? tx.error));
+    tx.onerror = () => { /* onabort reports the failed snapshot read. */ };
+  });
+}
+export async function readOfflineEntries<T>(store: OfflineStore, keys: string[]): Promise<(T | undefined)[]> {
+  const db = await open();
+  return new Promise((accept, reject) => {
+    const tx = db.transaction(store, 'readonly'), requests = keys.map(key => tx.objectStore(store).get(key));
+    tx.oncomplete = () => accept(requests.map(request => request.result)); tx.onabort = () => reject(storageError(tx.error));
+  });
+}
 export async function writeOffline<T>(store: OfflineStore, key: string, value: T): Promise<void> {
   const owner = value && typeof value === 'object' && 'accountId' in value ? value.accountId : undefined;
   if (store !== 'meta' && typeof owner === 'string') {
@@ -110,11 +161,15 @@ export async function removeOffline(store: OfflineStore, key: string): Promise<v
   });
 }
 export async function listOffline<T>(store: OfflineStore): Promise<T[]> {
+  if (store === 'projects') return readProjectRecords<T>();
   const values = await run<unknown[]>([store], 'readonly', tx => tx.objectStore(store).getAll());
   return Promise.all(values.map(value => hydrate<T>(store, value) as Promise<T>));
 }
 export function listOfflineMetadata<T>(store: OfflineStore): Promise<T[]> {
   return run([store], 'readonly', tx => tx.objectStore(store).getAll());
+}
+export function listOfflineKeys(store: OfflineStore): Promise<IDBValidKey[]> {
+  return run([store], 'readonly', tx => tx.objectStore(store).getAllKeys());
 }
 export type OfflineWrite = { store: OfflineStore; key: string; value?: unknown; remove?: boolean; protectPending?: boolean; guardKey?: string };
 async function encodeWrites(writes: OfflineWrite[]): Promise<OfflineWrite[]> {

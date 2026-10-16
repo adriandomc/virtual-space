@@ -3,7 +3,7 @@ import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from 'rea
 import { Box, Copy, Eye, EyeOff, LoaderCircle, LogOut, Plus, Trash2 } from 'lucide-react';
 import Brand from './Brand';
 import Notifications from './Notifications';
-import { createBlankRoom } from './onboardingModel';
+import { createBlankProject } from './onboardingModel';
 import { accountRequest, isNetworkError } from './accountApi';
 import { offlineIdentity, rememberOfflineIdentity } from './offlineIdentity';
 import OfflineSettings, { useOfflineMode } from './OfflineSettings';
@@ -19,7 +19,7 @@ const RoomEditor = lazy(() => import('./App'));
 const SetupApp = lazy(() => import('./SetupApp'));
 
 type User = { id: string; username: string };
-type Design = { id: string; name: string; updatedAt: string; setupStep?: 0 | 1 | 2; role: 'owner' | 'editor' | 'reader'; canManage: boolean; offlineAllowed?: boolean; offline?: boolean };
+type Design = { id: string; name: string; updatedAt: string; setupStep?: 0 | 1 | 2 | 3; role: 'owner' | 'editor' | 'reader'; canManage: boolean; offlineAllowed?: boolean; offline?: boolean };
 
 function PasswordField({ label, name, value, onChange, register, disabled }: { label: string; name: string; value: string; onChange: (value: string) => void; register: boolean; disabled: boolean }) {
   const [visible, setVisible] = useState(false);
@@ -153,12 +153,11 @@ export default function AccountApp({ page }: { page: Exclude<SitePage, 'landing'
     setPending('create'); setError('');
     creationId.current ??= crypto.randomUUID();
     try {
-      const initialRoom = createBlankRoom();
-      initialRoom.name = t(initialRoom.name);
-      initialRoom.lights = initialRoom.lights.map(light => ({ ...light, name: t(light.name) }));
+      const initialRoom = createBlankProject(t('Mi diseño'), t('Luz principal'), t('Planta baja'));
+      initialRoom.id = creationId.current!;
       let result: { id: string };
       if (forced || offline) result = await createDesignLocal(initialRoom);
-      else try { result = await accountRequest<{ id: string }>('/api/rooms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: creationId.current, room: initialRoom }) }); }
+      else try { result = await accountRequest<{ id: string }>('/api/rooms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: creationId.current, project: initialRoom }) }); }
       catch (cause) { if (!isNetworkError(cause)) throw cause; result = await createDesignLocal(initialRoom, creationId.current); }
       window.location.assign(editorPath(result.id, true));
     } catch (cause) { setError(cause instanceof Error ? cause.message : t("No se pudo crear el diseño.")); setPending(null); }

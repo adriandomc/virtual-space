@@ -15,7 +15,8 @@ All new user-facing strings belong in the shared localization system through `sr
 
 ## Implementation and verification
 
-- Use the current `Room.version: 2` contract and shared validation. Changes must reach all affected creators, renderers, import/export, server, collaboration, offline records and fixtures. Do not interpret missing required fields as old defaults or restore retired formats.
+- Use the current `ProjectDocument.version: 3` contract and shared validation. Changes must reach all affected creators, renderers, import/export, server, collaboration, offline records and fixtures. A flat level view is an internal projection, never a persisted project or an import format. Do not interpret missing required fields as old defaults or restore retired formats.
+- **Review every behavior change in both onboarding and the editor.** Implement shared tools in both when applicable, including the level selector. Verify creation, skipping without resetting existing work, resuming setup, touch controls, Spanish/English and offline use. The four optional setup steps are Sketch → Roof → Colors → Furniture; initial defaults belong to project creation, never to Skip.
 - Keep existing ownership checks, authentication/rate limits, origin checks, upload validation and protections against data loss. Document relevant permission and recovery behavior honestly.
 - Preserve durable local work and account isolation. Do not clear pending drafts, binary assets or another account's storage to hide a synchronization problem.
 - Use existing patterns and dependencies before adding an abstraction. Add focused regression coverage for nontrivial behavior and run affected tests plus the build. Changes to offline caching, routing or synchronization also need production-build browser checks.

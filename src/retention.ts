@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { INACTIVITY_MONTHS } from './legalPolicy.js';
+import { clearProjectCache } from './projectRepository.js';
 
 export function inactivityDeadline(time: number) {
   const date = new Date(time);
@@ -26,6 +27,7 @@ export function deleteInactiveAccounts(database: DatabaseSync, time: number) {
     database.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(time);
     database.prepare('DELETE FROM request_limits WHERE updated_at < ? AND blocked_until <= ?').run(time - 48 * 60 * 60_000, time);
     database.exec('COMMIT');
+    if (deleted) clearProjectCache(database);
     return Number(deleted);
   } catch (error) { database.exec('ROLLBACK'); throw error; }
 }

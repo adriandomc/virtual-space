@@ -5,7 +5,8 @@ import { BrandMark } from './Brand';
 import NumberInput from './NumberInput';
 import { parseColor } from './fieldDraft';
 import useFieldDraft from './useFieldDraft';
-import { createLandingRoom, LANDING_WARDROBE_ID, updateLandingWardrobe } from './landingModel';
+import { createLandingProject, LANDING_WARDROBE_ID, updateLandingWardrobe } from './landingModel';
+import { projectToRoom, updateProjectRoom } from './projectDocument';
 import type { FurnitureItem, FurnitureMaterial, Selection } from './types';
 import LanguageSelector from './LanguageSelector';
 import InformationMenu from './InformationMenu';
@@ -31,7 +32,9 @@ function DemoColor({ value, onChange, onNotice }: { value: string; onChange: (va
 export default function Landing() {
   useLocale();
   const [step, setStep] = useState(0);
-  const [room, setRoom] = useState(createLandingRoom);
+  const [project, setProject] = useState(createLandingProject);
+  const room = projectToRoom(project);
+  const setRoom = (next: typeof room) => setProject(current => updateProjectRoom(current, current.activeLevelId, next));
   const [selection, setSelection] = useState<Selection | null>(null);
   const [property, setProperty] = useState<'position' | 'size' | 'finish'>('position');
   const [notice, setNotice] = useState('');
@@ -72,7 +75,7 @@ export default function Landing() {
           <div className="demo-card">
             <div className="demo-viewport">
               <Suspense fallback={<div className="demo-loading"><LoaderCircle size={24} /><span>{t("Cargando…")}</span></div>}>
-                <RoomScene room={room} mode={step === 2 ? 'walk' : 'orbit'} animateView selection={selection} onSelect={next => { if (editing && next?.kind === 'furniture' && next.id === LANDING_WARDROBE_ID) setSelection(next); }} onChange={setRoom} readOnly={step === 0} transformMode="translate" resetKey={0} />
+                <RoomScene project={project} activeLevelId={project.activeLevelId} onProjectChange={setProject} room={room} mode={step === 2 ? 'walk' : 'orbit'} animateView selection={selection} onSelect={next => { if (editing && next?.kind === 'furniture' && next.id === LANDING_WARDROBE_ID) setSelection(next); }} onChange={setRoom} readOnly={step === 0} transformMode="translate" resetKey={0} />
               </Suspense>
             </div>
             <aside className={'demo-properties' + (editing ? ' is-visible' : '')} aria-label={t("Ropero del demo")} aria-hidden={!editing} inert={!editing}>

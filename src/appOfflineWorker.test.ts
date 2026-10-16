@@ -95,7 +95,8 @@ async function worker(options: { badScript?: boolean; offline?: boolean; tabs?: 
 
 test('service worker precaches the shell, all lazy and worker chunks, and public assets', async () => {
   const app = await worker(); await app.event('install');
-  for (const path of ['/index.html', '/assets/main.js', '/assets/ModelWorkshop.js', '/assets/boolean.worker.js', '/assets/main.css', '/favicon.svg', '/environments/sunset-fairway-1k.hdr', '/manifest.es.webmanifest', '/manifest.en.webmanifest']) assert.ok(app.calls.includes(path), path);
+  for (const path of ['/index.html', '/assets/main.js', '/assets/ModelWorkshop.js', '/assets/boolean.worker.js', '/assets/main.css', '/favicon.svg', '/manifest.es.webmanifest', '/manifest.en.webmanifest']) assert.ok(app.calls.includes(path), path);
+  assert.ok(!app.calls.some(path => path.startsWith('/environments/') || path.endsWith('.jpg') && path.startsWith('/materials/')));
   for (const locale of ['es', 'en']) for (const image of ['library', 'setup', 'editor', 'workshop', 'offline', 'sharing']) assert.ok(app.calls.includes(`/help/${locale}/${image}.jpg`));
   assert.ok(!app.calls.some(path => path.endsWith('.md') || path.startsWith('/api/')));
   await app.event('activate'); assert.ok(!app.entries.has('3d-space-static-old')); assert.ok(!app.entries.has('3d-space-v2-static-previous')); assert.ok(app.entries.has('unrelated-app'));
@@ -119,15 +120,15 @@ test('offline navigation returns the cached shell and lazy editor modules withou
 
 test('HTML responses for script resources never enter a successful cache', async () => {
   const failed = await worker({ badScript: true }); await assert.rejects(failed.event('install'), /Static resource unavailable/);
-  assert.ok(![...failed.entries.keys()].some(key => key.startsWith('3d-space-v2-static-') && key !== '3d-space-v2-static-previous'));
+  assert.ok(![...failed.entries.keys()].some(key => key.startsWith('3d-space-v3-static-') && key !== '3d-space-v2-static-previous'));
   const app = await worker({ badScript: true }), response = await app.request('/assets/main.js');
   assert.equal(response?.status, 503);
   assert.ok([...app.entries.values()].every(cache => !cache.has('/assets/main.js')));
 });
 
 test('availability checks every cached dependency, including modules, material assets and shell, without consulting the network', async () => {
-  const app = await worker(); await app.event('install'); const requests = app.calls.length;
-  const cache = [...app.entries].find(([key]) => key.startsWith('3d-space-v2-static-') && key !== '3d-space-v2-static-previous')![1];
+  const app = await worker(); await app.event('install'); const prepared = app.message('SPACE_PREPARE'); await prepared.complete(); assert.deepEqual(prepared.replies, [{ ready: true }]); app.matches.length = 0; const requests = app.calls.length;
+  const cache = [...app.entries].find(([key]) => key.startsWith('3d-space-v3-static-') && key !== '3d-space-v2-static-previous')![1];
   const status = app.message('SPACE_STATUS'); await status.complete();
   assert.deepEqual(status.replies, [{ ready: true }]);
   assert.deepEqual(new Set(app.matches), new Set(cache.keys()));
@@ -171,7 +172,7 @@ test('unsaved, closed or discarded tabs refuse the update, preserve active resou
 test('an incomplete waiting application refuses activation before requesting client saves', async () => {
   const tab: Tab = { id: 'saved', result: 'ready', messages: [] };
   const app = await worker({ tabs: [tab] }); await app.event('install');
-  const cache = [...app.entries].find(([key]) => key.startsWith('3d-space-v2-static-') && key !== '3d-space-v2-static-previous')![1];
+  const cache = [...app.entries].find(([key]) => key.startsWith('3d-space-v3-static-') && key !== '3d-space-v2-static-previous')![1];
   cache.delete('/assets/ModelWorkshop.js');
   const update = app.message('SPACE_UPDATE'); await update.complete();
   assert.equal(app.activated(), 0); assert.ok(update.replies[0]?.error); assert.ok(!tab.messages.includes('SPACE_SAVE_UPDATE'));
@@ -215,4 +216,16 @@ test('unsaved geometry, unacknowledged edits and discarded tabs refuse mode chan
     assert.equal(app.activated(), 0); assert.equal(mode.replies.length, 1);
     assert.ok(app.entries.has('3d-space-v2-static-previous'));
   }
+});
+
+
+test('optional high-definition assets download only on explicit preparation and a partial retry preserves complete resources', async () => {
+  const app = await worker(); await app.event('install');
+  const status = app.message('SPACE_STATUS'); await status.complete(); assert.deepEqual(status.replies, [{ ready: false }]);
+  assert.ok(!app.calls.some(path => path.startsWith('/environments/')));
+  app.setUnavailable(true); const failed = app.message('SPACE_PREPARE'); await failed.complete(); assert.ok(failed.replies[0].error);
+  assert.equal((await app.request('/assets/main.js'))?.status, 200);
+  app.setUnavailable(false); const prepared = app.message('SPACE_PREPARE'); await prepared.complete(); assert.deepEqual(prepared.replies, [{ ready: true }]);
+  assert.ok(app.calls.some(path => path.startsWith('/environments/'))); assert.ok(app.calls.some(path => path.startsWith('/materials/512/')));
+  const calls = app.calls.length, repeated = app.message('SPACE_PREPARE'); await repeated.complete(); assert.equal(app.calls.length, calls);
 });

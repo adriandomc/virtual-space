@@ -1,22 +1,44 @@
 import * as THREE from 'three/webgpu';
 import { color, float, min, mix, normalMap, smoothstep, step, texture, uv, vec2, vec3, type ShaderNodeObject } from 'three/tsl';
 import type { FloorFinish, FurnitureMaterial, Room } from './types';
+import { textureDimensions } from './graphicsSettings';
 
 type ShaderValue = ShaderNodeObject<THREE.Node>;
 type Quality = Room['renderQuality'];
+type FloorSurface = Pick<Room, 'floorFinish' | 'floorColor' | 'renderQuality'>;
 
 type ArchitecturalSurface = 'wood' | 'plaster' | 'stone' | 'marble' | 'fabric';
 const architecturalTextures = new Map<string, THREE.Texture>();
+let textureResolution = 2048;
+export function setMaterialTextureResolution(value: 512 | 1024 | 2048) {
+  if (textureResolution === value) return false;
+  textureResolution = value;
+  disposeArchitecturalTextures();
+  return true;
+}
 const surfaceScale: Record<ArchitecturalSurface, number> = { wood: 1.7, plaster: 1, stone: 2.08, marble: 1.5, fabric: 0.264 };
 // Measured linear albedo averages keep each photographed surface centered on its chosen HEX tint.
 const surfaceLuminance: Record<ArchitecturalSurface, number> = { wood: 0.13486, plaster: 0.24731, stone: 0.26191, marble: 0.35256, fabric: 0.42989 };
 
+export function architecturalTexturePath(surface: ArchitecturalSurface, map: 'color' | 'normal' | 'arm', resolution = textureResolution) {
+  // The original photographs are 1K; a 2K device cap never invents missing detail.
+  return `/materials/${resolution <= 512 ? '512/' : ''}${surface}/${map}.jpg`;
+}
 function architecturalTexture(surface: ArchitecturalSurface, map: 'color' | 'normal' | 'arm') {
-  const path = `/materials/${surface}/${map}.jpg`;
+  const path = architecturalTexturePath(surface, map);
   let result = architecturalTextures.get(path);
   if (!result) {
     // Material construction also runs during Node tests, where ImageLoader has no DOM.
-    result = typeof document === 'undefined' ? new THREE.Texture() : new THREE.TextureLoader().load(path, undefined, undefined, () => console.warn(`No se pudo cargar ${path}`));
+    result = typeof document === 'undefined' ? new THREE.Texture() : new THREE.TextureLoader().load(path, loaded => {
+      window.dispatchEvent(new Event('space-material-ready'));
+      const image = loaded.image as HTMLImageElement;
+      const size = textureDimensions(image.width, image.height, textureResolution);
+      if (size.width === image.width && size.height === image.height) return;
+      const canvas = document.createElement('canvas'); canvas.width = size.width; canvas.height = size.height;
+      const context = canvas.getContext('2d');
+      if (!context) return;
+      context.drawImage(image, 0, 0, size.width, size.height); loaded.image = canvas; loaded.needsUpdate = true;
+    }, undefined, () => console.warn(`No se pudo cargar ${path}`));
     result.name = path;
     result.wrapS = result.wrapT = THREE.RepeatWrapping;
     result.colorSpace = map === 'color' ? THREE.SRGBColorSpace : THREE.NoColorSpace;
@@ -48,7 +70,7 @@ function architecturalMaterial(hex: string, surface: ArchitecturalSurface, point
   return material;
 }
 
-function architecturalFloor(room: Room) {
+function architecturalFloor(room: FloorSurface) {
   const finish = room.floorFinish;
   const surface = finish === 'wood' ? 'wood' : finish === 'marble' ? 'marble' : 'stone';
   const point = uv();
@@ -129,7 +151,7 @@ function surfaceNormal(point: ShaderValue, height: (p: ShaderValue) => ShaderVal
   return normalMap(vec3(dx.negate(), dy.negate(), 1).normalize().mul(0.5).add(0.5));
 }
 
-export function createFloorMaterial(room: Room): THREE.MeshStandardNodeMaterial {
+export function createFloorMaterial(room: FloorSurface): THREE.MeshStandardNodeMaterial {
   if (room.renderQuality === 'hyperrealistic') return architecturalFloor(room);
   const realistic = room.renderQuality === 'realistic';
   const material = realistic
@@ -145,6 +167,29 @@ export function createFloorMaterial(room: Room): THREE.MeshStandardNodeMaterial 
     if (room.floorFinish.startsWith('tile-')) material.clearcoatNode = pattern.body.mul(0.22);
   }
   return material;
+}
+
+export function createRoofInteriorMaterial(finish: { color: string; material: FloorFinish }, quality: Quality) {
+  return createCeilingFinishMaterial(finish, quality);
+}
+
+export function createWallFinishMaterial(finish: { color: string; material: FloorFinish }, quality: Quality) {
+  if (finish.material === 'concrete') return createWallMaterial(finish.color, quality);
+  const material = createFloorMaterial({ floorColor: finish.color, floorFinish: finish.material, renderQuality: quality });
+  material.side = THREE.DoubleSide;
+  return material;
+}
+
+export function createCeilingFinishMaterial(finish: { color: string; material: FloorFinish }, quality: Quality) {
+  if (finish.material === 'concrete') return createCeilingMaterial(finish.color, quality);
+  const material = createFloorMaterial({ floorColor: finish.color, floorFinish: finish.material, renderQuality: quality });
+  material.side = THREE.DoubleSide;
+  return material;
+}
+
+export function createSlabMaterials(finish: { color: string; material: FloorFinish }, underside: { color: string; material: FloorFinish }, quality: Quality) {
+  const top = createFloorMaterial({ floorColor: finish.color, floorFinish: finish.material, renderQuality: quality });
+  return [top, createCeilingFinishMaterial(underside, quality), top];
 }
 
 export function createWallMaterial(hex: string, quality: Quality): THREE.MeshStandardNodeMaterial {

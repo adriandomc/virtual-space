@@ -6,7 +6,7 @@ let activeAccount: string | undefined;
 let loaded: Promise<{ identity: OfflineIdentity | null; forced: boolean }> | undefined;
 const listeners = new Set<() => void>();
 const requests = new Set<AbortController>();
-const channel = typeof window !== 'undefined' && typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('3d-space-mode-v2') : undefined;
+const channel = typeof window !== 'undefined' && typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('3d-space-mode-v3') : undefined;
 function publish(next: boolean) {
   if (forced === next) return;
   forced = next;

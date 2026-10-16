@@ -1,16 +1,16 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { fetchPublicDesign } from './embedProject';
-import { createDefaultRoom } from './model';
+import { createDefaultProject } from './projectDocument';
 
 const id = 'd4962b5b-0980-424a-85fd-235d837278bc';
 test('embedded views omit session credentials and only accept public read-only snapshots', async t => {
   const requests: { path: string; options?: RequestInit }[] = [];
-  let data = { room: createDefaultRoom(), revision: 1, role: 'public', shared: true, canEdit: false };
+  let data = { project: createDefaultProject(undefined, undefined, id), revision: 1, role: 'public', shared: true, canEdit: false };
   t.mock.method(globalThis, 'fetch', async (path: string, options?: RequestInit) => { requests.push({ path, options }); return Response.json(data); });
   const controller = new AbortController();
   const result = await fetchPublicDesign(id, controller.signal);
-  assert.equal(result.room.name, data.room.name);
+  assert.equal(result.project.name, data.project.name);
   assert.equal(requests[0].path, '/api/rooms/' + id + '?public=1');
   assert.equal(requests[0].options?.credentials, 'omit');
   assert.equal(requests[0].options?.cache, 'no-store');

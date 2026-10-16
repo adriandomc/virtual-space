@@ -1,4 +1,5 @@
-import { refreshOfflineMode } from './offlineMode';
+import { refreshOfflineMode, offlineFetch } from './offlineMode';
+import { retireTestStorage } from './retiredStorage';
 
 type AppOfflineState = { ready: boolean; update: boolean; updating: boolean; error: string; installable: boolean; installed: boolean };
 type InstallPrompt = Event & { prompt(): Promise<void>; userChoice: Promise<{ outcome: string }> };
@@ -9,12 +10,14 @@ let prompt: InstallPrompt | undefined;
 let freeze: { kind: 'update' | 'mode'; id: string } | undefined;
 let modeFreeze: { id: string; worker?: ServiceWorker } | undefined;
 const listeners = new Set<() => void>();
-const guards = new Set<() => Promise<void>>();
+const guards = new Map<() => Promise<void>, 'flush' | 'durable'>();
 const publish = (patch: Partial<AppOfflineState>) => { state = { ...state, ...patch }; listeners.forEach(listener => listener()); };
 export const getAppOfflineState = () => state;
 export function subscribeAppOffline(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; }
-export function registerBeforeAppUpdate(guard: () => Promise<void>) { guards.add(guard); return () => { guards.delete(guard); }; }
-export async function confirmLocalSaved() { await Promise.all([...guards].map(guard => guard())); }
+export function registerBeforeAppUpdate(guard: () => Promise<void>, phase: 'flush' | 'durable' = 'flush') { guards.set(guard, phase); return () => { guards.delete(guard); }; }
+export async function confirmLocalSaved() {
+  for (const phase of ['flush', 'durable']) await Promise.all([...guards].filter(([, value]) => value === phase).map(([guard]) => guard()));
+}
 function unfreeze(kind: 'update' | 'mode', id: string) {
   if (freeze?.kind !== kind || freeze.id !== id) return;
   freeze = undefined; publish({ updating: false });
@@ -22,7 +25,7 @@ function unfreeze(kind: 'update' | 'mode', id: string) {
 function message(worker: ServiceWorker, type: string, id: string = crypto.randomUUID()): Promise<{ ready?: boolean; error?: string }> {
   return new Promise((resolve, reject) => {
     const channel = new MessageChannel();
-    const timer = setTimeout(() => { channel.port1.close(); reject(new Error('No se pudo verificar la aplicación. Cierra las otras pestañas y vuelve a intentarlo.')); }, 25000);
+    const timer = setTimeout(() => { channel.port1.close(); reject(new Error('No se pudo verificar la aplicación. Cierra las otras pestañas y vuelve a intentarlo.')); }, type === 'SPACE_PREPARE' || type === 'SPACE_UPDATE' ? 120000 : 25000);
     channel.port1.onmessage = event => { clearTimeout(timer); channel.port1.close(); resolve(event.data); };
     worker.postMessage({ type, id }, [channel.port2]);
   });
@@ -74,28 +77,27 @@ export function registerAppOffline() {
     };
     registration.addEventListener('updatefound', check); check();
     await verify();
-    // This namespace belongs only to the retired prototype; current copies use a separate database.
-    const obsolete = indexedDB.deleteDatabase('3d-space-offline');
-    obsolete.onblocked = () => publish({ error: 'Cierra las pestañas antiguas de 3D Space para retirar sus datos de prueba.' });
+    // The server publishes this gate only after its explicit one-time test-data reset.
+    // Forced mode and failed requests leave every old database untouched.
+    try {
+      if (navigator.onLine) {
+        const response = await offlineFetch('/api/release?public=1', { cache: 'no-store', credentials: 'omit' });
+        if (response.ok) await retireTestStorage(await response.json());
+      }
+    } catch (cause) {
+      if (cause instanceof Error && cause.message.includes('datos de prueba')) publish({ error: cause.message });
+    }
   })().catch(cause => { started = undefined; publish({ error: cause instanceof Error ? cause.message : 'No se pudo preparar la aplicación.' }); });
   return started;
 }
 export async function waitForAppOffline(): Promise<void> {
   await registerAppOffline();
-  if (state.ready && registration?.active) {
-    const result = await message(registration.active, 'SPACE_STATUS');
-    publish({ ready: !!result.ready });
-    if (!result.ready) throw new Error('Faltan recursos de la aplicación. Vuelve a preparar la copia con conexión.');
-  }
-  if (state.ready) return;
-  if (state.error) throw new Error(state.error);
-  await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => { unsubscribe(); reject(new Error('La aplicación aún no está lista. Comprueba la conexión e inténtalo de nuevo.')); }, 60000);
-    const unsubscribe = subscribeAppOffline(() => {
-      if (!state.ready && !state.error) return;
-      clearTimeout(timer); unsubscribe(); state.ready ? resolve() : reject(new Error(state.error));
-    });
-  });
+  if (!import.meta.env?.PROD) return;
+  if (!registration?.active) await navigator.serviceWorker.ready;
+  const worker = registration?.active;
+  if (!worker) throw new Error('La aplicación aún no está lista. Comprueba la conexión e inténtalo de nuevo.');
+  const result = await message(worker, 'SPACE_PREPARE'); publish({ ready: !!result.ready, error: result.error ?? '' });
+  if (!result.ready) throw new Error(result.error || 'Faltan recursos de la aplicación. Vuelve a preparar la copia con conexión.');
 }
 export async function checkAppUpdate() { await registration?.update(); }
 export async function confirmAllLocalSaved() {

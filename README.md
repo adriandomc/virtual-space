@@ -1,6 +1,6 @@
 # 3D Space
 
-[3D Space](https://3d.adriandomc.com) is a free browser application for designing rooms and previewing wall colors, floor finishes, furniture and lighting. Draw a floor plan, place doors and windows, build custom furniture, and walk through the resulting 3D space on desktop or touch devices.
+[3D Space](https://3d.adriandomc.com) is a free browser application for designing buildings with up to 12 levels and previewing wall colors, floors, roofs, furniture and lighting. Add rooms and walls to a floor plan, connect stories with stairs, build custom furniture, and walk continuously through the resulting 3D space on desktop or touch devices.
 
 The application is self-hosted: accounts use a username and password, and designs are stored on your server. Public viewing links, embeddable viewers and invited reader/editor access are optional. Private designs can be prepared for offline editing as an installable PWA.
 
@@ -8,11 +8,17 @@ For illustrated end-user instructions, open **Information → Help and getting s
 
 ## Features
 
-- Polygonal floor plans, reference images, dimensions and angle/grid snapping.
+- Additive room and wall construction with stable junctions, wall splitting, per-level reference images, dimensions and angle/grid snapping.
+- Up to 12 levels, separate wall-face and slab-underside finishes, real slab openings and atomic construction undo/redo.
+- Straight, landing, L, U and spiral stairs with connected walkthrough surfaces, editable upper-floor openings and optional railings.
+- Flat, shed, gable and rectangular hip roofs, plus free vertex/triangle editing of closed roof solids. Roof undersides define the interior ceiling and walkthrough headroom.
+- Optional setup steps: Sketch → Roof → Colors → Furniture. Skipping preserves existing work.
 - Selectable objects with drag handles, numeric properties and placement warnings.
 - Beds, wardrobes, vanities and nightstands; doors, windows and configurable lights.
 - Wall and ceiling colors, hexadecimal color input, floor finishes and furniture materials.
 - Standard, Realistic and Hyperrealistic rendering, with WebGPU and WebGL support.
+- Full/cutaway/hidden walls, roof visibility and active/lower/all-level views.
+- Device-local automatic/manual graphics preferences for shadows, textures, render scale, geometry detail, distance, contact shadows and frame-rate limits.
 - Walkthrough navigation with keyboard or a touch joystick, interactive doors and light switches.
 - A model workshop with primitives, furniture parts, transforms, boolean operations, vertex/face editing, alignment, groups and undo/redo.
 - Validated, self-contained GLB uploads and independent copies between designs.
@@ -27,6 +33,8 @@ Rendering is an interactive approximation. It is not ray tracing, a photometric 
 - **Node.js 24** and npm. The server uses Node's built-in HTTP and SQLite modules.
 - A current browser with WebGL; WebGPU is used where available. HTTPS or localhost is required for PWA capabilities and WebGPU.
 - Docker for container deployment. No separate database server or authentication service is required.
+
+Three.js is pinned to `0.180.0`. Installation applies [`scripts/patch-three.mjs`](scripts/patch-three.mjs), a small feature-check backport for browsers without `VideoFrame`; it does not add a video API or change rendering behavior. The script checks the exact dependency version and expected source before writing. Review or remove this patch when upgrading Three.js.
 
 ## Local development
 
@@ -44,6 +52,8 @@ npm run dev
 ```
 
 Open the URL printed by Vite, usually `http://localhost:5173`. Vite proxies `/api` requests and WebSocket traffic to `http://127.0.0.1:8080`. Development data is stored in `data/accounts.sqlite`, excluded from Git. Use a separate `DATA_DIR` for isolated experiments.
+
+Three.js is pinned to `0.180.0`. Its common texture path assumes that `VideoFrame` exists, which prevents rendering in browsers without WebCodecs. The checked, idempotent `scripts/patch-three.mjs` postinstall script backports the [upstream r184 feature guards](https://github.com/mrdoob/three.js/blob/r184/src/renderers/common/Textures.js) to the source and exported build copies. Both Docker stages apply it through `npm ci`; do not skip install scripts. When upgrading to r184 or later, verify the guards in the replacement release, remove this patch and its postinstall hook, and run the WebKit/WebGL and Chromium/WebGPU rendering tests. The patch does not add a global shim or change the renderer's materials.
 
 To run the production build locally:
 
@@ -108,7 +118,11 @@ Run **one application instance per data directory**. Sharing the same SQLite sto
 | `src/main.tsx`, `src/routes.ts` | Application bootstrap and public/account routes. |
 | `src/AccountApp.tsx`, `src/Onboarding.tsx`, `src/App.tsx` | Authentication, library, optional setup and room editor. |
 | `src/RoomScene.tsx`, `src/materials.ts`, `src/postProcessing.ts` | Three.js scene, TSL materials and rendering effects. |
-| `src/PlanEditor.tsx`, `src/model.ts`, `src/types.ts` | Floor-plan editing, shared room validation and current data contract. |
+| `src/projectDocument.ts` | Canonical version-3 document, shared validation, budgets and internal level projections. |
+| `src/projectOperations.ts`, `src/projectGeometry.ts`, `src/architecturalNavigation.ts` | Atomic construction commands/history, real stairs/roofs/slab geometry and connected walkthrough support. |
+| `src/PlanEditor.tsx`, `src/ConstructionPanel.tsx`, `src/LevelSelector.tsx` | Additive plan drawing, level controls, stairs and roof editing shared by setup and editor. |
+| `src/model.ts`, `src/types.ts` | Internal flat level helpers and editor selection types; never a storage/import format. |
+| `src/graphicsSettings.ts`, `src/GraphicsSettings.tsx` | Device-local profiles, user overrides and bounded automatic performance tuning. |
 | `src/ModelWorkshop.tsx`, `src/workshop*.ts` | Model construction, booleans, alignment, grouping and history. |
 | `src/offline*.ts`, `src/appOffline.ts`, `vite.config.ts` | IndexedDB persistence, asset preparation, sync and generated service worker. |
 | `src/server.ts`, `src/auth.ts`, `src/collaborationServer.ts` | HTTP API, account/session protection, access control and Yjs transport. |
@@ -120,15 +134,31 @@ Run **one application instance per data directory**. Sharing the same SQLite sto
 
 ## Data and synchronization
 
-The only room contract is **`Room.version: 2`**. New designs receive explicit defaults at creation. Validation is shared across server requests, editor operations, imports, collaboration and offline storage. Every visible furniture item is persisted in the room; there is no implicit decoration layer.
+The only persisted contract is **`ProjectDocument.version: 3`**, validated by `src/projectDocument.ts`. It contains stable IDs for levels, shared plan points, walls and both wall finishes, surfaces and holes, wall-anchored openings, furniture, lights, stairs and roofs. Floor slabs have independent top and underside finishes; changing a lower ceiling does not recolor the floor above it. Level elevations derive from preceding level heights. A `Room` is a disposable internal projection of one level, including explicit interior wall segments; it is never persisted, exported or accepted by the API as a project. Defaults are created explicitly, and every visible furniture item belongs to stored project data.
 
-Import and export use the self-contained **`3d-space-project` version 2** package: the room, reference image and all referenced GLBs. Imports validate the complete package before applying a local transaction and assign independent model identifiers. Old project formats are rejected rather than guessed or converted.
+Structural commands validate the complete candidate before committing. A failed split, invalid roof solid or incompatible hole preserves the previous document. Construction history includes generated openings and all affected levels in one undo step. Stairs use connected support surfaces for continuous movement; navigation never selects a different story or spiral turn solely from X/Z coordinates. Floors and roof undersides used for rendering also define the actual openings and headroom.
 
-The server stores accounts, designs, reference images, models, memberships, collaboration state, sessions and security counters in `DATA_DIR/accounts.sqlite`. Initialization is atomic and schema-versioned. An unknown or partial schema stops startup without changing existing data; deployments do not automatically delete or convert it.
+Import/export uses a ZIP-based **`.3dspace`** file with MIME `application/vnd.3dspace+zip`. Its `manifest.json` declares `format: '3d-space-project'`, `version: 3`, the project, up to 12 per-level sketches and the GLB files. Paths, expanded sizes, signatures, ownership references and global model budgets are validated before an atomic local import. The archive is limited to 225 MB, its manifest to 4 MB, individual models to 20 MB and individual sketches to 10 MB. No partial import or implicit format conversion is performed.
+
+The server stores accounts and service metadata in `DATA_DIR/accounts.sqlite`. The current SQLite schema version is **3**. `rooms` holds project metadata; `project_levels` stores normalized level documents and collaboration state; `project_sketches` holds each level reference image and version; `mutation_receipts` records idempotent structural confirmations. Models, memberships, sessions and security counters are stored in the same database. Initialization is atomic. An incompatible or partial database stops startup without changing its data.
+
+Confirmed documents use a revision-checked cache bounded to 32 projects and 16 MiB of encoded data. Ordinary edits read, encode and write the changed scopes without loading other levels' documents or collaboration BLOBs. Cache publication follows the database commit; rollback preserves the last confirmed state, and committed deletions invalidate cached content.
+
+Global document limits apply across the whole building, rather than multiplying by the number of levels: 64 furniture items, 24 lights, 96 wall openings, 1,536 plan points, 1,536 walls, 192 surfaces and 96 slab openings with at most 2,048 hole vertices. Per-instance custom-model part overrides are capped at 2,048 across all levels before expensive geometry validation. Custom models have additional project-wide budgets for rendered instances, triangles, texture pixels and bytes. See `PROJECT_LIMITS` and `src/modelBudget.ts` before changing limits.
 
 Private projects use durable account-scoped IndexedDB records and a pending queue. Preparation verifies all dependencies before marking content available. Explicit offline mode suppresses data requests, uploads, notifications and collaboration even when the network is available. Leaving offline mode checks the account, current permissions and revisions before syncing all pending projects and models. Conflicts preserve local work for recovery rather than silently overwriting server changes. Shared projects require independent personal copies for offline editing.
 
-The production service worker caches the app, localized help and bundled visual assets. IndexedDB stores editable records separately from binary assets. Installation and storage persistence remain browser-controlled; exports are the user's independent backup. Local work does not count as server account activity until authenticated synchronization occurs.
+The production service worker caches the app, localized help and bundled visual assets. Graphics preferences and the selected language stay in browser storage and are not sent as analytics or copied into another device profile. IndexedDB stores editable records separately from binary assets. Installation and storage persistence remain browser-controlled; exports are the user's independent backup. Local work does not count as server account activity until authenticated synchronization occurs.
+
+## API boundaries
+
+- `GET/POST /api/rooms` lists or creates designs. Creation accepts `{ id, project }`, with matching identifiers.
+- `GET /api/rooms/:id` returns a permission-checked canonical snapshot, revisions and per-level sketch states. `?public=1` explicitly requests the public read-only view.
+- `PUT /api/rooms/:id` accepts `{ project, revision, operationId }`. The operation ID must be a fresh UUID for a new mutation; retry the identical request and ID after a lost confirmation. Stale revisions and reused IDs with different content are rejected.
+- `/api/rooms/:id/levels/:levelId/sketch` reads, uploads or removes that level reference image. Writes require `X-Sketch-Request-Id`, `X-Sketch-Version` and `X-Room-Revision`; the mutation ID makes retries idempotent.
+- Yjs ordinary updates are scoped to project metadata and individual levels. Structural changes use revision checks and complete validated transactions. Origin checks and reader/editor/owner permissions remain server-side.
+
+Do not persist internal level projections or send an unversioned partial project to any boundary. Public pages remain `/`, `/help`, `/privacy` and `/terms`; `/login`, `/designs`, `/editor?room=…` and `/embed?room=…` serve their dedicated views.
 
 ## Authentication, privacy and limits
 
@@ -182,7 +212,12 @@ Accounts are retained for at least **three calendar months** after their last su
 Destructive operator tools require the app to be stopped, the confirmed image and data volume, explicit command confirmations, and a one-shot offline container. They reject unsafe paths, active SQLite recovery files, symbolic links and unexpected files rather than forcing deletion.
 
 - Account cancellation: `node server-dist/operations.js cancel-account /data USERNAME --confirm=USERNAME`. Verify the request and account ownership first; use the same normalized username twice.
+- One-time prelaunch test reset: `node server-dist/operations.js reset-prelaunch /data --confirm=reset-3d-space-test-data`. This explicitly removes recognized test accounts, designs, models and backups, then initializes the current empty schema. Stop the service and verify the exact test volume first. Never use this for a normal upgrade; incompatible database startup does not invoke it.
 - Permanent service closure: `node server-dist/operations.js close-service /data --confirm=erase-all`. This erases recognized service data and backups. Disable automatic deployments and remove the application afterwards so it cannot recreate an empty service.
+
+If SQLite recovery files remain after every process using the confirmed volume has stopped, do not delete them by hand. Use SQLite itself in an isolated maintenance container to checkpoint and close the database; switching that stopped database to `PRAGMA journal_mode=DELETE` lets SQLite safely retire its WAL and shared-memory files. A busy database must be investigated, never forced.
+
+The explicit v3 reset writes `prelaunch-reset-v3.json`. Only this valid marker enables retirement of the two known prototype browser databases; unknown databases and the current v3 store are never cleared automatically. Deleted-level sketch rows keep empty version tombstones so restoring a backup cannot revive an erased image or erase a later replacement.
 
 These operations do not erase copies outside the selected service directory, files downloaded by others, infrastructure logs or external disks. Review such storage separately. Do not use destructive tools for routine deployments or schema troubleshooting.
 
@@ -197,3 +232,10 @@ To add a language, create the matching catalogs under `src/locales/<code>/`, reg
 For new features, inspect all creators, renderers, validators, persistence paths and fixtures affected by the data contract. Keep trust-boundary validation and data-loss protection. Add targeted regression tests for new nontrivial behavior; run the relevant tests and the build. Do not reset shared data, loosen security controls or introduce compatibility layers as a substitute for a consistent current contract.
 
 Bundled PBR textures and environment assets are CC0; their sources are recorded in [`public/materials/README.md`](public/materials/README.md) and [`public/environments/README.md`](public/environments/README.md). Review those files when replacing or redistributing assets.
+
+
+## Release validation
+
+Run `npm test`, `npm run build` and the Chromium/WebKit browser suites before publishing a data-contract change. `npx playwright test --project=gpu` uses installed Chrome without software graphics overrides and explicitly skips when a hardware backend is unavailable. Test artifacts under `docs/validation-v3/` identify their environment; sampled CPU render work is not a frame-rate guarantee.
+
+The v3 verification includes an isolated Docker build, registration, a four-level design with stairs, a GLB and separate sketches, a consistent backup and a restore with session revocation. The guarded reset was also exercised on an isolated test volume and checked for empty tables and SQLite integrity. Physical Android/iOS installation, touch and browser storage behavior require separate device testing.
