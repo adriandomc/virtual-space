@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createDefaultProject, projectStructure, projectToRoom, updateProjectRoom, validateProjectDocument, whiteFinish } from './projectDocument.js';
 import { addLevel, addRoom, addStair } from './projectOperations.js';
 import { validateRoom } from './model.js';
-import { paintProjectTarget, paintTargetColor, type PaintTarget } from './projectPaint.js';
+import { paintProjectTarget, paintTargetColor, samplePaintTargetColor, type PaintTarget } from './projectPaint.js';
 
 function fixture() {
   let project = addLevel(createDefaultProject(), { copy: true });
@@ -72,4 +72,51 @@ test('optional opening and light paint survives shared parsing, projections and 
     assert.throws(() => validateProjectDocument(broken), /hexadecimal/);
     assert.throws(() => validateRoom(projectToRoom(broken, levelId)), /color/i);
   }
+});
+
+test('eyedropper samples stable surface sides and actual ceilings without changing the project', () => {
+  const project = fixture(), lower = project.levels[0], upper = project.levels[1], roof = project.roofs[0];
+  lower.walls[0].left.color = '#123456'; lower.walls[0].right.color = '#ABCDEF';
+  upper.surfaces[0].finish.color = '#112233'; upper.surfaces[0].undersideFinish!.color = '#445566';
+  roof.finish.color = '#778899'; roof.undersideFinish.color = '#aabbcc'; project.stairs[0].finish.color = '#ddccbb';
+  const before = structuredClone(project);
+  const cases: [PaintTarget, string][] = [
+    [{ levelId: lower.id, selection: { kind: 'wall', id: lower.walls[0].id, index: 999 } }, '#123456'],
+    [{ levelId: lower.id, selection: { kind: 'wall', id: lower.walls[0].id, index: 999 }, wallSide: 'right' }, '#abcdef'],
+    [{ levelId: upper.id, selection: { kind: 'floor', id: upper.surfaces[0].id } }, '#112233'],
+    [{ levelId: lower.id, selection: { kind: 'ceiling', id: upper.surfaces[0].id } }, '#445566'],
+    [{ levelId: roof.levelId, selection: { kind: 'roof', id: roof.id } }, '#778899'],
+    [{ levelId: roof.levelId, selection: { kind: 'roof', id: roof.id }, roofSide: 'undersideFinish' }, '#aabbcc'],
+    [{ levelId: upper.id, selection: { kind: 'stair', id: project.stairs[0].id } }, '#ddccbb'],
+    [{ levelId: lower.id, selection: { kind: 'furniture', id: 'bed' } }, '#aabbcc'],
+  ];
+  for (const [target, expected] of cases) assert.equal(samplePaintTargetColor(project, target, '#ff0000'), expected);
+  assert.deepEqual(project, before);
+});
+
+test('eyedropper defaults distinguish opaque opening and lamp paint from original model colors', () => {
+  const project = fixture(), level = project.levels[0];
+  const opening = (id: string): PaintTarget => ({ levelId: level.id, selection: { kind: 'opening', id } });
+  assert.equal(samplePaintTargetColor(project, opening('door')), '#c7b297');
+  level.openings[0].doorStyle = 'frame'; delete level.openings[0].open;
+  assert.equal(samplePaintTargetColor(project, opening('door')), '#efece3');
+  assert.equal(samplePaintTargetColor(project, opening('window')), '#efece3');
+  level.openings[1].color = '#ABCDEF'; assert.equal(samplePaintTargetColor(project, opening('window')), '#abcdef');
+  const light: PaintTarget = { levelId: level.id, selection: { kind: 'light', id: level.lights[0].id } };
+  assert.equal(samplePaintTargetColor(project, light), '#343931');
+  level.lights[0].color = '#112233'; assert.equal(samplePaintTargetColor(project, light), '#112233');
+  const model: PaintTarget = { levelId: level.id, selection: { kind: 'furniture', id: 'model' } };
+  assert.equal(samplePaintTargetColor(project, model), '#cccccc');
+  assert.equal(samplePaintTargetColor(project, model, '#ABCDEF'), '#abcdef');
+  assert.equal(samplePaintTargetColor(project, model, 'red'), '#cccccc');
+});
+
+test('a sampling fallback never turns a deleted or stale target into a valid source', () => {
+  const project = fixture(), before = structuredClone(project), levelId = project.levels[0].id;
+  for (const kind of ['wall', 'floor', 'ceiling', 'furniture', 'opening', 'light', 'roof', 'stair'] as const) {
+    assert.throws(() => samplePaintTargetColor(project, { levelId, selection: { kind, id: 'deleted', index: 0 } }, '#123456'));
+  }
+  assert.throws(() => samplePaintTargetColor(project, { levelId, selection: { kind: 'wall', index: 0 } }, '#123456'));
+  assert.throws(() => samplePaintTargetColor(project, { levelId: 'deleted', selection: { kind: 'floor' } }, '#123456'));
+  assert.deepEqual(project, before);
 });

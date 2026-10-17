@@ -44,6 +44,18 @@ export function paintTargetColor(project: ProjectDocument, target: PaintTarget):
   return targetSlot(project, target).color ?? null;
 }
 
+/** Sample the authored tint, independently of shadows, textures and visual quality. */
+export function samplePaintTargetColor(project: ProjectDocument, target: PaintTarget, fallback?: string): string {
+  const color = paintTargetColor(project, target);
+  if (color) return color.toLowerCase();
+  if (fallback && /^#[a-f\d]{6}$/i.test(fallback)) return fallback.toLowerCase();
+  if (target.selection.kind === 'opening') {
+    const opening = projectLevel(project, target.levelId).openings.find(opening => opening.id === target.selection.id)!;
+    return opening.type === 'door' && opening.doorStyle !== 'frame' ? '#c7b297' : '#efece3';
+  }
+  return target.selection.kind === 'light' ? '#343931' : '#cccccc';
+}
+
 export function paintProjectTarget(project: ProjectDocument, target: PaintTarget, color: string): ProjectDocument {
   if (typeof color !== 'string' || !/^#[a-f\d]{6}$/i.test(color)) throw new Error('Usa un color hexadecimal de seis cifras.');
   const next = validateProjectDocument(project), slot = targetSlot(next, target), normalized = color.toLowerCase();

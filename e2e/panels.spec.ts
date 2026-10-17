@@ -72,13 +72,23 @@ for (const viewport of [{ width: 1360, height: 900 }, { width: 390, height: 844 
     const roofImage = info.outputPath('roof-panel.png'); await page.screenshot({ path: roofImage });
     await info.attach('roof-panel', { path: roofImage, contentType: 'image/png' });
 
-    await expand(roof, 'Acabado exterior'); await roof.getByRole('button', { name: 'Color', exact: true }).click();
+    await expand(roof, 'Acabado exterior');
+    const colorTrigger = roof.getByRole('button', { name: 'Color', exact: true });
+    const colorField = colorTrigger.locator('../..'), fieldBox = (await colorField.boundingBox())!, triggerBox = (await colorTrigger.boundingBox())!;
+    expect(triggerBox.width).toBeCloseTo(fieldBox.width, 0);
+    expect(triggerBox.x + triggerBox.width).toBeLessThanOrEqual(fieldBox.x + fieldBox.width + 1);
+    expect(triggerBox.height).toBeGreaterThanOrEqual(44);
+    await colorTrigger.click();
     const picker = page.getByRole('dialog', { name: 'Color', exact: true }), hue = picker.getByLabel('Tono', { exact: true });
     await expect(picker).toBeVisible();
     expect(await hue.evaluate(element => getComputedStyle(element).backgroundImage)).toContain('conic-gradient');
     const sheet = (await picker.boundingBox())!;
     expect(sheet.x).toBeGreaterThanOrEqual(0); expect(sheet.x + sheet.width).toBeLessThanOrEqual(viewport.width + 1);
     await noHorizontalOverflow(picker); await comfortableControls(picker);
+    const copy = picker.getByRole('button', { name: 'Copiar código hexadecimal', exact: true });
+    expect((await copy.boundingBox())!.width).toBeGreaterThanOrEqual(44);
+    await expect(picker.locator('.color-comparison > div')).toHaveCSS('border-top-width', '1px');
+    await page.screenshot({ path: info.outputPath('color-picker.png') });
     await picker.getByLabel('Código hexadecimal', { exact: true }).fill('#abcdef');
     await picker.getByRole('button', { name: 'Cancelar', exact: true }).click();
     await expect(roof.getByRole('button', { name: 'Color', exact: true })).toContainText('#FFFFFF');
