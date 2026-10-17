@@ -75,7 +75,7 @@ for (const viewport of [{ width: 1360, height: 900 }, { width: 390, height: 844 
     await expand(roof, 'Acabado exterior'); await roof.getByRole('button', { name: 'Color', exact: true }).click();
     const picker = page.getByRole('dialog', { name: 'Color', exact: true }), hue = picker.getByLabel('Tono', { exact: true });
     await expect(picker).toBeVisible();
-    expect(await hue.evaluate(element => getComputedStyle(element).backgroundImage)).toContain('linear-gradient');
+    expect(await hue.evaluate(element => getComputedStyle(element).backgroundImage)).toContain('conic-gradient');
     const sheet = (await picker.boundingBox())!;
     expect(sheet.x).toBeGreaterThanOrEqual(0); expect(sheet.x + sheet.width).toBeLessThanOrEqual(viewport.width + 1);
     await noHorizontalOverflow(picker); await comfortableControls(picker);

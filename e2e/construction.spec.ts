@@ -79,9 +79,9 @@ test('setup paints one floor zone and wall face without changing their neighbors
   project.levels[0].surfaces[0].finish = { color: '#112233', material: 'wood' }; project.levels[0].surfaces[1].finish = { color: '#aabbcc', material: 'marble' }; const wall = project.levels[0].walls[0]; wall.left.color = '#334455'; wall.right.color = '#556677';
   expect((await context.request.post('/api/rooms', { headers, data: { id: project.id, project } })).status()).toBe(201);
   await page.goto('/editor?room=' + project.id + '&setup=1'); await expect(page.getByRole('heading', { name: 'Colores', exact: true })).toBeVisible();
-  await page.getByLabel('Zona del piso', { exact: true }).selectOption(project.levels[0].surfaces[1].id); await color(page, '#fedcba'); await page.getByLabel('Material del piso', { exact: true }).selectOption('tile-brick');
+  await page.locator('.surface-level.active').getByRole('button', { name: 'Piso', exact: true }).click(); await page.getByLabel('Zona del piso', { exact: true }).selectOption(project.levels[0].surfaces[1].id); await color(page, '#fedcba'); await page.getByLabel('Material del piso', { exact: true }).selectOption('tile-brick');
   await expect.poll(async () => (await snapshot(context.request, project.id)).levels[0].surfaces[1].finish).toEqual({ color: '#fedcba', material: 'tile-brick' });
-  await page.getByLabel('Superficie a pintar', { exact: true }).selectOption(wall.id); await page.getByLabel('Cara de la pared', { exact: true }).selectOption('right'); await color(page, '#123456');
+  await page.locator('.surface-level.active [data-surface-wall="' + wall.id + '"]').press('Enter'); await page.getByLabel('Cara de la pared', { exact: true }).selectOption('right'); await color(page, '#123456');
   await expect.poll(async () => (await snapshot(context.request, project.id)).levels[0].walls[0].right.color).toBe('#123456'); const saved = await snapshot(context.request, project.id);
   expect(saved.levels[0].surfaces[0].finish).toEqual(project.levels[0].surfaces[0].finish); expect(saved.levels[0].walls[0].left).toEqual(wall.left); expect(saved.levels[0].surfaces[1].finish).toEqual({ color: '#fedcba', material: 'tile-brick' });
 });
@@ -133,11 +133,11 @@ test('a delayed shared-project response cannot restore another account after a r
 
 test('deleting the selected wall remotely cannot commit its unfinished color into the first wall', async ({ page, context }) => {
   await account(context.request); const project = await design(context.request); expect((await context.request.post('/api/rooms/' + project.id + '/share', { headers, data: { enabled: true } })).status()).toBe(200);
-  await openEditor(page, project); await page.getByRole('button', { name: 'Materiales', exact: true }).click(); const selector = page.getByLabel('Superficie a pintar', { exact: true }); await selector.selectOption('3'); await expect(selector.locator('option')).toHaveCount(6);
+  await openEditor(page, project); await page.getByRole('button', { name: 'Materiales', exact: true }).press('Enter'); const navigator = page.locator('.surface-level.active'), walls = navigator.locator('[data-surface-wall]'); await navigator.locator('[data-surface-wall="' + project.levels[0].walls[3].id + '"]').press('Enter'); await expect(walls).toHaveCount(4);
   await page.getByRole('button', { name: 'Color', exact: true }).click(); await page.getByLabel('Código hexadecimal', { exact: true }).fill('#abcdef');
   const old = await (await context.request.get('/api/rooms/' + project.id)).json(), next = deleteWall(old.project, project.levels[0].id, project.levels[0].walls[3].id);
   expect((await context.request.put('/api/rooms/' + project.id, { headers, data: { project: next, revision: old.revision, operationId: randomUUID() } })).status()).toBe(200);
-  await expect.poll(async () => selector.locator('option').count()).not.toBe(6); await page.keyboard.press('Tab');
+  await expect(walls).toHaveCount(3); await page.keyboard.press('Tab');
   await expect(page.locator('.saved-status')).toHaveAttribute('title', 'Guardado'); const saved = await snapshot(context.request, project.id); expect(saved.levels[0].walls[0].left.color).toBe('#ffffff'); expect(saved.levels[0].walls.some(wall => wall.id === project.levels[0].walls[3].id)).toBe(false);
 });
 
@@ -157,7 +157,7 @@ test('additive plan tools create junctions, rooms and holes, with atomic undo', 
   await plan.getByRole('button', { name: 'Terminar', exact: true }).click(); await expect.poll(async () => (await snapshot(context.request, project.id)).levels[0].surfaces[0].holes.length).toBe(1);
   await plan.getByRole('button', { name: 'Cancelar', exact: true }).click(); const holePoint = await planPoint(page, .3, 1.2); await page.mouse.click(holePoint.x, holePoint.y);
   await expect(plan.getByRole('button', { name: 'Eliminar hueco', exact: true })).toBeVisible(); await expect(plan.locator('.plan-canvas > svg circle[stroke-width="1"]')).toHaveCount(4);
-  const floorPoint = await planPoint(page, 1.5, 1); await page.mouse.click(floorPoint.x, floorPoint.y); await expect(page.getByLabel('Superficie a pintar', { exact: true })).toHaveValue('floor');
+  const floorPoint = await planPoint(page, 1.5, 1); await page.mouse.click(floorPoint.x, floorPoint.y); await openMaterials(page); await expect(page.locator('.surface-level.active').getByRole('button', { name: 'Piso', exact: true })).toHaveAttribute('aria-pressed', 'true');
 });
 
 test('pointer selection paints the exact nested floor region and preserves the surrounding slab', async ({ page, context }) => {
@@ -175,13 +175,13 @@ test('pointer selection paints the exact nested floor region and preserves the s
 
 test('a lower ceiling edits the upper slab underside independently of its floor and roof', async ({ page, context }) => {
   await account(context.request); const project = await design(context.request, 2); await openEditor(page, project);
-  await page.getByRole('button', { name: 'Materiales', exact: true }).click(); await page.getByLabel('Superficie a pintar', { exact: true }).selectOption('ceiling');
+  await page.getByRole('button', { name: 'Materiales', exact: true }).click(); await page.locator('.surface-level.active').getByRole('button', { name: 'Techo', exact: true }).click();
   await color(page, '#123456'); await page.getByLabel('Material de la superficie', { exact: true }).selectOption('wood');
   await expect.poll(async () => (await snapshot(context.request, project.id)).levels[1].surfaces[0].undersideFinish).toEqual({ color: '#123456', material: 'wood' });
   let saved = await snapshot(context.request, project.id); expect(saved.levels[0].surfaces[0].finish.color).toBe('#ffffff'); expect(saved.levels[1].surfaces[0].finish.color).toBe('#ffffff'); expect(saved.roofs[0].undersideFinish.color).toBe('#ffffff');
-  await page.getByLabel('Nivel activo', { exact: true }).selectOption(project.levels[1].id); await expect(page.getByLabel('Nivel activo', { exact: true })).toHaveValue(project.levels[1].id); await openMaterials(page); await page.getByLabel('Superficie a pintar', { exact: true }).selectOption('floor'); await color(page, '#fedcba');
+  await page.getByLabel('Nivel activo', { exact: true }).selectOption(project.levels[1].id); await expect(page.getByLabel('Nivel activo', { exact: true })).toHaveValue(project.levels[1].id); await openMaterials(page); await page.locator('.surface-level.active').getByRole('button', { name: 'Piso', exact: true }).click(); await color(page, '#fedcba');
   await expect.poll(async () => (await snapshot(context.request, project.id)).levels[1].surfaces[0].finish.color).toBe('#fedcba');
-  await page.getByLabel('Nivel activo', { exact: true }).selectOption(project.levels[0].id); await expect(page.getByLabel('Nivel activo', { exact: true })).toHaveValue(project.levels[0].id); await openMaterials(page); await page.getByLabel('Superficie a pintar', { exact: true }).selectOption('ceiling');
+  await page.getByLabel('Nivel activo', { exact: true }).selectOption(project.levels[0].id); await expect(page.getByLabel('Nivel activo', { exact: true })).toHaveValue(project.levels[0].id); await openMaterials(page); await page.locator('.surface-level.active').getByRole('button', { name: 'Techo', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Color', exact: true })).toContainText('#123456'); await expect(page.getByLabel('Material de la superficie', { exact: true })).toHaveValue('wood');
   saved = await snapshot(context.request, project.id); expect(saved.levels[1].surfaces[0].undersideFinish).toEqual({ color: '#123456', material: 'wood' });
 });

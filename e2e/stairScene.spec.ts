@@ -44,20 +44,32 @@ async function open(page: Page, project: ProjectDocument, setup = false, english
 
 async function interaction(canvas: Locator): Promise<Interaction> { return JSON.parse((await canvas.getAttribute('data-scene-interaction'))!); }
 async function screen(canvas: Locator, point: ScreenPoint) { const box = (await canvas.boundingBox())!; return { x: box.x + point.x, y: box.y + point.y }; }
+async function settledInteraction(canvas: Locator) {
+  // Cancellation and inspector resizing must render before their projected geometry is read.
+  await canvas.hover();
+  await canvas.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await expect.poll(() => canvas.evaluate(element => {
+    const rect = element.getBoundingClientRect(), host = element.parentElement!;
+    const state = JSON.parse(element.getAttribute('data-scene-interaction') ?? 'null') as Interaction | null;
+    return state?.dragging === false && Math.abs(rect.width - host.clientWidth) < 1 && Math.abs(rect.height - host.clientHeight) < 1;
+  })).toBe(true);
+  return interaction(canvas);
+}
 async function selectStair(page: Page, canvas: Locator, project: ProjectDocument, touch = false) {
-  const point = (await interaction(canvas)).stairs.find(stair => stair.id === project.stairs[0].id)!.point;
+  const point = (await settledInteraction(canvas)).stairs.find(stair => stair.id === project.stairs[0].id)!.point;
   const position = await screen(canvas, point);
   if (touch) await page.touchscreen.tap(position.x, position.y); else await page.mouse.click(position.x, position.y);
   await expect.poll(async () => (await interaction(canvas)).selection).toEqual({ kind: 'stair', id: project.stairs[0].id });
   await expect(page.getByRole('button', { name: /^(Mover elemento|Move item)$/, exact: true })).toBeVisible();
 }
 async function handle(canvas: Locator, axis: string) {
+  await settledInteraction(canvas);
   await expect.poll(async () => (await interaction(canvas)).handles.some(item => item.axis === axis && item.points.length > 0)).toBe(true);
   const points = (await interaction(canvas)).handles.find(item => item.axis === axis)!.points;
   return { point: await screen(canvas, points[0]), points };
 }
 async function meshGrab(canvas: Locator, id: string) {
-  const state = await interaction(canvas), handles = state.handles.flatMap(handle => handle.points), stair = state.stairs.find(stair => stair.id === id)!;
+  const state = await settledInteraction(canvas), handles = state.handles.flatMap(handle => handle.points), stair = state.stairs.find(stair => stair.id === id)!;
   const distance = (point: ScreenPoint) => Math.min(...handles.map(handle => Math.hypot(point.x - handle.x, point.y - handle.y)));
   const point = [...stair.points].sort((a, b) => distance(b) - distance(a))[0];
   return { point: await screen(canvas, point), index: stair.points.indexOf(point) };

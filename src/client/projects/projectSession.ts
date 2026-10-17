@@ -3,7 +3,7 @@ import { accountRequest, AccountRequestError, isNetworkError } from '../api/acco
 import { bootstrapOfflineMode, offlineForced, subscribeOfflineMode } from '../offline/offlineMode';
 import { hydrateOfflineProject, offlineProjectKey, pendingSketches, readOfflineProject, SoloProject, validateOfflineProject, type OfflineProjectRecord, type SoloStatus } from '../offline/offlineProject';
 import { persistOfflineProject } from '../offline/repository';
-import { soloNetworkDependencies } from '../offline/sync';
+import { soloNetworkDependencies, waitForOfflineSync } from '../offline/sync';
 import { readOffline, setOfflineAccess, writeOffline } from '../offline/offlineStorage';
 import { LiveProject, type ProjectRole, type ProjectSnapshot } from './liveProject';
 
@@ -167,6 +167,8 @@ export class ProjectSession {
         if (!cached.authorized) throw new Error('El acceso a este diseño cambió. Descarga tu copia o abre una copia independiente.');
         await this.openSolo(cached, true); return;
       }
+      await waitForOfflineSync();
+      if (!this.active) return;
       const local = await readOfflineProject(this.id).catch(() => null);
       if (!this.active) return;
       if (local?.deleted) throw new Error('Este diseño está pendiente de eliminación.');

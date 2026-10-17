@@ -2,7 +2,7 @@ import * as THREE from 'three/webgpu';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { RectAreaLightTexturesLib } from 'three/addons/lights/RectAreaLightTexturesLib.js';
 import { bounds, polygonArea } from '../../domain/project/model';
-import { createCeilingMaterial, createCeilingFinishMaterial, createSlabMaterials, createWallFinishMaterial, createFloorMaterial, createRoofInteriorMaterial, createFurnitureMaterial, createWoodMaterial, setMaterialTextureResolution } from './materials';
+import { createCeilingMaterial, createCeilingFinishMaterial, createSlabMaterials, createWallFinishMaterial, createFloorMaterial, createRoofInteriorMaterial, createFurnitureMaterial, setMaterialTextureResolution } from './materials';
 import { daylightFactor, daylightOpeningArea } from './navigation';
 import type { Room, Selection } from '../../domain/project/types';
 import { ceilingFinishTargets, levelOutline, projectLevel, projectToRoom, type ProjectDocument } from '../../domain/project/projectDocument';
@@ -15,6 +15,7 @@ import { updateEnvironment, kelvinColor } from './sceneEnvironment';
 import { updateFurniturePlacement, addStoredFurniture, reconcileRoomItems } from './sceneItems';
 import { buildLevelRoom } from './sceneLevel';
 import { selectionKey } from './sceneSelection';
+import { repaintLightBody, repaintOpening } from './sceneItemAppearance';
 
 export function updateRoom(runtime: SceneRuntime, room: Room) {
   runtime.needsRender = true;
@@ -45,10 +46,10 @@ export function updateRoom(runtime: SceneRuntime, room: Room) {
   if (!runtime.levelMeta && previous && (previous.floorColor !== room.floorColor || previous.floorFinish !== room.floorFinish)) { const floor = runtime.objects.get('floor') as THREE.Mesh; (floor.material as THREE.Material).dispose(); floor.material = createFloorMaterial(room); }
   if (!runtime.levelMeta && previous?.ceilingColor !== room.ceilingColor && runtime.ceiling) { (runtime.ceiling.material as THREE.Material).dispose(); runtime.ceiling.material = createCeilingMaterial(room.ceilingColor, room.renderQuality); }
   for (const opening of room.openings) {
+    if (textureChanged || previous?.openings.find(value => value.id === opening.id)?.color !== opening.color) repaintOpening(runtime.content, opening, room.renderQuality);
     if (opening.type !== 'door' || opening.doorStyle === 'frame') continue;
     runtime.content.traverse(object => { if (object.userData.doorId === opening.id) object.rotation.y = opening.open === false ? 0 : object.userData.openAngle; });
   }
-  if (textureChanged) runtime.content.traverse(object => { if (object instanceof THREE.Mesh && object.userData.doorLeaf) { const previous = object.material as THREE.MeshStandardMaterial; previous.dispose(); object.material = createWoodMaterial('#' + previous.color.getHexString(), room.renderQuality); } });
   let moved = itemsChanged;
   for (const item of room.furniture) {
     let group = runtime.objects.get(`furniture:${item.id}`);
@@ -69,6 +70,7 @@ export function updateRoom(runtime: SceneRuntime, room: Room) {
   }
   for (const item of room.lights) {
     const group = runtime.objects.get(`light:${item.id}`);
+    if (group && (textureChanged || previous?.lights.find(value => value.id === item.id)?.color !== item.color)) repaintLightBody(group, item, room.renderQuality);
     group?.traverse(object => { if (object instanceof THREE.PointLight) { object.color.copy(kelvinColor(item.temperature)); object.intensity = item.enabled ? item.lumens / (4 * Math.PI) : 0; object.castShadow = runtime.graphics.shadows > 0 && item.enabled && (runtime.shadowLightIds ? runtime.shadowLightIds.has(item.id) : room.lights.filter(light => light.enabled).findIndex(light => light.id === item.id) < (runtime.graphics.geometry === 'low' ? 1 : 3)); object.shadow.mapSize.set(Math.min(runtime.graphics.shadows || 512, 1024), Math.min(runtime.graphics.shadows || 512, 1024)); object.shadow.needsUpdate = true; } if (object instanceof THREE.HemisphereLight) { object.color.copy(kelvinColor(item.temperature)); object.groundColor.copy(object.color); object.intensity = item.enabled ? Math.min(.25, item.lumens / (polygonArea(room.vertices) * 180)) : 0; } if (object.userData.bulb && object instanceof THREE.Mesh) { const material = object.material as THREE.MeshStandardMaterial; material.color.copy(item.enabled ? kelvinColor(item.temperature) : new THREE.Color('#c0bcae')); material.emissive.copy(kelvinColor(item.temperature)); material.emissiveIntensity = item.enabled ? 3 : 0; } });
     if (group && (group.position.x !== item.x || group.position.y !== item.y || group.position.z !== item.z)) {
       group.position.set(item.x, item.y, item.z);

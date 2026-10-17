@@ -13,6 +13,8 @@ export type Opening = {
   width: number;
   height: number;
   sill: number;
+  /** Absent retains the original frame/leaf finish; glass is never tinted. */
+  color?: string;
 };
 export type RoomLight = {
   id: string;
@@ -23,6 +25,8 @@ export type RoomLight = {
   lumens: number;
   temperature: number;
   enabled: boolean;
+  /** Opaque fixture paint, independent from emitted light temperature. */
+  color?: string;
 };
 export type BedSize = 'single' | 'double' | 'queen' | 'king';
 export type FurnitureMaterial = 'wood' | 'plastic' | 'metal';

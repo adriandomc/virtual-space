@@ -280,5 +280,20 @@
   "{{name}}; flechas para mover, RePág y AvPág para altura": "{{name}}; arrow keys to move, Page Up and Page Down for height",
   "¿Usar la versión del servidor? Descarga antes los cambios que quieras conservar.": "Use the server version? Download any changes you want to keep first.",
   "¿Usar la versión del servidor? Los cambios pendientes de este dispositivo se descartarán. Puedes descargarlos antes.": "Use the server version? Pending changes on this device will be discarded. You can download them first.",
-  "Ángulo": "Angle"
+  "Ángulo": "Angle",
+  "Superficies por nivel": "Surfaces by level",
+  "Toca una pared en la planta": "Tap a wall in the plan",
+  "Superficies de {{level}}": "Surfaces on {{level}}",
+  "{{wall}} · {{level}} · {{side}}": "{{wall}} · {{level}} · {{side}}",
+  "Lista de paredes": "Wall list",
+  "Herramientas de pintura": "Paint tools",
+  "Seleccionar": "Select",
+  "Cubeta de pintura": "Paint bucket",
+  "Color principal": "Foreground color",
+  "Toca un elemento para pintarlo": "Tap an element to paint it",
+  "Colores del diseño": "Design colors",
+  "Plano editable; toca superficies y elementos para pintar": "Editable plan; tap surfaces and elements to paint",
+  "Toca una superficie o un elemento para pintarlo. Usa dos dedos para desplazar y acercar.": "Tap a surface or element to paint it. Use two fingers to pan and zoom.",
+  "El elemento ya no existe.": "The element no longer exists.",
+  "Visor 3D. Toca un elemento para pintarlo. Enter o Espacio pinta el elemento seleccionado. Arrastra para girar; usa dos dedos para desplazar y acercar.": "3D viewer. Tap an element to paint it. Enter or Space paints the selected element. Drag to orbit; use two fingers to pan and zoom."
 }

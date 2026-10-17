@@ -35,6 +35,9 @@ import LightingInspector from './LightingInspector';
 import RecoveryPanel from './RecoveryPanel';
 import SpaceInspector from './SpaceInspector';
 import SurfaceInspector from './SurfaceInspector';
+import PaintToolbar from '../painting/PaintToolbar';
+import usePaintTool from '../painting/usePaintTool';
+import type { PaintTarget } from '../../domain/project/projectPaint';
 import useProject from './useProject';
 
 const ModelWorkshop = lazy(() => import('../workshop/ModelWorkshop'));
@@ -67,6 +70,7 @@ export default function App({ onHome = () => window.location.assign(DESIGNS_PATH
   const [compact, setCompact] = useState(() => window.matchMedia('(max-width: 1000px)').matches);
   const [resetKey, setResetKey] = useState(0);
   const [notice, setNotice] = useState('');
+  const paintTool = usePaintTool({ project, onChange: construction.apply, disabled: readOnly || mode === 'walk' || !ready, notify: setNotice });
   const [shareOpen, setShareOpen] = useState(false);
   const [sharing, setSharingBusy] = useState(false);
   const [shareError, setShareError] = useState('');
@@ -164,6 +168,23 @@ export default function App({ onHome = () => window.location.assign(DESIGNS_PATH
     catch (cause) { setNotice(cause instanceof Error ? cause.message : 'No se pudo guardar el borrador.'); }
     finally { levelNavigation.current = false; setChangingLevel(false); }
   }
+  async function selectSurface(levelId: string, next: Selection) {
+    if (levelId === activeLevelId) { select(next); return; }
+    if (levelNavigation.current) return;
+    levelNavigation.current = true; setChangingLevel(true);
+    try { await confirmLocalSaved(); setActiveLevelId(levelId); setSelection(next); setTab('color'); }
+    catch (cause) { setNotice(cause instanceof Error ? cause.message : 'No se pudo guardar el borrador.'); }
+    finally { levelNavigation.current = false; setChangingLevel(false); }
+  }
+  function paintElement(target: PaintTarget) {
+    if (!paintTool.paint(target)) return false;
+    if (target.levelId === activeLevelId) {
+      if (target.wallSide) setWallSide(target.wallSide);
+      setSelection(target.selection);
+      setTab(['wall', 'floor', 'ceiling'].includes(target.selection.kind) ? 'color' : target.selection.kind === 'roof' ? 'space' : 'item');
+    }
+    return true;
+  }
   function toggleElements() {
     if (optionsRef.current) optionsRef.current.open = false;
     if (compact) setMobilePanel(panel => panel === 'scene' ? null : 'scene');
@@ -193,7 +214,7 @@ export default function App({ onHome = () => window.location.assign(DESIGNS_PATH
   function paint(hex: string) {
     if (readOnly || !selection || !['wall', 'floor', 'ceiling'].includes(selection.kind) || selection.kind === 'wall' && selectedWall < 0 || selection.kind === 'floor' && selection.id && !selectedSurface || selection.kind === 'ceiling' && !selectedCeiling) return false;
     try {
-      return setProject(paintedProject(hex));
+      return construction.apply(paintedProject(hex));
     } catch (cause) { setNotice(cause instanceof Error ? cause.message : 'No se pudo aplicar el color.'); return false; }
   }
   function finishSurface(material: FloorFinish) {
@@ -301,7 +322,7 @@ export default function App({ onHome = () => window.location.assign(DESIGNS_PATH
 
   const itemPanel = selection?.kind === 'stair' ? <ConstructionPanel project={project} activeLevelId={activeLevelId} onChange={construction.apply} onPreview={previewProject} selection={selection} onSelect={next => select(next)} readOnly={readOnly || drawing} only="stairs" /> : <ItemInspector room={room} selection={selection} surfaceName={surfaceName} project={project} roomId={roomId} usedColors={usedColors} readOnly={readOnly} showAdd={showAdd} editMaterial={() => setTab('color')} editPlan={() => changeView('plan')} updateFurniture={updateFurniture} updateOpening={updateOpening} updateLight={updateLight} previewFurniture={previewFurniture} setNotice={setNotice} removeSelected={removeSelected} openWorkshop={openWorkshop} />;
 
-  const colorPanel = <SurfaceInspector room={room} project={project} selection={selection} target={surfaceTarget} wallSide={wallSide} setWallSide={setWallSide} usedColors={usedColors} readOnly={readOnly} select={next => select(next)} paint={paint} paintedProject={paintedProject} previewProject={previewProject} finishSurface={finishSurface} applyAllWalls={() => setProject(validateProjectDocument({ ...project, levels: project.levels.map(value => value.id === activeLevelId ? { ...value, walls: value.walls.map(wall => ({ ...wall, [wallSide]: { ...wall[wallSide], color: selectedColor } })) } : value) }))} finishFloor={material => setProject(validateProjectDocument({ ...project, levels: project.levels.map(value => value.id === activeLevelId ? { ...value, surfaces: value.surfaces.map(item => item.id === selectedSurface?.id ? { ...item, finish: { ...item.finish, material: material } } : item) } : value) }))} />;
+  const colorPanel = <SurfaceInspector room={room} project={project} selection={selection} target={surfaceTarget} wallSide={wallSide} setWallSide={setWallSide} usedColors={usedColors} readOnly={readOnly} select={next => select(next)} onSelectSurface={(levelId, next) => void selectSurface(levelId, next)} paint={paint} paintedProject={paintedProject} previewProject={previewProject} finishSurface={finishSurface} applyAllWalls={() => setProject(validateProjectDocument({ ...project, levels: project.levels.map(value => value.id === activeLevelId ? { ...value, walls: value.walls.map(wall => ({ ...wall, [wallSide]: { ...wall[wallSide], color: selectedColor } })) } : value) }))} finishFloor={material => setProject(validateProjectDocument({ ...project, levels: project.levels.map(value => value.id === activeLevelId ? { ...value, surfaces: value.surfaces.map(item => item.id === selectedSurface?.id ? { ...item, finish: { ...item.finish, material: material } } : item) } : value) }))} />;
 
   const spacePanel = <SpaceInspector room={room} project={project} activeLevelId={activeLevelId} selection={selection} readOnly={readOnly} drawing={drawing} onProjectChange={construction.apply} previewProject={previewProject} onSelect={next => select(next)} change={change} editPlan={() => changeView('plan')} />;
 
@@ -332,13 +353,14 @@ export default function App({ onHome = () => window.location.assign(DESIGNS_PATH
       <div className="viewport-top editor-toolbar">
         <div className="view-tabs" role="tablist" aria-label={t("Vista")}><button role="tab" aria-selected={mode !== 'plan'} className={mode !== 'plan' ? 'active' : ''} onClick={() => void changeView('orbit')}><Box size={18} />3D</button><button role="tab" aria-selected={mode === 'plan'} className={mode === 'plan' ? 'active' : ''} onClick={() => void changeView('plan')}><Grid2X2 size={18} />{t("Planta")}</button></div>
         <button className="add-toolbar-button" aria-label={t("Agregar elemento")} title={t("Agregar elemento")} disabled={readOnly} onClick={showAdd}><Plus size={18} /><span>{t("Agregar")}</span></button>
+        {mode !== 'walk' && <PaintToolbar active={paintTool.active} color={paintTool.color} colors={usedColors} disabled={readOnly || paintTool.switching} onModeChange={next => void paintTool.chooseMode(next)} onColorChange={paintTool.setColor} />}
         <button className={'walk-button ' + (mode === 'walk' ? 'active' : '')} onClick={() => void changeView(mode === 'walk' ? 'orbit' : 'walk')}><Footprints size={18} />{mode === 'walk' ? t("Salir") : t("Recorrer")}</button>
       </div>
     {(status === 'error' || status === 'conflict') && <div className="save-error" role="alert"><CircleHelp size={17} /><span>{t(saveError)}</span><button onClick={retry}>{t("Reintentar")}</button><button aria-label={t("Descargar cambios sin guardar")} onClick={offlineAllowed || pendingOffline ? () => void downloadPending() : exportRoom}><ArrowDownToLine size={15} /></button>{status === 'conflict' && <button onClick={() => void useServerVersion()}>{t("Usar versión guardada")}</button>}</div>}
       <div className="viewport-body">
-        {mode === 'plan' ? <div className="large-plan"><PlanEditor project={shownProject} activeLevelId={activeLevelId} onProjectChange={construction.apply} onUndo={construction.undo} onRedo={construction.redo} canUndo={construction.canUndo} canRedo={construction.canRedo} room={shownProject === project ? room : projectToRoom(shownProject, activeLevelId)} onChange={change} selection={selection} onSelect={next => select(next)} large onDrawingChange={setDrawing} sketchUrl={sketchUrl} onSketchChange={changeSketch} readOnly={readOnly} /></div> : <RoomScene project={shownProject} activeLevelId={activeLevelId} onProjectChange={construction.apply} onActiveLevelChange={setActiveLevelId} presentation={presentation} paused={!!workshop} room={shownProject === project ? room : projectToRoom(shownProject, activeLevelId)} roomId={roomId} onModelError={setNotice} mode={mode} selection={selection} onSelect={next => select(next)} onChange={change} readOnly={readOnly} transformMode={transformMode} resetKey={resetKey} />}
-        {mode !== 'plan' && <><div className="view-title"><span className="view-title-dot" />{mode === 'walk' ? t("Vista interior") : t("Perspectiva")}</div><div className="viewport-bottom"><div className="navigation-hint"><MousePointer2 size={13} />{mode === 'walk' ? t("Arrastra para mirar") : !readOnly && selection && (furniture || opening || light || selection.kind === 'stair') ? t("Arrastra el elemento o sus controles") : t("Toca para seleccionar · Arrastra para girar")}</div><button className="focus-button" aria-label={t("Restablecer vista")} onClick={() => setResetKey(value => value + 1)}><Focus size={16} /></button></div></>}
-        {selection && mode !== 'walk' && <div className="selection-dock"><span>{selectedName}</span>{(furniture || opening || light || mode === 'orbit' && selection.kind === 'stair') && !readOnly && <><button className={transformMode === 'translate' ? 'active' : ''} aria-label={t("Mover elemento")} title={t("Mover elemento")} aria-pressed={transformMode === 'translate'} onClick={() => setTransformMode('translate')}><Move size={18} /><span>{t("Mover")}</span></button>{(furniture || mode === 'orbit' && selection.kind === 'stair') && <button className={transformMode === 'rotate' ? 'active' : ''} aria-label={t("Girar elemento")} title={t("Girar elemento")} aria-pressed={transformMode === 'rotate'} onClick={() => setTransformMode('rotate')}><RotateCcw size={18} /><span>{t("Girar")}</span></button>}</>}<button className="selection-properties" aria-label={t("Propiedades del elemento")} onClick={() => showProperties(selection.kind === 'wall' || selection.kind === 'floor' || selection.kind === 'ceiling' ? 'color' : selection.kind === 'roof' ? 'space' : 'item')}><Settings2 size={19} /><span>{t("Editar")}</span></button>{(furniture || opening || light || selection.kind === 'stair') && !readOnly && <button className="desktop-only" aria-label={t("Eliminar elemento seleccionado")} onClick={removeSelected}><Trash2 size={18} /></button>}<button aria-label={t("Deseleccionar elemento")} onClick={() => select(null)}><X size={18} /></button></div>}
+        {mode === 'plan' ? <div className="large-plan"><PlanEditor paintActive={paintTool.active} paintWallSide={wallSide} onPaint={paintElement} project={shownProject} activeLevelId={activeLevelId} onProjectChange={construction.apply} onUndo={construction.undo} onRedo={construction.redo} canUndo={construction.canUndo} canRedo={construction.canRedo} room={shownProject === project ? room : projectToRoom(shownProject, activeLevelId)} onChange={change} selection={selection} onSelect={next => select(next)} large onDrawingChange={setDrawing} sketchUrl={sketchUrl} onSketchChange={changeSketch} readOnly={readOnly || paintTool.switching} /></div> : <RoomScene paintActive={paintTool.active} paintWallSide={wallSide} onPaint={paintElement} project={shownProject} activeLevelId={activeLevelId} onProjectChange={construction.apply} onActiveLevelChange={setActiveLevelId} presentation={presentation} paused={!!workshop} room={shownProject === project ? room : projectToRoom(shownProject, activeLevelId)} roomId={roomId} onModelError={setNotice} mode={mode} selection={selection} onSelect={next => select(next)} onChange={change} readOnly={readOnly || paintTool.switching} transformMode={transformMode} resetKey={resetKey} />}
+        {mode !== 'plan' && <><div className="view-title"><span className="view-title-dot" />{mode === 'walk' ? t("Vista interior") : t("Perspectiva")}</div><div className="viewport-bottom"><div className="navigation-hint"><MousePointer2 size={13} />{mode === 'walk' ? t("Arrastra para mirar") : paintTool.active ? t("Toca un elemento para pintarlo") : !readOnly && selection && (furniture || opening || light || selection.kind === 'stair') ? t("Arrastra el elemento o sus controles") : t("Toca para seleccionar · Arrastra para girar")}</div><button className="focus-button" aria-label={t("Restablecer vista")} onClick={() => setResetKey(value => value + 1)}><Focus size={16} /></button></div></>}
+        {selection && mode !== 'walk' && !paintTool.active && <div className="selection-dock"><span>{selectedName}</span>{(furniture || opening || light || mode === 'orbit' && selection.kind === 'stair') && !readOnly && <><button className={transformMode === 'translate' ? 'active' : ''} aria-label={t("Mover elemento")} title={t("Mover elemento")} aria-pressed={transformMode === 'translate'} onClick={() => setTransformMode('translate')}><Move size={18} /><span>{t("Mover")}</span></button>{(furniture || mode === 'orbit' && selection.kind === 'stair') && <button className={transformMode === 'rotate' ? 'active' : ''} aria-label={t("Girar elemento")} title={t("Girar elemento")} aria-pressed={transformMode === 'rotate'} onClick={() => setTransformMode('rotate')}><RotateCcw size={18} /><span>{t("Girar")}</span></button>}</>}<button className="selection-properties" aria-label={t("Propiedades del elemento")} onClick={() => showProperties(selection.kind === 'wall' || selection.kind === 'floor' || selection.kind === 'ceiling' ? 'color' : selection.kind === 'roof' ? 'space' : 'item')}><Settings2 size={19} /><span>{t("Editar")}</span></button>{(furniture || opening || light || selection.kind === 'stair') && !readOnly && <button className="desktop-only" aria-label={t("Eliminar elemento seleccionado")} onClick={removeSelected}><Trash2 size={18} /></button>}<button aria-label={t("Deseleccionar elemento")} onClick={() => select(null)}><X size={18} /></button></div>}
       </div>
       <div className="viewport-status"><span>{statusLabel}</span><span>{t('{{area}} m² · {{count}} paredes', { area: area.toFixed(1), count: wallCount(room) })}</span></div>
     </main>

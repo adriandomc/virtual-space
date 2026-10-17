@@ -25,6 +25,9 @@
 .setup-preview>.setup-selection-dock{left:12px;bottom:12px;transform:none;max-width:calc(100% - 24px)}
 .setup-selection-dock>button{min-width:44px;min-height:44px}
 .setup-selection-dock>span{max-width:120px}
+.setup-paint-toolbar{position:absolute;left:12px;top:12px;max-width:calc(100% - 24px);z-index:3}
+.setup-step-colors .setup-controls>.surface-navigator{margin-bottom:0}
+@media(max-width:700px){.setup-step-colors .setup-preview,.setup-step-decoration .setup-preview{min-height:280px}.setup-paint-toolbar{left:8px;top:8px;max-width:calc(100% - 16px)}}
 @media(max-width:700px){.setup-step-decoration .setup-preview{min-height:260px}.setup-preview>.setup-selection-dock{left:8px;bottom:8px;max-width:calc(100% - 16px)}.setup-selection-dock>span{max-width:100px}}
 .setup-preview .plan-toolbar button{font-size:14px;min-height:44px;padding:9px 12px}
 .setup-preview .plan-footer,.setup-preview .plan-error,.setup-preview .plan-drawing-controls p,.setup-preview .plan-drawing-controls label,.setup-preview .plan-coordinates summary{font-size:14px}

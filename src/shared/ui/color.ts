@@ -22,3 +22,14 @@ export function hsvToHex(hue: number, saturation: number, value: number): string
   const rgb = h < 1 ? [chroma, x, 0] : h < 2 ? [x, chroma, 0] : h < 3 ? [0, chroma, x] : h < 4 ? [0, x, chroma] : h < 5 ? [x, 0, chroma] : [chroma, 0, x];
   return rgbToHex(rgb.map(channel => (channel + m) * 255));
 }
+
+export function wheelHue(x: number, y: number, previous: number): number {
+  return Math.hypot(x, y) < .001 ? previous : (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+
+export function hueKey(hue: number, key: string, shift = false): number | null {
+  if (key === 'Home') return 0;
+  if (key === 'End') return 359;
+  const direction = key === 'ArrowRight' || key === 'ArrowUp' || key === 'PageUp' ? 1 : key === 'ArrowLeft' || key === 'ArrowDown' || key === 'PageDown' ? -1 : 0;
+  return direction ? (hue + direction * (shift || key.startsWith('Page') ? 10 : 1) + 360) % 360 : null;
+}

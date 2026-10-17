@@ -6,6 +6,7 @@ import { furnitureGeometrySignature } from './sceneProjection';
 import type { SceneRuntime } from './sceneRuntime';
 import { disposeContent } from './sceneResources';
 import { kelvinColor } from './sceneEnvironment';
+import { lightBodyMaterial } from './sceneItemAppearance';
 
 export function updateFurniturePlacement(runtime: SceneRuntime, room: Room) {
   runtime.invalidFurniture = invalidFurnitureIds(room);
@@ -52,11 +53,15 @@ function addRoomLight(runtime: SceneRuntime, room: Room, light: Room['lights'][n
     const hitSphere = new THREE.Mesh(new THREE.SphereGeometry(0.15, 10, 8), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }));
     lightGroup.add(hitSphere);
     const cordLength = Math.max(0.02, room.height - light.y - 0.1);
-    const fixture = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, cordLength, 6), new THREE.MeshStandardMaterial({ color: '#343931', roughness: 0.8 }));
+    const bodyMaterial = lightBodyMaterial(light, room.renderQuality);
+    const fixture = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, cordLength, 6), bodyMaterial);
     fixture.position.set(0, 0.1 + cordLength / 2, 0);
     fixture.userData.cord = true;
     fixture.userData.length = cordLength;
+    fixture.userData.lightBody = true;
     lightGroup.add(fixture);
+    const socket = new THREE.Mesh(new THREE.CylinderGeometry(.035, .045, .065, 12), bodyMaterial);
+    socket.position.y = .09; socket.userData.lightBody = true; lightGroup.add(socket);
     const point = new THREE.PointLight(temperature, light.enabled ? light.lumens / (4 * Math.PI) : 0, 0, 2);
     point.position.copy(bulb.position);
     point.castShadow = light.enabled && runtime.graphics.shadows > 0 && (runtime.shadowLightIds ? runtime.shadowLightIds.has(light.id) : room.lights.filter(value => value.enabled).indexOf(light) < (runtime.graphics.geometry === 'low' ? 1 : 3));

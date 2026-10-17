@@ -9,7 +9,9 @@ export function updatePresentation(runtime: SceneRuntime, props: RoomSceneProps,
   const presentation = props.presentation ?? { walls: 'cut', roofs: false, levels: 'active' };
   const visible = runtime.project ? presentedLevelIds(runtime.project, runtime.activeLevelId ?? runtime.project.activeLevelId, props.mode === 'walk' ? 'all' : presentation.levels) : null;
   const views = runtime.levelViews ? [...runtime.levelViews.values()].map(view => view.runtime) : [runtime];
-  const coveringSlabs = new Set(runtime.project ? ceilingFinishTargets(runtime.project, runtime.activeLevelId ?? runtime.project.activeLevelId).filter(target => target.kind === 'surface' && target.side === 'undersideFinish').map(target => target.id) : []);
+  const ceilingTargets = runtime.project ? ceilingFinishTargets(runtime.project, runtime.activeLevelId ?? runtime.project.activeLevelId) : [];
+  const coveringSlabs = new Set(ceilingTargets.filter(target => target.kind === 'surface' && target.side === 'undersideFinish').map(target => target.id));
+  const selectedRoofCeiling = props.selection?.kind === 'ceiling' ? ceilingTargets.find(target => target.kind === 'roof' && (!props.selection?.id || props.selection.id === target.id))?.id : undefined;
   const position = new THREE.Vector3();
   for (const view of views) {
     const room = view.builtRoom!;
@@ -37,7 +39,7 @@ export function updatePresentation(runtime: SceneRuntime, props: RoomSceneProps,
   for (const object of runtime.projectExtras?.children ?? []) {
     const belongs = visible === null || (object.userData.levelIds as string[]).some(id => visible.has(id));
     const isRoof = object.userData.selection?.kind === 'roof';
-    const show = belongs && (!isRoof || props.mode === 'walk' || presentation.roofs || props.selection?.kind === 'roof' && props.selection.id === object.userData.selection.id);
+    const show = belongs && (!isRoof || props.mode === 'walk' || presentation.roofs || selectedRoofCeiling === object.userData.selection?.id || props.selection?.kind === 'roof' && props.selection.id === object.userData.selection.id);
     object.traverse(child => child.layers.set(show ? 0 : 1));
   }
   for (const object of runtime.projectLighting?.children ?? runtime.content.children) if (object.userData.exterior) object.layers.set(props.mode === 'walk' ? 1 : 0);

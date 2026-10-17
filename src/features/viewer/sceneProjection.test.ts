@@ -99,6 +99,15 @@ test('moving, resizing and changing a doorway invalidates physical navigation', 
   for (const patch of [{ offset: 2 }, { width: 1.1 }, { height: 1.8 }, { wallId: level.walls[1].id }, { doorStyle: 'left' }, { open: true }]) { const changed = structuredClone(project); Object.assign(changed.levels[0].openings[0], patch); assert.notEqual(projectNavigationSignature(changed), signature); }
 });
 
+test('painting an opening or lamp never invalidates level geometry or navigation', () => {
+  const project = createDefaultProject(), level = project.levels[0];
+  level.openings.push({ id: 'window', levelId: level.id, wallId: level.walls[0].id, type: 'window', offset: 1, width: 1, height: 1, sill: 1 });
+  const before = projectToRoom(project), signature = projectNavigationSignature(project);
+  level.openings[0].color = '#123456'; level.lights[0].color = '#abcdef';
+  assert.equal(levelGeometrySignature(before), levelGeometrySignature(projectToRoom(project)));
+  assert.equal(projectNavigationSignature(project), signature);
+});
+
 test('changing detailed residency never invalidates architecture, while local shadows share one project budget', () => {
   const project = fixture(12);
   for (const level of project.levels) {

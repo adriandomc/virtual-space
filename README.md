@@ -15,7 +15,7 @@ For illustrated end-user instructions, open **Information → Help and getting s
 - Optional setup steps: Sketch → Roof → Colors → Furniture. Skipping preserves existing work.
 - Selectable objects with drag handles, numeric properties and placement warnings.
 - Beds, wardrobes, vanities and nightstands; doors, windows and configurable lights.
-- Wall and ceiling colors, hexadecimal color input, floor finishes and furniture materials.
+- A paint bucket for surfaces and scene objects in 3D or Plan, a shared color wheel with HEX/RGB input and design swatches, and floor plans grouped by level for locating surfaces. Materials and translucent/emissive parts are preserved when painting frames or lamp bodies.
 - Standard, Realistic and Hyperrealistic rendering, with WebGPU and WebGL support.
 - Full/cutaway/hidden walls, roof visibility and active/lower/all-level views.
 - Device-local automatic/manual graphics preferences for shadows, textures, render scale, geometry detail, distance, contact shadows and frame-rate limits.
@@ -74,7 +74,7 @@ npm run test:e2e:webkit
 
 `npm test` runs the TypeScript unit and integration tests. `build` checks TypeScript and builds both applications. Playwright rebuilds the app, starts an isolated production server at `127.0.0.1:5188` and uses a temporary database; it does not use development or production data. Set `PLAYWRIGHT_CHANNEL=chrome` to use an installed Chrome channel. Failure screenshots and traces are written to `test-results/`.
 
-CI uses Node.js 24 on Linux, runs unit/integration tests, the production build, Chromium/WebKit flows and a Docker build. Real-GPU checks remain separate from software-rendered CI.
+CI uses Node.js 24 on Linux, runs unit/integration tests, the production build, Chromium/WebKit flows and a Docker build. Each run retains isolated browser screenshots and failure traces as `browser-test-results` artifacts for seven days. Real-GPU checks remain separate from software-rendered CI.
 
 The [architecture and resource review](docs/architecture-review.md) records the verified changes, measurements and remaining operating limits.
 
