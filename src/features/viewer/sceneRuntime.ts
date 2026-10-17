@@ -32,8 +32,10 @@ export type RoomSceneProps = {
   onReady?: (backend: string) => void;
   animateView?: boolean;
   paintActive?: boolean;
+  sampleActive?: boolean;
   paintWallSide?: 'left' | 'right';
-  onPaint?: (target: PaintTarget) => boolean | void;
+  onPaint?: (target: PaintTarget, sampledColor?: string) => boolean | void;
+  onCancelPaint?: () => void;
 };
 
 type WallView = { group: THREE.Group; midpoint: THREE.Vector3; inward: THREE.Vector3; material: THREE.MeshStandardNodeMaterial; opposite: THREE.MeshStandardNodeMaterial; finishKey: string; index: number };

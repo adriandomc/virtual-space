@@ -22,7 +22,7 @@ import { StairTransformPreview } from './sceneStairEditing';
 import { updateSceneInteraction } from './sceneInteraction';
 import { fitOrbitCamera, resetCamera, finishViewTransition, startViewTransition } from './sceneCamera';
 import { updatePresentation } from './scenePresentation';
-import { scenePaintTarget, selectedScenePaintTarget, visiblePaintHit } from './scenePaintPicking';
+import { scenePaintTarget, selectedScenePaintTarget, visiblePaintHit, sampleScenePaintColor, sampleSceneObjectColor } from './scenePaintPicking';
 
 const KEY_DIRECTIONS: Record<string, string> = { KeyW: 'forward', ArrowUp: 'forward', KeyS: 'back', ArrowDown: 'back', KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right', KeyQ: 'lookLeft', KeyE: 'lookRight', KeyR: 'lookUp', KeyF: 'lookDown' };
 
@@ -72,8 +72,8 @@ export default function RoomScene(props: RoomSceneProps) {
     if (props.paused) { runtime.current?.cancelStairEdit?.(); runtime.current?.cancelPaint?.(); directions.current.clear(); joystick.current = { x: 0, z: 0 }; setStick({ x: 0, z: 0 }); }
   }, [props.paused]);
   useEffect(() => {
-    runtime.current?.renderer.domElement.setAttribute('aria-label', t(current.current.paintActive && !current.current.readOnly && current.current.mode === 'orbit' ? 'Visor 3D. Toca un elemento para pintarlo. Enter o Espacio pinta el elemento seleccionado. Arrastra para girar; usa dos dedos para desplazar y acercar.' : 'Visor 3D del cuarto. Arrastra para mirar. En recorrido: WASD o flechas para moverte, Q y E para girar, R y F para mirar arriba y abajo. Toca puertas y focos, o mira hacia ellos y pulsa Enter o espacio.'));
-  }, [locale, ready, props.paintActive, props.readOnly, props.mode]);
+    runtime.current?.renderer.domElement.setAttribute('aria-label', t(current.current.paintActive && !current.current.readOnly && current.current.mode === 'orbit' ? current.current.sampleActive ? 'Visor 3D. Toca un elemento para tomar su color. Enter o Espacio toma el color del elemento seleccionado. Arrastra para girar; usa dos dedos para desplazar y acercar.' : 'Visor 3D. Toca un elemento para pintarlo. Enter o Espacio pinta el elemento seleccionado. Arrastra para girar; usa dos dedos para desplazar y acercar.' : 'Visor 3D del cuarto. Arrastra para mirar. En recorrido: WASD o flechas para moverte, Q y E para girar, R y F para mirar arriba y abajo. Toca puertas y focos, o mira hacia ellos y pulsa Enter o espacio.'));
+  }, [locale, ready, props.paintActive, props.sampleActive, props.readOnly, props.mode]);
 
   const changeWalkTarget = (target: Selection | null) => {
     if (target === null && walkTargetRef.current === null || sameSelection(target, walkTargetRef.current)) return;
@@ -126,7 +126,7 @@ export default function RoomScene(props: RoomSceneProps) {
         const camera = new THREE.PerspectiveCamera(43, 1, 0.025, 250);
         const canvas = renderer.domElement;
         canvas.tabIndex = 0;
-        canvas.setAttribute('aria-label', t(current.current.paintActive && !current.current.readOnly && current.current.mode === 'orbit' ? 'Visor 3D. Toca un elemento para pintarlo. Enter o Espacio pinta el elemento seleccionado. Arrastra para girar; usa dos dedos para desplazar y acercar.' : 'Visor 3D del cuarto. Arrastra para mirar. En recorrido: WASD o flechas para moverte, Q y E para girar, R y F para mirar arriba y abajo. Toca puertas y focos, o mira hacia ellos y pulsa Enter o espacio.'));
+        canvas.setAttribute('aria-label', t(current.current.paintActive && !current.current.readOnly && current.current.mode === 'orbit' ? current.current.sampleActive ? 'Visor 3D. Toca un elemento para tomar su color. Enter o Espacio toma el color del elemento seleccionado. Arrastra para girar; usa dos dedos para desplazar y acercar.' : 'Visor 3D. Toca un elemento para pintarlo. Enter o Espacio pinta el elemento seleccionado. Arrastra para girar; usa dos dedos para desplazar y acercar.' : 'Visor 3D del cuarto. Arrastra para mirar. En recorrido: WASD o flechas para moverte, Q y E para girar, R y F para mirar arriba y abajo. Toca puertas y focos, o mira hacia ellos y pulsa Enter o espacio.'));
         mount.append(canvas);
         const transform = new TransformControls(camera, canvas);
         transform.enabled = false;
@@ -227,9 +227,9 @@ export default function RoomScene(props: RoomSceneProps) {
         };
         const pick = (event: PointerEvent): Selection | null => { setRay(event); return pickRay(true); };
         const canPaint = () => current.current.paintActive && current.current.onPaint && current.current.project && !current.current.readOnly && !current.current.publicView && !current.current.paused && !active.overlayPaused && current.current.mode === 'orbit' && !active.viewTransition;
-        const paint = (target: ReturnType<typeof selectedScenePaintTarget>) => {
+        const paint = (target: ReturnType<typeof selectedScenePaintTarget>, sampledColor?: string) => {
           if (!target || !canPaint()) return;
-          try { if (current.current.onPaint?.(target) !== false) setNotice(''); }
+          try { if (current.current.onPaint?.(target, sampledColor) !== false) setNotice(''); }
           catch (cause) { setNotice(cause instanceof Error ? cause.message : 'No se pudo aplicar el cambio.'); }
         };
         const pickPaint = (event: PointerEvent) => {
@@ -241,7 +241,7 @@ export default function RoomScene(props: RoomSceneProps) {
           for (const hit of ray.intersectObject(active.content, true)) {
             if (!visiblePaintHit(hit, camera)) continue;
             const target = scenePaintTarget(project, active.activeLevelId ?? project.activeLevelId, hit, current.current.paintWallSide);
-            if (target) return target;
+            if (target) return { target, color: current.current.sampleActive ? sampleScenePaintColor(project, target, hit) : undefined };
           }
           return null;
         };
@@ -350,8 +350,8 @@ export default function RoomScene(props: RoomSceneProps) {
           pointers.add(event.pointerId);
           if (pointer && pointers.size > 1) { pointer.multi = true; active.painting = false; }
           if (pointers.size > 1) return;
-          pointer = { id: event.pointerId, x: event.clientX, y: event.clientY, startX: event.clientX, startY: event.clientY, handled: false, multi: false, paint: !!canPaint() && event.button === 0, paintProject: current.current.project };
-          if (pointer.paint) { pointer.paintTarget = pickPaint(event); active.painting = true; return; }
+          pointer = { id: event.pointerId, x: event.clientX, y: event.clientY, startX: event.clientX, startY: event.clientY, handled: false, multi: false, paint: !!canPaint() && event.isPrimary && event.button === 0, paintProject: current.current.project };
+          if (pointer.paint) { pointer.paintTarget = pickPaint(event)?.target ?? null; active.painting = true; return; }
           if (current.current.mode === 'walk') canvas.setPointerCapture(event.pointerId);
           if (!transform.enabled || current.current.readOnly || current.current.mode !== 'orbit' || event.button !== 0) return;
           transform.pointerHover(normalized(event) as unknown as PointerEvent);
@@ -395,17 +395,17 @@ export default function RoomScene(props: RoomSceneProps) {
           if (active.viewTransition) { pointer = null; event.preventDefault(); event.stopImmediatePropagation(); return; }
           if (!pointer || pointer.id !== event.pointerId) return;
           if (pointer.paint) {
-            const eligible = !pointer.handled && !pointer.multi && pointer.paintProject === current.current.project && Math.hypot(event.clientX - pointer.startX, event.clientY - pointer.startY) < 8;
+            const eligible = event.isPrimary && !pointer.handled && !pointer.multi && pointer.paintProject === current.current.project && Math.hypot(event.clientX - pointer.startX, event.clientY - pointer.startY) < 8;
             const originTarget = pointer.paintTarget;
             active.painting = false; pointer = null;
             if (eligible && canPaint()) {
               const target = pickPaint(event);
-              if (JSON.stringify(target) === JSON.stringify(originTarget)) paint(target);
+              if (JSON.stringify(target?.target) === JSON.stringify(originTarget)) paint(target?.target ?? null, target?.color);
             }
             return;
           }
           if (active.directDragging) { event.preventDefault(); event.stopImmediatePropagation(); finishDrag(); if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId); }
-          else if (!pointer.handled && !pointer.multi && Math.hypot(event.clientX - pointer.startX, event.clientY - pointer.startY) < 5) {
+          else if (event.isPrimary && !pointer.handled && !pointer.multi && Math.hypot(event.clientX - pointer.startX, event.clientY - pointer.startY) < 5) {
             const selected = pick(event);
             if (current.current.mode === 'walk') interact(selected);
             else current.current.onSelect(selected);
@@ -427,12 +427,13 @@ export default function RoomScene(props: RoomSceneProps) {
         const keyDown = (event: KeyboardEvent) => {
           if (event.target !== canvas) return;
           if (active.viewTransition) { if (KEY_DIRECTIONS[event.code] || event.code === 'Enter' || event.code === 'Space') event.preventDefault(); return; }
-          if (event.code === 'Escape') { cancel(); current.current.onSelect(null); return; }
+          if (event.code === 'Escape') { cancel(); if (current.current.sampleActive) current.current.onCancelPaint?.(); else current.current.onSelect(null); return; }
           if (current.current.paintActive && current.current.mode === 'orbit') {
             if (KEY_DIRECTIONS[event.code] || event.code === 'Enter' || event.code === 'Space') event.preventDefault();
             if (!event.repeat && !pointer && canPaint() && (event.code === 'Enter' || event.code === 'Space')) {
               const state = current.current;
-              paint(selectedScenePaintTarget(state.project!, state.activeLevelId ?? state.project!.activeLevelId, state.selection, state.paintWallSide));
+              const target = selectedScenePaintTarget(state.project!, state.activeLevelId ?? state.project!.activeLevelId, state.selection, state.paintWallSide);
+              paint(target, state.sampleActive && target ? sampleSceneObjectColor(state.project!, target, state.selection?.kind === 'furniture' ? active.objects.get(`furniture:${state.selection.id}`) : undefined) : undefined);
             }
             return;
           }
@@ -688,7 +689,7 @@ export default function RoomScene(props: RoomSceneProps) {
     }
     updateSelection(active, current.current);
     setNotice('');
-  }, [props.selection, props.readOnly, props.transformMode, props.mode, props.paintActive, props.paintWallSide, ready]);
+  }, [props.selection, props.readOnly, props.transformMode, props.mode, props.paintActive, props.sampleActive, props.paintWallSide, ready]);
 
   const moveJoystick = (event: React.PointerEvent<HTMLButtonElement>) => {
     if (runtime.current?.viewTransition) return;

@@ -221,7 +221,8 @@ for (const locale of ['es', 'en'] as const) test(`stair catalog explains require
   await page.locator('.unified-item-list .tree-item').first().click();
   await expect(page.locator('.room-scene canvas')).toBeVisible();
   await expect.poll(async () => JSON.parse(await page.locator('.room-scene canvas').getAttribute('data-scene-metrics') ?? '{}').drawCalls ?? 0).toBeGreaterThan(0);
-  await page.screenshot({ path: info.outputPath('editor-' + locale + '.jpg'), type: 'jpeg', quality: 90 });
+  const editorImage = await page.screenshot({ path: info.outputPath('editor-' + locale + '.jpg'), type: 'jpeg', quality: 90 });
+  if (info.project.name === 'chromium') await writeFile(new URL('../public/help/' + locale + '/editor.jpg', import.meta.url), editorImage);
   const labels = locale === 'es' ? { add: 'Agregar elemento', stairs: 'Escaleras', catalog: 'Catálogo de escaleras', note: 'Añade un nivel superior para conectar una escalera.', back: 'Elementos' } : { add: 'Add item', stairs: 'Staircases', catalog: 'Stair catalog', note: 'Add an upper level to connect a staircase.', back: 'Items' };
   await page.locator('.viewport-top').getByRole('button', { name: labels.add, exact: true }).click();
   await page.locator('dialog.add-dialog').getByRole('button', { name: labels.stairs, exact: true }).click();

@@ -3,7 +3,7 @@ import test from 'node:test';
 import * as THREE from 'three/webgpu';
 import { createDefaultProject, whiteFinish } from '../../domain/project/projectDocument';
 import { addLevel, addStair } from '../../domain/project/projectOperations';
-import { scenePaintTarget, selectedScenePaintTarget, visiblePaintHit } from './scenePaintPicking';
+import { sampleSceneObjectColor, sampleScenePaintColor, scenePaintTarget, selectedScenePaintTarget, visiblePaintHit } from './scenePaintPicking';
 import { slabGeometry } from './sceneProjection';
 
 function rayHit(object: THREE.Object3D, start: THREE.Vector3, direction: THREE.Vector3) {
@@ -81,4 +81,64 @@ test('hidden ancestor geometry and shadow-only meshes never become paint targets
   assert.equal(visiblePaintHit(hit, camera), true); group.visible = false; assert.equal(visiblePaintHit(hit, camera), false);
   group.visible = true; object.layers.set(1); assert.equal(visiblePaintHit(hit, camera), false);
   object.geometry.dispose(); (object.material as THREE.Material).dispose();
+});
+
+test('scene eyedropper samples document tints rather than rendered shadows, textures or unrelated hardware', () => {
+  const project = createDefaultProject(), level = project.levels[0], object = mesh();
+  level.walls[0].left.color = '#112233'; level.walls[0].right.color = '#445566';
+  level.furniture.push({ id: 'bed', levelId: level.id, type: 'bed', bedSize: 'single', color: '#778899', material: 'wood', x: 0, z: 0, width: 1, depth: 2, height: 1, rotation: 0 });
+  const hit = rayHit(object, new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, -1));
+  assert.equal(sampleScenePaintColor(project, { levelId: level.id, selection: { kind: 'wall', id: level.walls[0].id, index: 0 }, wallSide: 'right' }, hit), '#445566');
+  assert.equal(sampleScenePaintColor(project, { levelId: level.id, selection: { kind: 'furniture', id: 'bed' } }, hit), '#778899');
+  assert.throws(() => sampleScenePaintColor(project, { levelId: level.id, selection: { kind: 'furniture', id: 'deleted' } }, hit));
+  object.geometry.dispose(); (object.material as THREE.Material).dispose();
+});
+
+test('original custom model sampling reads the actual material face in sRGB without mutating it', () => {
+  const project = createDefaultProject(), level = project.levels[0];
+  level.furniture.push({ id: 'custom', levelId: level.id, type: 'custom', assetId: '00000000-0000-4000-8000-000000000000', name: 'Original', color: null, material: null, x: 0, z: 0, width: 1, depth: 1, height: 1, rotation: 0 });
+  const materials = [new THREE.MeshStandardMaterial({ color: '#123456' }), new THREE.MeshStandardMaterial({ color: '#aabbcc' })];
+  const geometry = new THREE.BoxGeometry(); geometry.groups.forEach(group => { group.materialIndex = group.start === 30 ? 1 : 0; });
+  const object = new THREE.Mesh(geometry, materials), target = { levelId: level.id, selection: { kind: 'furniture' as const, id: 'custom' } };
+  const front = rayHit(object, new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, -1));
+  const back = rayHit(object, new THREE.Vector3(0, 0, -1), new THREE.Vector3(0, 0, 1));
+  const originalColors = materials.map(material => material.color.toArray());
+  assert.equal(sampleScenePaintColor(project, target, front), '#123456');
+  assert.equal(sampleScenePaintColor(project, target, back), '#aabbcc');
+  assert.deepEqual(materials.map(material => material.color.toArray()), originalColors);
+  level.furniture[0].color = '#ABCDEF'; assert.equal(sampleScenePaintColor(project, target, back), '#abcdef');
+  object.geometry.dispose(); materials.forEach(material => material.dispose());
+});
+
+test('custom part colors use the nearest authored node before the whole-model tint and ignore unregistered keys', () => {
+  const project = createDefaultProject(), level = project.levels[0];
+  level.furniture.push({ id: 'custom', levelId: level.id, type: 'custom', assetId: '00000000-0000-4000-8000-000000000000', name: 'Custom', color: '#223344', material: 'wood', parts: { '0': { color: '#445566' }, '1': { color: '#AABBCC' } }, x: 0, z: 0, width: 1, depth: 1, height: 1, rotation: 0 });
+  const owner = new THREE.Group(), parent = new THREE.Group(), object = mesh(); owner.add(parent); parent.add(object);
+  owner.userData.selection = { kind: 'furniture', id: 'custom' }; parent.userData.modelNodeKey = '0'; object.userData.modelNodeKey = '1';
+  const hit = rayHit(owner, new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, -1)), target = { levelId: level.id, selection: { kind: 'furniture' as const, id: 'custom' } };
+  assert.equal(sampleScenePaintColor(project, target, hit), '#aabbcc');
+  object.userData.modelNodeKey = 'deleted'; assert.equal(sampleScenePaintColor(project, target, hit), '#445566');
+  parent.userData.modelNodeKey = 'deleted'; assert.equal(sampleScenePaintColor(project, target, hit), '#223344');
+  level.furniture[0].color = null;
+  assert.equal(sampleScenePaintColor(project, target, { ...hit, object: owner }), '#cccccc');
+  object.geometry.dispose(); (object.material as THREE.Material).dispose();
+});
+
+test('keyboard sampling uses the first visible GLB part and its first material, ignoring hidden parts and placement overlays', () => {
+  const project = createDefaultProject(), level = project.levels[0];
+  level.furniture.push({ id: 'custom', levelId: level.id, type: 'custom', assetId: '00000000-0000-4000-8000-000000000000', name: 'Original', color: null, material: null, parts: { '0': { color: '#AABBCC' } }, x: 0, z: 0, width: 1, depth: 1, height: 1, rotation: 0 });
+  const target = { levelId: level.id, selection: { kind: 'furniture' as const, id: 'custom' } }, ancestor = new THREE.Group(), owner = new THREE.Group(), hidden = new THREE.Group();
+  const overlay = mesh(), hiddenPart = mesh(), first = new THREE.Mesh(new THREE.BoxGeometry(), [new THREE.MeshStandardMaterial({ color: '#123456' }), new THREE.MeshStandardMaterial({ color: '#654321' })]);
+  ancestor.add(owner); owner.add(overlay, hidden, first); hidden.add(hiddenPart); hidden.visible = false; owner.userData.placementOverlay = overlay;
+  assert.equal(sampleSceneObjectColor(project, target, owner), '#123456');
+  first.userData.modelNodeKey = '0'; assert.equal(sampleSceneObjectColor(project, target, owner), '#aabbcc');
+  first.userData.modelNodeKey = 'missing'; level.furniture[0].color = '#445566';
+  assert.equal(sampleSceneObjectColor(project, target, owner), '#445566');
+  level.furniture[0].color = null; first.visible = false;
+  assert.equal(sampleSceneObjectColor(project, target, owner), '#cccccc');
+  first.visible = true; ancestor.visible = false;
+  assert.equal(sampleSceneObjectColor(project, target, owner), '#cccccc');
+  assert.equal(sampleSceneObjectColor(project, target), '#cccccc');
+  assert.throws(() => sampleSceneObjectColor(project, { ...target, levelId: 'deleted' }, owner));
+  for (const object of [overlay, hiddenPart, first]) { object.geometry.dispose(); (Array.isArray(object.material) ? object.material : [object.material]).forEach(material => material.dispose()); }
 });

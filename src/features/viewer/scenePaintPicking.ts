@@ -1,6 +1,6 @@
-import type * as THREE from 'three/webgpu';
+import * as THREE from 'three/webgpu';
 import { ceilingFinishTargets, type ProjectDocument } from '../../domain/project/projectDocument';
-import { paintTargetColor, type PaintTarget } from '../../domain/project/projectPaint';
+import { paintTargetColor, samplePaintTargetColor, type PaintTarget } from '../../domain/project/projectPaint';
 import type { Selection } from '../../domain/project/types';
 
 export function selectedScenePaintTarget(project: ProjectDocument, activeLevelId: string, selection: Selection | null, wallSide: 'left' | 'right' = 'left'): PaintTarget | null {
@@ -51,4 +51,34 @@ export function visiblePaintHit(hit: THREE.Intersection, camera: THREE.Camera): 
   let object: THREE.Object3D | null = hit.object;
   while (object) { if (!object.visible) return false; object = object.parent; }
   return true;
+}
+
+/** Original GLB parts may have different base colors without a whole-object tint. */
+export function sampleScenePaintColor(project: ProjectDocument, target: PaintTarget, hit: Pick<THREE.Intersection, 'object' | 'face'>): string {
+  const color = samplePaintTargetColor(project, target);
+  if (target.selection.kind !== 'furniture') return color;
+  const item = project.levels.find(level => level.id === target.levelId)!.furniture.find(item => item.id === target.selection.id)!;
+  if (item.type !== 'custom') return color;
+  let object: THREE.Object3D | null = hit.object;
+  while (object) {
+    const nodeKey = object.userData.modelNodeKey as string | undefined;
+    const partColor = nodeKey === undefined ? undefined : item.parts?.[nodeKey]?.color;
+    if (partColor) return partColor.toLowerCase();
+    if (object.userData.selection?.kind === 'furniture') break;
+    object = object.parent;
+  }
+  if (item.color || !(hit.object instanceof THREE.Mesh)) return color;
+  const material = Array.isArray(hit.object.material) ? hit.object.material[hit.face?.materialIndex ?? 0] : hit.object.material;
+  const baseColor = (material as THREE.MeshStandardMaterial | undefined)?.color;
+  return baseColor?.isColor ? samplePaintTargetColor(project, target, '#' + baseColor.getHexString(THREE.SRGBColorSpace)) : color;
+}
+
+/** Keyboard selection has no face hit; use its first visible authored part. */
+export function sampleSceneObjectColor(project: ProjectDocument, target: PaintTarget, root?: THREE.Object3D): string {
+  const color = samplePaintTargetColor(project, target);
+  if (!root) return color;
+  for (let ancestor: THREE.Object3D | null = root; ancestor; ancestor = ancestor.parent) if (!ancestor.visible) return color;
+  let first: THREE.Mesh | undefined;
+  root.traverseVisible(object => { if (!first && object instanceof THREE.Mesh && object !== root.userData.placementOverlay) first = object; });
+  return first ? sampleScenePaintColor(project, target, { object: first }) : color;
 }
