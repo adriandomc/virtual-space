@@ -137,7 +137,9 @@ test('deleting the selected wall remotely cannot commit its unfinished color int
   await page.getByRole('button', { name: 'Color', exact: true }).click(); await page.getByLabel('Código hexadecimal', { exact: true }).fill('#abcdef');
   const old = await (await context.request.get('/api/rooms/' + project.id)).json(), next = deleteWall(old.project, project.levels[0].id, project.levels[0].walls[3].id);
   expect((await context.request.put('/api/rooms/' + project.id, { headers, data: { project: next, revision: old.revision, operationId: randomUUID() } })).status()).toBe(200);
-  await expect(walls).toHaveCount(3); await page.keyboard.press('Tab');
+  await expect(page.getByRole('dialog', { name: 'Color', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Cuarto', exact: true })).toHaveAttribute('aria-expanded', 'true');
+  await openMaterials(page); await expect(walls).toHaveCount(3); await page.keyboard.press('Tab');
   await expect(page.locator('.saved-status')).toHaveAttribute('title', 'Guardado'); const saved = await snapshot(context.request, project.id); expect(saved.levels[0].walls[0].left.color).toBe('#ffffff'); expect(saved.levels[0].walls.some(wall => wall.id === project.levels[0].walls[3].id)).toBe(false);
 });
 
