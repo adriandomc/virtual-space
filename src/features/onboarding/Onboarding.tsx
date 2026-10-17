@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
-import { Archive, ArrowLeft, ArrowRight, BedDouble, Box, Check, DoorClosed, DoorOpen, Grid2X2, Lightbulb, LoaderCircle, Plus, Table2, Trash2, WifiOff, X } from 'lucide-react';
+import { Archive, ArrowUpRight, ArrowLeft, ArrowRight, BedDouble, Box, Check, DoorClosed, DoorOpen, Grid2X2, Lightbulb, LoaderCircle, Plus, Table2, Trash2, WifiOff, X } from 'lucide-react';
 import Brand from '../../shared/ui/Brand';
 import { t, useLocale } from '../../shared/i18n/i18n';
 import InformationMenu from '../../shared/ui/InformationMenu';
@@ -7,6 +7,8 @@ import OfflineSettings from '../settings/OfflineSettings';
 import PlanEditor from '../construction/PlanEditor';
 import LevelSelector from '../construction/LevelSelector';
 import ConstructionPanel from '../construction/ConstructionPanel';
+import StairCatalog from '../construction/StairCatalog';
+import { deleteStair } from '../../domain/project/projectOperations';
 import useConstructionHistory from '../construction/useConstructionHistory';
 import { ceilingFinishTargets, updateCeilingFinish, projectLevel, projectToRoom, validateProjectDocument, type ProjectDocument } from '../../domain/project/projectDocument';
 import { beginAppActivity, confirmLocalSaved } from '../../client/pwa/appOffline';
@@ -68,12 +70,12 @@ export default function Onboarding({ project, activeLevelId, onLevelChange, onPr
   const [selection, setSelection] = useState<Selection | null>(null);
   const [surface, setSurface] = useState('all'), [bedSize, setBedSize] = useState<BedSize>('double');
   const [floorId, setFloorId] = useState<string | null>(null), [wallSide, setWallSide] = useState<'left' | 'right'>('left');
-  const [addType, setAddType] = useState<FurnitureItem['type'] | Opening['type'] | 'light'>('bed');
+  const [addType, setAddType] = useState<FurnitureItem['type'] | Opening['type'] | 'light' | 'stairs'>('bed');
   const [addingOpening, setAddingOpening] = useState<Opening['type'] | null>(null);
   const [busy, setBusy] = useState(false), [drawing, setDrawing] = useState(false), [planKey] = useState(0);
   const levelNavigation = useRef(false);
   const [localError, setLocalError] = useState(''), [notice, setNotice] = useState('');
-  const [catalog, setCatalog] = useState<FurnitureCategory | 'custom' | null>(null);
+  const [catalog, setCatalog] = useState<FurnitureCategory | 'custom' | 'stairs' | null>(null);
   const [workshop, setWorkshop] = useState<FurnitureItem | 'new' | null>(null);
   const catalogDialog = useRef<HTMLDialogElement>(null);
   const activeRoomId = roomId ?? new URL(window.location.href).searchParams.get('room') ?? '';
@@ -92,6 +94,17 @@ export default function Onboarding({ project, activeLevelId, onLevelChange, onPr
   const usedColors = projectColors(project);
   const sceneSelection: Selection | null = step === 2 ? surface === 'floor' ? { kind: 'floor', id: floor?.id } : surface === 'ceiling' ? { kind: 'ceiling', id: ceiling?.id } : surface === 'all' || !wall ? null : { kind: 'wall', index: level.walls.indexOf(wall), id: wall.id } : selection;
 
+
+  useEffect(() => {
+    if (!selection) return;
+    if (selection.kind === 'wall') {
+      const index = selection.id ? level.walls.findIndex(wall => wall.id === selection.id) : selection.index;
+      if (!level.walls[index]) setSelection(null);
+      else if (index !== selection.index || !selection.id) setSelection({ kind: 'wall', id: level.walls[index].id, index });
+      return;
+    }
+    if (selection.kind === 'stair' && !project.stairs.some(stair => stair.id === selection.id && (stair.fromLevelId === activeLevelId || stair.toLevelId === activeLevelId)) || selection.kind === 'roof' && !project.roofs.some(roof => roof.id === selection.id && roof.levelId === activeLevelId) || selection.kind === 'furniture' && !furniture || selection.kind === 'opening' && !opening || selection.kind === 'light' && !light || selection.kind === 'floor' && selection.id && !floors.some(floor => floor.id === selection.id) || selection.kind === 'ceiling' && selection.id && !ceilings.some(ceiling => ceiling.id === selection.id)) setSelection(null);
+  }, [selection, project, activeLevelId, level, furniture, opening, light, floors, ceilings]);
 
   useEffect(() => {
     if (!['all', 'floor', 'ceiling'].includes(surface) && !level.walls.some(item => item.id === surface)) setSurface('all');
@@ -164,11 +177,11 @@ export default function Onboarding({ project, activeLevelId, onLevelChange, onPr
     if (step === 2 && next) {
       if (next.kind === 'wall') setSurface(next.id ?? level.walls[next.index]?.id ?? 'all');
       else if (next.kind === 'floor' || next.kind === 'ceiling') { setSurface(next.kind); if (next.kind === 'floor') setFloorId(next.id ?? null); else setCeilingId(next.id ?? null); }
-    } else if (step === 3) setSelection(next && ['furniture', 'opening', 'light'].includes(next.kind) ? next : null);
+    } else if (step === 3) setSelection(next && ['furniture', 'opening', 'light', 'stair'].includes(next.kind) ? next : null);
   }
   function add() {
     if (disabled) return;
-    if (addType === 'wardrobe' || addType === 'vanity' || addType === 'nightstand' || addType === 'custom') { setCatalog(addType); return; }
+    if (addType === 'wardrobe' || addType === 'vanity' || addType === 'nightstand' || addType === 'custom' || addType === 'stairs') { setCatalog(addType); return; }
     if (addType === 'door' || addType === 'window') { setAddingOpening(addType); setSelection(null); return; }
     try {
       const next = addType === 'light' ? addLight(room, t('Luz {{number}}', { number: room.lights.length + 1 })) : addFurniture(room, addType, bedSize);
@@ -203,6 +216,12 @@ export default function Onboarding({ project, activeLevelId, onLevelChange, onPr
     return opening ? change(() => fitRoom({ ...room, openings: room.openings.map(item => item.id === opening.id ? { ...item, ...patch, ...('doorStyle' in patch ? { open: patch.doorStyle === 'frame' ? undefined : item.open ?? false } : {}) } : item).map(item => { if (item.doorStyle === 'frame') { const { open: _open, ...frame } = item; return frame; } return item; }) })) : false;
   }
   function remove(item: Selection) {
+    if (item.kind === 'stair') {
+      if (disabled) return;
+      try { if (construction.apply(deleteStair(project, item.id))) setSelection(null); }
+      catch (cause) { setLocalError(cause instanceof Error ? cause.message : 'No se pudo aplicar la construcción.'); }
+      return;
+    }
     const next = item.kind === 'furniture' ? { ...room, furniture: room.furniture.filter(value => value.id !== item.id) } : item.kind === 'opening' ? { ...room, openings: room.openings.filter(value => value.id !== item.id) } : item.kind === 'light' ? { ...room, lights: room.lights.filter(value => value.id !== item.id) } : room;
     if (change(next) && JSON.stringify(selection) === JSON.stringify(item)) setSelection(null);
   }
@@ -213,6 +232,7 @@ export default function Onboarding({ project, activeLevelId, onLevelChange, onPr
     ...room.openings.map((item, index) => ({ selection: { kind: 'opening', id: item.id } as Selection, name: (item.type === 'door' ? t("Puerta") : t("Ventana")) + ' ' + (index + 1), Icon: item.type === 'door' ? DoorOpen : Grid2X2 })),
     ...room.furniture.map(item => ({ selection: { kind: 'furniture', id: item.id } as Selection, name: furnitureName(item), Icon: ICONS[item.type] })),
     ...room.lights.map(item => ({ selection: { kind: 'light', id: item.id } as Selection, name: item.name, Icon: Lightbulb })),
+    ...project.stairs.filter(stair => stair.fromLevelId === activeLevelId || stair.toLevelId === activeLevelId).map((stair, index) => ({ selection: { kind: 'stair', id: stair.id } as Selection, name: t('Escalera {{number}}', { number: index + 1 }), Icon: ArrowUpRight })),
   ];
 
   return <div className="setup-page">
@@ -223,8 +243,9 @@ export default function Onboarding({ project, activeLevelId, onLevelChange, onPr
       <fieldset className="setup-controls" disabled={disabled}>
         <h2>{t(current.label)}</h2>
         {step === 0 && <><label className="setup-field"><span>{t("Nombre del diseño")}</span><NameInput label={t("Nombre del diseño")} value={room.name} readOnly={disabled} onChange={name => change({ ...room, name })} notify={setNotice} /></label><div className="setup-dimensions"><Dimension label={t("Ancho")} value={size.width} min={0.5} max={50} onChange={width => change(() => resizeRoom(room, width, size.depth))} /><Dimension label={t("Largo")} value={size.depth} min={0.5} max={50} onChange={depth => change(() => resizeRoom(room, size.width, depth))} /><Dimension label={t("Altura")} value={room.height} min={1.8} max={8} onChange={height => change(() => fitRoom({ ...room, height }))} /></div>{drawing && <p className="setup-hint">{t("Cierra o cancela la planta para continuar.")}</p>}</>}
-        {step === 0 && <ConstructionPanel project={project} activeLevelId={activeLevelId} onChange={construction.apply} onPreview={previewProject} selection={selection} onSelect={setSelection} readOnly={disabled} only="stairs" />}
-        {step === 1 && <ConstructionPanel project={project} activeLevelId={activeLevelId} onChange={construction.apply} onPreview={previewProject} selection={selection} onSelect={setSelection} readOnly={disabled} only="roof" />}
+        {step === 0 && <button type="button" className="setup-secondary" disabled={disabled || drawing} onClick={() => setCatalog('stairs')}><ArrowUpRight size={18} />{t('Escaleras')}</button>}
+        {(step === 0 || step === 3) && selection?.kind === 'stair' && <ConstructionPanel project={project} activeLevelId={activeLevelId} onChange={construction.apply} onPreview={previewProject} selection={selection} onSelect={setSelection} readOnly={disabled || drawing} only="stairs" />}
+        {step === 1 && <ConstructionPanel project={project} activeLevelId={activeLevelId} onChange={construction.apply} onPreview={previewProject} selection={selection} onSelect={setSelection} readOnly={disabled} only="roof" defaultOpen />}
         {step === 2 && <>
           <label className="setup-field"><span>{t("Superficie")}</span><select aria-label={t("Superficie a pintar")} value={surface} onChange={event => setSurface(event.target.value)}><option value="all">{t("Todas las paredes")}</option>{level.walls.map((item, index) => <option key={item.id} value={item.id}>{t('Pared {{number}}', { number: index + 1 })}</option>)}<option value="ceiling">{t("Techo")}</option><option value="floor">{t("Piso")}</option></select></label>
           {!['floor', 'ceiling'].includes(surface) && <label className="setup-field"><span>{t('Cara de la pared')}</span><select aria-label={t('Cara de la pared')} value={wallSide} onChange={event => setWallSide(event.target.value as 'left' | 'right')}><option value="left">{t('Lado izquierdo')}</option><option value="right">{t('Lado derecho')}</option></select></label>}
@@ -238,9 +259,9 @@ export default function Onboarding({ project, activeLevelId, onLevelChange, onPr
         </>}
         {step === 3 && <>
           {addingOpening ? <OpeningForm key={addingOpening} room={room} type={addingOpening} onCreate={createOpening} onCancel={() => setAddingOpening(null)} /> : <>
-            <label className="setup-field"><span>{t("Elemento")}</span><select aria-label={t("Elemento a agregar")} value={addType} onChange={event => setAddType(event.target.value as typeof addType)}><option value="door">{t("Puerta")}</option><option value="window">{t("Ventana")}</option><option value="bed">{t("Cama")}</option><option value="wardrobe">{t("Roperos")}</option><option value="vanity">{t("Tocadores")}</option><option value="nightstand">{t("Burós")}</option><option value="custom">{t("Modelos propios")}</option><option value="light">{t("Foco")}</option></select></label>
+            <label className="setup-field"><span>{t("Elemento")}</span><select aria-label={t("Elemento a agregar")} value={addType} onChange={event => setAddType(event.target.value as typeof addType)}><option value="door">{t("Puerta")}</option><option value="window">{t("Ventana")}</option><option value="bed">{t("Cama")}</option><option value="wardrobe">{t("Roperos")}</option><option value="vanity">{t("Tocadores")}</option><option value="nightstand">{t("Burós")}</option><option value="custom">{t("Modelos propios")}</option><option value="light">{t("Foco")}</option><option value="stairs">{t("Escaleras")}</option></select></label>
             {addType === 'bed' && <label className="setup-field"><span>{t("Tamaño de cama")}</span><select aria-label={t("Tamaño de cama")} value={bedSize} onChange={event => setBedSize(event.target.value as BedSize)}>{Object.entries(BED_SIZES).map(([value, item]) => <option key={value} value={value}>{t(item.label)}</option>)}</select></label>}
-            <button type="button" className="setup-secondary" onClick={add}><Plus size={18} />{addType === 'wardrobe' || addType === 'vanity' || addType === 'nightstand' || addType === 'custom' ? t("Ver modelos") : t("Agregar")}</button>{addType === 'custom' && <button type="button" className="setup-secondary" disabled={!activeRoomId} onClick={() => openWorkshop()}><Plus size={18} />{t("Crear elemento")}</button>}
+            <button type="button" className="setup-secondary" onClick={add}><Plus size={18} />{addType === 'wardrobe' || addType === 'vanity' || addType === 'nightstand' || addType === 'custom' || addType === 'stairs' ? t("Ver modelos") : t("Agregar")}</button>{addType === 'custom' && <button type="button" className="setup-secondary" disabled={!activeRoomId} onClick={() => openWorkshop()}><Plus size={18} />{t("Crear elemento")}</button>}
           </>}
           {items.length > 0 && <ul className="setup-item-list">{items.map(item => <li key={JSON.stringify(item.selection)}><button type="button" className={JSON.stringify(selection) === JSON.stringify(item.selection) ? 'active' : ''} onClick={() => { setSelection(item.selection); setAddingOpening(null); }} aria-pressed={JSON.stringify(selection) === JSON.stringify(item.selection)}><item.Icon size={19} /><span>{item.name}</span></button><button type="button" aria-label={t('Quitar {{name}}', { name: item.name })} onClick={() => remove(item.selection)}><Trash2 size={19} /></button></li>)}</ul>}
           {furniture && <div className="setup-furniture-style" key={furniture.id}><h3>{furnitureName(furniture)}</h3><label className="setup-field"><span>{t("Material")}</span><select aria-label={t("Material del mueble")} value={furniture.material ?? 'original'} onChange={event => styleFurniture({ material: event.target.value === 'original' ? null : event.target.value as FurnitureMaterial })}>{furniture.type === 'custom' && <option value="original">{t("Del modelo")}</option>}<option value="wood">{t("Madera")}</option><option value="plastic">{t("Plástico")}</option><option value="metal">{t("Metal")}</option></select></label>{furniture.type === 'custom' && <label className="setup-light-toggle"><input type="checkbox" checked={furniture.color === null} onChange={event => styleFurniture({ color: event.target.checked ? null : '#ffffff' })} />{t("Colores originales")}</label>}{(furniture.type !== 'custom' || furniture.color !== null) && <ColorPicker label={t("Color del mueble")} value={furniture.color ?? FURNITURE_COLORS[furniture.type]} onChange={value => styleFurniture({ color: value })} onPreview={previewFurniture} revision={project} colors={usedColors} disabled={disabled} />}<button type="button" className="setup-secondary" disabled={disabled || !activeRoomId} onClick={() => openWorkshop(furniture)}>{t("Editar modelo")}</button></div>}
@@ -251,7 +272,7 @@ export default function Onboarding({ project, activeLevelId, onLevelChange, onPr
       <section className="setup-preview" aria-label={step === 0 ? t("Croquis del diseño") : t("Vista previa del diseño")}>{step === 0 ? <PlanEditor key={planKey} project={shownProject} activeLevelId={activeLevelId} onProjectChange={construction.apply} onUndo={construction.undo} onRedo={construction.redo} canUndo={construction.canUndo} canRedo={construction.canRedo} room={shownProject === project ? room : projectToRoom(shownProject, activeLevelId)} onChange={change} selection={selection} onSelect={setSelection} sketchUrl={sketchUrl} onSketchChange={sketch} onDrawingChange={setDrawing} hideSurfaceControls readOnly={disabled} /> : <><Suspense fallback={<div className="setup-preview-loading" role="status"><LoaderCircle size={25} className="setup-spinner" /><span>{t("Cargando vista…")}</span></div>}><RoomScene project={shownProject} activeLevelId={activeLevelId} onProjectChange={onProjectChange} presentation={{ walls: 'cut', roofs: step === 1, levels: 'active' }} paused={!!workshop} room={shownProject === project ? room : projectToRoom(shownProject, activeLevelId)} roomId={activeRoomId} mode="orbit" selection={sceneSelection} onSelect={selectScene} onChange={change} readOnly={disabled || step !== 3} transformMode="translate" resetKey={step} /></Suspense><span className="setup-preview-label">{t("Vista previa")}</span></>}</section>
     </main>
     <footer className="setup-footer"><div className="setup-feedback" aria-live="polite">{(localError || error) ? <div className="setup-error" role="alert"><span>{t(localError || error)}</span>{(status === 'error' || status === 'conflict') && <button type="button" onClick={onRetry}>{t("Reintentar")}</button>}{(pendingOffline || status === 'conflict') && onDownload && <button type="button" onClick={() => void onDownload().catch(cause => setLocalError(cause.message))}>{t("Descargar copia")}</button>}{status === 'conflict' && onDiscard && <button type="button" onClick={() => { if (window.confirm(t("¿Usar la versión del servidor? Descarga antes los cambios que quieras conservar."))) void onDiscard().catch(cause => setLocalError(cause.message)); }}>{t("Usar versión guardada")}</button>}</div> : <><span className="setup-save-state">{status === 'saving' || status === 'syncing' || busy ? <><LoaderCircle size={17} className="setup-spinner" />{t("Guardando…")}</> : status === 'saved' ? <><Check size={17} />{t("Guardado")}</> : status === 'offline' ? <><WifiOff size={17} />{pendingOffline ? t("Guardado en este dispositivo") : t("Sin conexión")}</> : null}</span>{notice && <span>{t(notice)}</span>}</>}</div><div className="setup-actions"><button type="button" className="setup-secondary setup-back" aria-label={t("Atrás")} disabled={disabled || step === 0 || drawing} onClick={() => { change({ ...room, setupStep: (step - 1) as 0 | 1 | 2 }); setLocalError(''); setNotice(''); setSelection(null); }}><ArrowLeft size={18} /><span>{t("Atrás")}</span></button><div><button type="button" className="setup-skip" disabled={disabled || drawing} onClick={() => void skip()}>{t("Omitir")}</button><button type="button" className="setup-primary" disabled={disabled || drawing || status === 'error' || status === 'conflict'} onClick={advance}>{step === 3 ? t("Abrir editor") : t("Continuar")}<ArrowRight size={18} /></button></div></div></footer>
-    <dialog ref={catalogDialog} className="add-dialog setup-catalog-dialog" aria-labelledby="setup-catalog-title" onCancel={() => setCatalog(null)} onClose={() => setCatalog(null)} onClick={event => { if (event.target === event.currentTarget) setCatalog(null); }}><header className="setup-catalog-header"><h2 id="setup-catalog-title">{catalog === 'custom' ? t("Modelos propios") : t("Muebles")}</h2><button type="button" className="icon-button" aria-label={t("Cerrar catálogo")} onClick={() => setCatalog(null)}><X size={21} /></button></header>{catalog === 'custom' ? <Suspense fallback={<p role="status">{t("Cargando modelos…")}</p>}><ModelLibrary roomId={activeRoomId} canManage={canManage} disabled={disabled || !activeRoomId} onSelect={addModel} onCreate={() => openWorkshop()} /></Suspense> : catalog && <FurnitureCatalog category={catalog} onSelect={addPreset} />}{localError && <p className="account-error" role="alert">{t(localError)}</p>}</dialog>
+    <dialog ref={catalogDialog} className="add-dialog setup-catalog-dialog" aria-labelledby="setup-catalog-title" onCancel={() => setCatalog(null)} onClose={() => setCatalog(null)} onClick={event => { if (event.target === event.currentTarget) setCatalog(null); }}><header className="setup-catalog-header"><h2 id="setup-catalog-title">{catalog === 'custom' ? t("Modelos propios") : catalog === 'stairs' ? t("Escaleras") : t("Muebles")}</h2><button type="button" className="icon-button" aria-label={t("Cerrar catálogo")} onClick={() => setCatalog(null)}><X size={21} /></button></header>{catalog === 'stairs' ? <StairCatalog project={project} activeLevelId={activeLevelId} onChange={construction.apply} readOnly={disabled || drawing} onSelect={next => { setSelection(next); setCatalog(null); }} /> : catalog === 'custom' ? <Suspense fallback={<p role="status">{t("Cargando modelos…")}</p>}><ModelLibrary roomId={activeRoomId} canManage={canManage} disabled={disabled || !activeRoomId} onSelect={addModel} onCreate={() => openWorkshop()} /></Suspense> : catalog && <FurnitureCatalog category={catalog} onSelect={addPreset} />}{localError && <p className="account-error" role="alert">{t(localError)}</p>}</dialog>
     {workshop && <Suspense fallback={<div className="setup-workshop-loading" role="status"><LoaderCircle size={25} className="setup-spinner" />{t("Cargando editor…")}</div>}><ModelWorkshop item={workshop === 'new' ? undefined : workshop} roomId={activeRoomId} onSaved={addModel} onClose={() => setWorkshop(null)} /></Suspense>}
   </div>;
 }

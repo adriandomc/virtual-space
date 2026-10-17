@@ -177,6 +177,8 @@ export default function RoomScene(props: RoomSceneProps) {
             if (current.current.mode === 'orbit' && !active.viewTransition) fitOrbitCamera(active, current.current.room, true);
           }
           camera.updateProjectionMatrix();
+          // Resizing clears the canvas even when the orbit camera does not move.
+          active.needsRender = true;
         };
         observer = new ResizeObserver(resize);
         observer.observe(mount);

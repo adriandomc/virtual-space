@@ -7,7 +7,7 @@
 .catalog-categories button[aria-pressed="true"] { background: var(--panel, #fff); color: var(--text, #32402b); box-shadow: 0 1px 5px #25331c12; }
 .catalog-models { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .65rem; }
 .catalog-model { display: flex; flex-direction: column; align-items: stretch; min-width: 0; padding: .45rem .55rem .75rem; border: 1px solid var(--line, #dce1d5); border-radius: 12px; background: var(--panel, #fff); color: var(--text, #32402b); text-align: left; font: inherit; cursor: pointer; }
-.catalog-model:hover { border-color: var(--green, #536b43); background: #f8faf5; }
+.catalog-model:not(:disabled):hover { border-color: var(--green, #536b43); background: #f8faf5; }
 .catalog-model:focus-visible, .catalog-categories button:focus-visible, .catalog-back:focus-visible { outline: 3px solid var(--green, #536b43); outline-offset: 3px; }
 .furniture-thumbnail { display: block; width: 100%; height: 112px; }
 .catalog-model-name { font-size: 16px; font-weight: 600; line-height: 1.3; }
@@ -17,3 +17,5 @@
 @media (max-width: 640px) { .catalog-dialog .catalog-navigation { top: 34px; } }
 @media (orientation: landscape) and (max-height: 500px) { .furniture-thumbnail { height: 78px; } }
 @media (prefers-reduced-motion: no-preference) { .catalog-model { transition: background .15s, border-color .15s; } }
+
+.stair-catalog>p{margin:0 0 14px;font-size:15px;line-height:1.5;color:var(--muted)}

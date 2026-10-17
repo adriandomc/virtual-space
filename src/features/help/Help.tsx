@@ -76,14 +76,19 @@ const sections: HelpSection[] = [
     "id": "stairs",
     "title": "Escaleras y huecos entre niveles",
     "steps": [
-      "Necesitas dos niveles consecutivos. En Cuarto → Escaleras, elige Recta, Recta con descanso, En L, En U o En caracol y pulsa Añadir. Durante la preparación, estas opciones están en Croquis.",
-      "Selecciona la escalera para cambiar ancho, número de escalones, huella, posición y giro. La altura total se obtiene de los niveles conectados; Contrahuella muestra la altura de cada peldaño.",
+      "Necesitas dos niveles consecutivos. Selecciona el nivel inferior y abre Agregar → Escaleras. Elige Recta, Recta con descanso, En L, En U o En caracol. Durante la preparación, abre Escaleras en Croquis o elige Escaleras en Decoración.",
+      "Selecciona la escalera en la escena o en Elementos y pulsa Editar para abrir sus propiedades. Puedes cambiar ancho, número de escalones, huella, posición y giro. La altura total se obtiene de los niveles conectados; Contrahuella muestra la altura de cada peldaño.",
       "Más opciones reúne descanso, espesor del escalón y barandales. En caracol también puedes cambiar los radios interior y exterior, el ángulo de desarrollo y el sentido de giro. Acabado de escalera controla color y material.",
       "La escalera propone un hueco real en el piso superior. Debe caber en una superficie sin superponerse con otros huecos. En Planta puedes seleccionar el hueco y mover sus esquinas; la forma ajustada se conserva como elección propia.",
       "Si no cabe, revisa las medidas del espacio, forma y parámetros antes de añadirla otra vez. Una medida incompatible conserva la última construcción válida. Eliminar escalera retira también su hueco asociado.",
       "Recorrer permite subir y bajar continuamente. Paredes, puertas, muebles, losas y la cara inferior del techo limitan el paso y la altura libre."
     ],
-    "note": "Las comprobaciones geométricas sirven para visualizar espacios. No sustituyen el diseño estructural, la normativa de construcción ni una revisión profesional."
+    "note": "Las comprobaciones geométricas sirven para visualizar espacios. No sustituyen el diseño estructural, la normativa de construcción ni una revisión profesional.",
+    "image": {
+      "file": "stairs.jpg",
+      "alt": "Catálogo de escaleras con cinco formas para conectar dos niveles.",
+      "caption": "Agregar → Escaleras reúne las cinco formas; selecciona una para añadirla al diseño."
+    }
   },
   {
     "id": "roofs",
@@ -104,7 +109,7 @@ const sections: HelpSection[] = [
     "id": "items",
     "title": "Añadir y colocar elementos",
     "steps": [
-      "Pulsa Agregar en la barra del visor, también en móvil. Elige una cama, un ropero, un tocador, un buró, una puerta, una ventana, un foco o un modelo propio. Las categorías de muebles ofrecen varios modelos.",
+      "Pulsa Agregar en la barra del visor, también en móvil. Elige una cama, un ropero, un tocador, un buró, una puerta, una ventana, un foco, una escalera o un modelo propio. Las categorías de muebles y escaleras ofrecen distintas formas.",
       "Toca un elemento de la escena o de la lista Elementos para seleccionarlo. Usa Mover o Girar en la barra de selección y arrastra los controles de colores. Editar abre sus propiedades numéricas.",
       "En móvil, abre solo el panel que necesites y ciérralo con la X para recuperar espacio en el visor. Agregar permanece en la barra superior del visor cuando los paneles están cerrados.",
       "Los muebles pueden superponerse o salir del contorno durante la edición. El rojo translúcido indica una ubicación que debes revisar; no impide moverlos. El ajuste a cuadrícula permite avanzar por pasos y se puede desactivar en Opciones de vista → Movimiento.",

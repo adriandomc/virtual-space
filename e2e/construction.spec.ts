@@ -28,6 +28,16 @@ async function field(page: Page | Locator, label: string, value: string) { const
 async function color(scope: Page | Locator, value: string) { await scope.getByRole('button', { name: 'Color', exact: true }).click(); const picker = scope.getByRole('dialog', { name: 'Color', exact: true }); await picker.getByLabel('Código hexadecimal', { exact: true }).fill(value); await picker.getByRole('button', { name: 'Aplicar', exact: true }).click(); }
 async function openEditor(page: Page, project: ProjectDocument, setup = false) { await page.goto('/editor?room=' + project.id + (setup ? '&setup=1' : '')); await expect(page.getByLabel(setup ? 'Nombre del diseño' : 'Nombre del proyecto', { exact: true })).toBeEditable(); }
 async function openRoom(page: Page) { const button = page.getByRole('button', { name: 'Cuarto', exact: true }); if (await button.getAttribute('aria-expanded') !== 'true') await button.click(); }
+async function openStairProperties(page: Page) {
+  const items = page.getByRole('button', { name: 'Elementos', exact: true });
+  if (await items.getAttribute('aria-expanded') !== 'true') await items.click();
+  await page.locator('.tree-item').filter({ hasText: /^Escalera / }).first().click();
+}
+async function stairCatalog(page: Page) {
+  await page.locator('.viewport-top').getByRole('button', { name: 'Agregar elemento', exact: true }).click();
+  await page.locator('dialog.add-dialog').getByRole('button', { name: 'Escaleras', exact: true }).click();
+  return page.getByRole('region', { name: 'Catálogo de escaleras', exact: true });
+}
 async function openMaterials(page: Page) { const button = page.getByRole('button', { name: 'Materiales', exact: true }); if (await button.getAttribute('aria-expanded') !== 'true') await button.click(); }
 async function expand(scope: Page | Locator, text: string) { const summary = scope.locator('summary').filter({ hasText: new RegExp('^' + text + '$') }).first(); if (await summary.locator('..').getAttribute('open') === null) await summary.click(); }
 async function planPoint(page: Page, x: number, z: number) {
@@ -50,12 +60,13 @@ test('all four setup steps can be skipped without resetting edited work', async 
   await expect.poll(async () => { const p = await snapshot(context.request, project.id), level = p.levels[0]; return { name: p.name, width: Math.max(...level.points.map(p => p.x)) - Math.min(...level.points.map(p => p.x)), roof: p.roofs[0].type, color: level.walls[0].left.color, furniture: level.furniture.length, setup: p.setupStep }; }).toEqual({ name: 'Keep my changes', width: 6, roof: 'gable', color: '#123456', furniture: 1, setup: undefined });
 });
 
-test('mobile onboarding starts with the visible plan and keeps advanced stairs collapsed', async ({ page, context }) => {
+test('mobile onboarding starts with the visible plan and keeps the stair catalog optional', async ({ page, context }) => {
   await account(context.request); const project = await design(context.request, 1, true); await page.setViewportSize({ width: 390, height: 844 }); await openEditor(page, project, true);
   const preview = page.locator('.setup-preview'), controls = page.locator('.setup-controls'), previewBox = (await preview.boundingBox())!, controlsBox = (await controls.boundingBox())!;
   expect(previewBox.y).toBeLessThan(controlsBox.y); expect(previewBox.y).toBeLessThan(390);
   const svg = preview.locator('.plan-canvas > svg'), svgBox = (await svg.boundingBox())!; expect(svgBox.y).toBeLessThan(700); expect(svgBox.height).toBeGreaterThanOrEqual(180);
-  await expect(controls.locator('summary').filter({ hasText: /^Escaleras$/ }).locator('..')).not.toHaveAttribute('open');
+  await expect(controls.getByRole('button', { name: 'Escaleras', exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Catálogo de escaleras', exact: true })).toHaveCount(0);
   await preview.getByRole('button', { name: 'Pared', exact: true }).click(); await svg.scrollIntoViewIfNeeded();
   for (const point of [{ x: -2.5, z: 0 }, { x: 2.5, z: 0 }]) { const screen = await planPoint(page, point.x, point.z); await page.mouse.click(screen.x, screen.y); }
   await preview.getByRole('button', { name: 'Terminar', exact: true }).click(); await expect.poll(async () => (await snapshot(context.request, project.id)).levels[0].walls.length).toBe(7);
@@ -188,11 +199,110 @@ test('empty/copy level controls preserve original content and enforce twelve lev
 });
 
 for (const type of ['straight', 'landing', 'l', 'u', 'spiral'] as const) test(`stair controls create ${type} with a real upper slab opening`, async ({ page, context }) => {
-  await account(context.request); const project = await design(context.request, 2, false, true); await openEditor(page, project); await openRoom(page); await expand(page, 'Escaleras');
-  await page.getByLabel('Tipo de nueva escalera', { exact: true }).selectOption(type); await page.getByRole('button', { name: 'Añadir', exact: true }).click();
+  await account(context.request); const project = await design(context.request, 2, false, true); await openEditor(page, project);
+  const names = { straight: 'Recta', landing: 'Recta con descanso', l: 'En L', u: 'En U', spiral: 'En caracol' };
+  await (await stairCatalog(page)).getByRole('button', { name: 'Agregar ' + names[type], exact: true }).click();
+  await expect(page.locator('dialog.add-dialog')).not.toBeVisible();
   await expect.poll(async () => (await snapshot(context.request, project.id)).stairs.length).toBe(1); const saved = await snapshot(context.request, project.id); expect(saved.stairs[0].type).toBe(type); expect(saved.levels[1].surfaces[0].holes.some(h => h.stairId === saved.stairs[0].id)).toBe(true);
-  await expand(page.locator('details.property-section').filter({ has: page.getByLabel('Tipo de nueva escalera', { exact: true }) }), 'Más opciones');
+  await expand(page.locator('details.property-section').filter({ has: page.getByLabel('Forma de escalera', { exact: true }) }), 'Más opciones');
   await page.getByLabel('Barandales', { exact: true }).selectOption('none'); await expect.poll(async () => (await snapshot(context.request, project.id)).stairs[0].rails).toBe('none');
+});
+
+for (const locale of ['es', 'en'] as const) test(`stair catalog explains required levels and translates its cards in ${locale}`, async ({ page, context }, info) => {
+  await account(context.request); const project = await design(context.request, 1, true, false, true); await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/'); await page.getByLabel('Idioma', { exact: true }).selectOption(locale);
+  await page.goto('/editor?room=' + project.id + '&setup=1');
+  await expect(page.locator('.setup-controls')).toBeVisible();
+  await page.screenshot({ path: info.outputPath('setup-' + locale + '.jpg'), type: 'jpeg', quality: 90 });
+  for (let step = 0; step < 4; step++) await page.getByRole('button', { name: locale === 'es' ? 'Omitir' : 'Skip', exact: true }).click();
+  await page.getByRole('button', { name: locale === 'es' ? 'Elementos' : 'Items', exact: true }).click();
+  await page.locator('.unified-item-list .tree-item').first().click();
+  await expect(page.locator('.room-scene canvas')).toBeVisible();
+  await expect.poll(async () => JSON.parse(await page.locator('.room-scene canvas').getAttribute('data-scene-metrics') ?? '{}').drawCalls ?? 0).toBeGreaterThan(0);
+  await page.screenshot({ path: info.outputPath('editor-' + locale + '.jpg'), type: 'jpeg', quality: 90 });
+  const labels = locale === 'es' ? { add: 'Agregar elemento', stairs: 'Escaleras', catalog: 'Catálogo de escaleras', note: 'Añade un nivel superior para conectar una escalera.', back: 'Elementos' } : { add: 'Add item', stairs: 'Staircases', catalog: 'Stair catalog', note: 'Add an upper level to connect a staircase.', back: 'Items' };
+  await page.locator('.viewport-top').getByRole('button', { name: labels.add, exact: true }).click();
+  await page.locator('dialog.add-dialog').getByRole('button', { name: labels.stairs, exact: true }).click();
+  const catalog = page.getByRole('region', { name: labels.catalog, exact: true });
+  await expect(catalog.getByText(labels.note, { exact: true })).toBeVisible();
+  const cards = catalog.locator('.catalog-model'); await expect(cards).toHaveCount(5);
+  for (const card of await cards.all()) await expect(card).toBeDisabled();
+  const names = locale === 'es' ? ['Recta', 'Recta con descanso', 'En L', 'En U', 'En caracol'] : ['Straight', 'Straight with landing', 'L-shaped', 'U-shaped', 'Spiral'];
+  await expect(catalog.locator('.catalog-model-name')).toHaveText(names);
+  await catalog.getByRole('button', { name: labels.back, exact: true }).click();
+  await expect(catalog).toHaveCount(0); await page.keyboard.press('Escape');
+  expect((await snapshot(context.request, project.id)).stairs).toHaveLength(0);
+  await page.getByRole('button', { name: locale === 'es' ? 'Opciones del nivel' : 'Level options', exact: true }).click();
+  await page.getByRole('button', { name: locale === 'es' ? 'Copiar estructura inferior' : 'Copy structure below', exact: true }).click();
+  await page.getByLabel(locale === 'es' ? 'Nivel activo' : 'Active level', { exact: true }).selectOption(project.levels[0].id);
+  await page.locator('.viewport-top').getByRole('button', { name: labels.add, exact: true }).click();
+  await page.locator('dialog.add-dialog').getByRole('button', { name: labels.stairs, exact: true }).click();
+  await expect(catalog.locator('.catalog-model').first()).toBeEnabled();
+  await page.screenshot({ path: info.outputPath('stairs-' + locale + '.jpg'), type: 'jpeg', quality: 90 });
+  await page.keyboard.press('Escape');
+});
+
+test('mobile stair items can be added, reopened, edited and removed with their opening', async ({ page, context }) => {
+  await account(context.request); const project = await design(context.request, 2, false, true); await page.setViewportSize({ width: 390, height: 844 }); await openEditor(page, project);
+  await (await stairCatalog(page)).getByRole('button', { name: 'Agregar En L', exact: true }).click();
+  const properties = page.getByRole('complementary', { name: 'Propiedades del diseño', exact: true });
+  await expect(properties.getByRole('heading', { name: 'Escalera', exact: true })).toBeVisible();
+  await field(properties, 'Ancho de escalera', '1.2');
+  await expect.poll(async () => (await snapshot(context.request, project.id)).stairs[0]?.width).toBe(1.2);
+  await page.reload(); await expect(page.getByLabel('Nombre del proyecto', { exact: true })).toBeEditable(); await openStairProperties(page);
+  await expect(properties.getByLabel('Ancho de escalera', { exact: true })).toHaveValue('1.2');
+  await properties.getByRole('button', { name: 'Eliminar escalera', exact: true }).click();
+  await expect.poll(async () => { const saved = await snapshot(context.request, project.id); return [saved.stairs.length, saved.levels[1].surfaces[0].holes.length]; }).toEqual([0, 0]);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+});
+
+test('onboarding stair items survive skipped steps and use the decoration catalog', async ({ page, context }) => {
+  await account(context.request); const project = await design(context.request, 2, true, true); await page.setViewportSize({ width: 390, height: 844 }); await openEditor(page, project, true);
+  await page.locator('.setup-controls').getByRole('button', { name: 'Escaleras', exact: true }).click();
+  await page.getByRole('region', { name: 'Catálogo de escaleras', exact: true }).getByRole('button', { name: 'Agregar En U', exact: true }).click();
+  await expect.poll(async () => (await snapshot(context.request, project.id)).stairs.length).toBe(1);
+  for (let step = 0; step < 3; step++) await page.getByRole('button', { name: 'Omitir', exact: true }).click();
+  await page.getByLabel('Elemento a agregar', { exact: true }).selectOption('stairs');
+  await page.getByRole('button', { name: 'Ver modelos', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Catálogo de escaleras', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Cerrar catálogo', exact: true }).click();
+  await page.getByRole('button', { name: 'Escalera 1', exact: true }).click();
+  await field(page.locator('.setup-controls'), 'Ancho de escalera', '1.2');
+  await page.getByRole('button', { name: 'Omitir', exact: true }).click();
+  await expect(page.getByLabel('Nombre del proyecto', { exact: true })).toBeEditable();
+  const saved = await snapshot(context.request, project.id); expect(saved.setupStep).toBeUndefined(); expect(saved.stairs[0].width).toBe(1.2); expect(saved.stairs[0].type).toBe('u'); expect(saved.levels[1].surfaces[0].holes[0].stairId).toBe(saved.stairs[0].id);
+});
+
+test('undoing the selected onboarding stair does not silently select another staircase', async ({ page, context }) => {
+  await account(context.request); let project = await design(context.request, 2, true, true);
+  project = addStair(project, { fromLevelId: project.levels[0].id, toLevelId: project.levels[1].id, type: 'spiral', x: -5, z: -3 });
+  const saved = await context.request.put('/api/rooms/' + project.id, { headers, data: { project, revision: 1, operationId: randomUUID() } }); expect(saved.status(), await saved.text()).toBe(200);
+  await openEditor(page, project, true); await page.locator('.setup-controls').getByRole('button', { name: 'Escaleras', exact: true }).click();
+  await page.getByRole('region', { name: 'Catálogo de escaleras', exact: true }).getByRole('button', { name: 'Agregar Recta', exact: true }).click();
+  await expect.poll(async () => (await snapshot(context.request, project.id)).stairs.length).toBe(2);
+  await expect(page.getByLabel('Forma de escalera', { exact: true })).toHaveValue('straight');
+  await page.locator('.setup-level-bar').getByRole('button', { name: 'Deshacer construcción', exact: true }).click();
+  await expect.poll(async () => (await snapshot(context.request, project.id)).stairs.length).toBe(1);
+  await expect(page.getByLabel('Forma de escalera', { exact: true })).toHaveCount(0);
+  const after = await snapshot(context.request, project.id); expect(after.stairs[0]).toEqual(project.stairs[0]);
+});
+
+test('stair catalog works offline and retains edits after reopening the application', async ({ page, context }) => {
+  await account(context.request); const project = await design(context.request, 2, false, true); await page.goto('/designs');
+  await page.getByRole('button', { name: 'Ajustes de la aplicación', exact: true }).click();
+  const settings = page.locator('dialog.offline-settings'); await settings.getByRole('button', { name: 'Preparar diseños', exact: true }).click();
+  await expect(settings.getByRole('button', { name: 'Actualizar copia local', exact: true })).toBeEnabled({ timeout: 60000 });
+  await settings.getByRole('switch', { name: 'Modo sin conexión', exact: true }).click();
+  await expect(settings.getByRole('switch', { name: 'Modo sin conexión', exact: true })).toHaveAttribute('aria-checked', 'true');
+  await settings.getByRole('button', { name: 'Cerrar ajustes', exact: true }).click();
+  const dataRequests: string[] = []; page.on('request', request => { if (new URL(request.url()).pathname.startsWith('/api/')) dataRequests.push(request.url()); });
+  await context.setOffline(true); await page.getByRole('link', { name: /Construction test/ }).click();
+  await (await stairCatalog(page)).getByRole('button', { name: 'Agregar En caracol', exact: true }).click();
+  await field(page, 'Ancho de escalera', '1.2');
+  await expect(page.locator('.saved-status')).toHaveAttribute('title', 'Guardado en este dispositivo');
+  await page.reload(); await expect(page.getByLabel('Nombre del proyecto', { exact: true })).toBeEditable(); await openStairProperties(page);
+  await expect(page.getByLabel('Ancho de escalera', { exact: true })).toHaveValue('1.2'); await expect(page.getByLabel('Forma de escalera', { exact: true })).toHaveValue('spiral');
+  expect(dataRequests).toEqual([]);
 });
 
 test('roof templates and free-form drafts apply atomically and cancel safely', async ({ page, context }) => {
@@ -248,7 +358,7 @@ test('concurrent roof and stair finishes on different levels survive collaborati
     await simultaneousFinish('Acabado exterior', ['#123456', '#abcdef']);
     const roofIds = [0, 2].map(index => project.roofs.find(roof => roof.levelId === project.levels[index].id)!.id);
     await expect.poll(async () => { const saved = await snapshot(context.request, project.id); return roofIds.map(id => saved.roofs.find(roof => roof.id === id)!.finish.color); }).toEqual(['#123456', '#abcdef']);
-    for (const target of pages) { await expand(target, 'Escaleras'); await expand(target, 'Acabado de escalera'); }
+    for (const target of pages) { await openStairProperties(target); await expand(target, 'Acabado de escalera'); }
     await simultaneousFinish('Acabado de escalera', ['#334455', '#fedcba']);
     await expect.poll(async () => (await snapshot(context.request, project.id)).stairs.map(stair => stair.finish.color)).toEqual(['#334455', '#fedcba']);
     await Promise.all(pages.map(target => target.reload()));
@@ -258,7 +368,7 @@ test('concurrent roof and stair finishes on different levels survive collaborati
       await expect(target.getByLabel('Nivel activo', { exact: true })).toHaveValue(project.levels[index ? 2 : 0].id);
       await openRoom(target); await expand(target, 'Cubiertas'); await expand(target, 'Acabado exterior');
       await expect(target.locator('details.construction-finish').filter({ has: target.locator('summary').filter({ hasText: /^Acabado exterior$/ }) }).getByRole('button', { name: 'Color', exact: true })).toContainText(index ? '#ABCDEF' : '#123456');
-      await expand(target, 'Escaleras'); await expand(target, 'Acabado de escalera');
+      await openStairProperties(target); await expand(target, 'Acabado de escalera');
       await expect(target.locator('details.construction-finish').filter({ has: target.locator('summary').filter({ hasText: /^Acabado de escalera$/ }) }).getByRole('button', { name: 'Color', exact: true })).toContainText(index ? '#FEDCBA' : '#334455');
     }
   } finally { paused = false; for (const queue of held) for (const send of queue.splice(0)) send(); await other.close(); }
