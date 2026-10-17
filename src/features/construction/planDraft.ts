@@ -1,10 +1,10 @@
 import { itemWorldPosition, moveSceneItem } from '../../domain/project/model';
 import { pointInRing, projectLevel, projectStructure, projectToRoom, updateProjectRoom, type ProjectDocument } from '../../domain/project/projectDocument';
-import { movePoint, moveWall, updateHole } from '../../domain/project/projectOperations';
+import { movePoint, moveWall, updateHole, updateStair } from '../../domain/project/projectOperations';
 import { sameData } from '../../shared/sameData';
 import type { Point, Selection } from '../../domain/project/types';
 
-export type PlanMoveIntent = { kind: 'point'; id: string; position: Point } | { kind: 'wall'; id: string; delta: Point } | { kind: 'hole'; surfaceId: string; holeId: string; vertices: Point[] } | { kind: 'item'; selection: Selection; position: Point & { y?: number; rotation?: number } };
+export type PlanMoveIntent = { kind: 'point'; id: string; position: Point } | { kind: 'wall'; id: string; delta: Point } | { kind: 'hole'; surfaceId: string; holeId: string; vertices: Point[] } | { kind: 'item'; selection: Selection; position: Point & { y?: number; rotation?: number } } | { kind: 'stair'; id: string; position: Point };
 
 export function planUpdateActivityReason(state: { points: number; uploading: boolean; archived: number; pointers: number; dragging: boolean; pending: boolean; blocked: boolean }) {
   if (state.points || state.uploading || state.archived || state.pointers || state.dragging) return 'Termina, recupera o cancela el borrador antes de continuar.';
@@ -15,7 +15,10 @@ function scope(project: ProjectDocument, levelId: string) {
   return JSON.parse(projectStructure({ ...project, levels: project.levels.filter(level => level.id === levelId), roofs: project.roofs.filter(roof => roof.levelId === levelId), stairs: project.stairs.filter(stair => stair.fromLevelId === levelId || stair.toLevelId === levelId) }));
 }
 export function samePlanBase(before: ProjectDocument, after: ProjectDocument, levelId: string, intent?: PlanMoveIntent | null) {
-  if (before.id !== after.id || !after.levels.some(level => level.id === levelId) || !sameData(scope(before, levelId), scope(after, levelId))) return false;
+  const stair = intent?.kind === 'stair' ? before.stairs.find(stair => stair.id === intent.id) : null;
+  if (intent?.kind === 'stair' && !stair) return false;
+  const levels = new Set(stair ? [levelId, stair.fromLevelId, stair.toLevelId] : [levelId]);
+  if (before.id !== after.id || [...levels].some(id => !after.levels.some(level => level.id === id) || !sameData(scope(before, id), scope(after, id)))) return false;
   if (intent?.kind === 'item') {
     const first = projectToRoom(before, levelId), second = projectToRoom(after, levelId);
     if (!sameData(itemWorldPosition(first, intent.selection), itemWorldPosition(second, intent.selection))) return false;
@@ -30,6 +33,7 @@ export function applyPlanMove(project: ProjectDocument, levelId: string, intent:
   if (intent.kind === 'point') return movePoint(project, levelId, intent.id, intent.position);
   if (intent.kind === 'wall') return moveWall(project, levelId, intent.id, intent.delta);
   if (intent.kind === 'hole') return updateHole(project, levelId, intent.surfaceId, intent.holeId, intent.vertices);
+  if (intent.kind === 'stair') return updateStair(project, intent.id, intent.position);
   return updateProjectRoom(project, levelId, moveSceneItem(projectToRoom(project, levelId), intent.selection, intent.position));
 }
 export function containingFloor(project: ProjectDocument, levelId: string, vertices: Point[]) {

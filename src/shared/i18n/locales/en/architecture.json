@@ -318,5 +318,6 @@
   "El diseño cambió. Se canceló su eliminación; revisa la versión guardada.": "The design changed. Its deletion was cancelled; review the saved version.",
   "Zona del techo": "Ceiling region",
   "Detalle alto": "High",
-  "Catálogo de escaleras": "Stair catalog"
+  "Catálogo de escaleras": "Stair catalog",
+  "El movimiento se canceló porque cambió la construcción.": "The move was cancelled because the construction changed."
 }

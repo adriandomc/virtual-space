@@ -246,6 +246,9 @@ test('mobile stair items can be added, reopened, edited and removed with their o
   await account(context.request); const project = await design(context.request, 2, false, true); await page.setViewportSize({ width: 390, height: 844 }); await openEditor(page, project);
   await (await stairCatalog(page)).getByRole('button', { name: 'Agregar En L', exact: true }).click();
   const properties = page.getByRole('complementary', { name: 'Propiedades del diseño', exact: true });
+  await expect(properties).not.toBeVisible();
+  await expect(page.getByRole('button', { name: 'Mover elemento', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Propiedades del elemento', exact: true }).click();
   await expect(properties.getByRole('heading', { name: 'Escalera', exact: true })).toBeVisible();
   await field(properties, 'Ancho de escalera', '1.2');
   await expect.poll(async () => (await snapshot(context.request, project.id)).stairs[0]?.width).toBe(1.2);

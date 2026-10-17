@@ -22,6 +22,10 @@
 .setup-step-plan .setup-preview{height:auto;padding:18px;background:#fcfdf9}
 .setup-preview-loading{height:100%;display:flex;align-items:center;justify-content:center;gap:12px;color:#526948;font-size:16px}
 .setup-preview-label{position:absolute;left:17px;top:16px;padding:6px 9px;border:1px solid #dce3d5;background:#fcfdf9e6;border-radius:5px;color:#607454;font-size:14px;pointer-events:none}
+.setup-preview>.setup-selection-dock{left:12px;bottom:12px;transform:none;max-width:calc(100% - 24px)}
+.setup-selection-dock>button{min-width:44px;min-height:44px}
+.setup-selection-dock>span{max-width:120px}
+@media(max-width:700px){.setup-step-decoration .setup-preview{min-height:260px}.setup-preview>.setup-selection-dock{left:8px;bottom:8px;max-width:calc(100% - 16px)}.setup-selection-dock>span{max-width:100px}}
 .setup-preview .plan-toolbar button{font-size:14px;min-height:44px;padding:9px 12px}
 .setup-preview .plan-footer,.setup-preview .plan-error,.setup-preview .plan-drawing-controls p,.setup-preview .plan-drawing-controls label,.setup-preview .plan-coordinates summary{font-size:14px}
 .setup-preview .plan-drawing-controls input,.setup-preview .plan-draw-options select{font-size:16px;min-height:40px}

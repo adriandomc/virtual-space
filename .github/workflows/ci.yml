@@ -25,6 +25,13 @@ jobs:
       - run: npm run build
       - run: npx playwright install --with-deps chromium webkit
       # Each browser gets a fresh isolated server, database and authentication counters.
-      - run: npx playwright test --project=chromium
-      - run: npx playwright test --project=webkit
+      - run: npx playwright test --project=chromium --output=test-results/chromium
+      - run: npx playwright test --project=webkit --output=test-results/webkit
       - run: docker build -t virtual-space:validated .
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: browser-test-results
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 7

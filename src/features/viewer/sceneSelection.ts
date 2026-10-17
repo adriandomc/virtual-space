@@ -1,5 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { itemWorldPosition } from '../../domain/project/model';
+import { projectLevel } from '../../domain/project/projectDocument';
 import type { Room, Selection } from '../../domain/project/types';
 import type { RoomSceneProps, SceneRuntime } from './sceneRuntime';
 
@@ -7,7 +8,17 @@ export const selectionKey = (selection: Selection) => selection.kind === 'wall' 
 
 export const sameSelection = (a: Selection | null, b: Selection | null) => a != null && b != null && selectionKey(a) === selectionKey(b);
 
-export const canMove = (selection: Selection | null) => selection != null && ['furniture', 'opening', 'light'].includes(selection.kind);
+export const canMove = (selection: Selection | null) => selection != null && ['furniture', 'opening', 'light', 'stair'].includes(selection.kind);
+export const canRotate = (selection: Selection | null) => selection?.kind === 'furniture' || selection?.kind === 'stair';
+
+export function sceneItemPosition(props: RoomSceneProps, selection: Selection) {
+  if (selection.kind === 'stair') {
+    const stair = props.project?.stairs.find(item => item.id === selection.id);
+    return stair ? { x: stair.x, y: projectLevel(props.project!, props.activeLevelId ?? stair.fromLevelId).elevation + .15, z: stair.z } : null;
+  }
+  const point = itemWorldPosition(props.room, selection);
+  return point ? { ...point, y: point.y + (props.room.elevation ?? 0) } : null;
+}
 
 export const canInteract = (room: Room, selection: Selection | null) => selection?.kind === 'light' ? room.lights.some(light => light.id === selection.id) : selection?.kind === 'opening' && room.openings.some(opening => opening.id === selection.id && opening.type === 'door' && opening.doorStyle !== 'frame');
 
@@ -42,13 +53,14 @@ export function updateSelection(runtime: SceneRuntime, props: RoomSceneProps) {
   });
   if (runtime.transform.dragging || runtime.directDragging) return;
   runtime.manipulating = null;
-  const position = selection ? itemWorldPosition(props.room, selection) : null;
-  const editable = canMove(selection) && !props.readOnly && props.mode === 'orbit' && !runtime.viewTransition;
+  const position = selection ? sceneItemPosition(props, selection) : null;
+  const editable = canMove(selection) && (selection?.kind !== 'stair' || !!props.onProjectChange) && !props.readOnly && props.mode === 'orbit' && !runtime.viewTransition;
   if (!editable || !position) { runtime.transform.detach(); runtime.transform.enabled = false; return; }
-  runtime.proxy.position.set(position.x, position.y + (props.room.elevation ?? 0), position.z);
+  runtime.proxy.position.set(position.x, position.y, position.z);
   const furniture = selection?.kind === 'furniture' ? props.room.furniture.find(item => item.id === selection.id) : null;
-  runtime.proxy.rotation.set(0, furniture ? THREE.MathUtils.degToRad(furniture.rotation) : 0, 0);
-  const rotate = props.transformMode === 'rotate' && props.selection?.kind === 'furniture';
+  const stair = selection?.kind === 'stair' ? props.project?.stairs.find(item => item.id === selection.id) : null;
+  runtime.proxy.rotation.set(0, THREE.MathUtils.degToRad(furniture?.rotation ?? stair?.rotation ?? 0), 0);
+  const rotate = props.transformMode === 'rotate' && canRotate(selection);
   runtime.transform.setMode(rotate ? 'rotate' : 'translate');
   runtime.transform.setSpace('world');
   runtime.transform.showX = !rotate;

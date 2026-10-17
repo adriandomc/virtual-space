@@ -2,11 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as THREE from 'three/webgpu';
 import { createDefaultProject, projectToRoom } from '../../domain/project/projectDocument';
-import { addLevel } from '../../domain/project/projectOperations';
+import { addLevel, addStair } from '../../domain/project/projectOperations';
 import { fitOrbitCamera, resetCamera, finishViewTransition } from './sceneCamera';
 import { disposeArchitecture, disposeContent } from './sceneResources';
-import { canInteract, canMove, sameSelection } from './sceneSelection';
-import type { SceneRuntime } from './sceneRuntime';
+import { canInteract, canMove, canRotate, sameSelection, sceneItemPosition } from './sceneSelection';
+import type { RoomSceneProps, SceneRuntime } from './sceneRuntime';
 
 function fixture(project = createDefaultProject()) {
   let focused = 0;
@@ -95,10 +95,24 @@ test('selection helpers keep stable wall identity and restrict walking interacti
   ];
   assert.equal(sameSelection({ kind: 'wall', id: 'wall-a', index: 0 }, { kind: 'wall', id: 'wall-a', index: 3 }), true);
   assert.equal(canMove({ kind: 'light', id: room.lights[0].id }), true);
+  assert.equal(canMove({ kind: 'stair', id: 'stair-a' }), true);
+  assert.equal(canRotate({ kind: 'stair', id: 'stair-a' }), true);
+  assert.equal(canRotate({ kind: 'light', id: 'light-a' }), false);
   assert.equal(canMove({ kind: 'roof', id: 'roof-a' }), false);
   assert.equal(canInteract(room, { kind: 'opening', id: 'frame' }), false);
   assert.equal(canInteract(room, { kind: 'opening', id: 'window' }), false);
   assert.equal(canInteract(room, { kind: 'opening', id: 'door' }), true);
   assert.equal(canInteract(room, { kind: 'light', id: room.lights[0].id }), true);
   assert.equal(canInteract(room, { kind: 'light', id: 'deleted-light' }), false);
+});
+
+test('stair handles stay on the active connected floor without adding its elevation twice', () => {
+  let project = addLevel(createDefaultProject(), { copy: true });
+  project = addStair(project, { fromLevelId: project.levels[0].id, toLevelId: project.levels[1].id, type: 'spiral' });
+  const stair = project.stairs[0], selection = { kind: 'stair' as const, id: stair.id };
+  for (const level of project.levels) {
+    const props = { project, activeLevelId: level.id, room: projectToRoom(project, level.id) } as RoomSceneProps;
+    assert.deepEqual(sceneItemPosition(props, selection), { x: stair.x, y: level.elevation + .15, z: stair.z });
+  }
+  assert.equal(sceneItemPosition({ project, room: projectToRoom(project) } as RoomSceneProps, { kind: 'stair', id: 'deleted' }), null);
 });
