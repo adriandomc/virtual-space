@@ -364,7 +364,7 @@ export function validateRoom(value: unknown): Room {
     const openingHeight = number(p.height, 0.3, height, `Altura de abertura ${i + 1}`);
     const sill = number(p.sill, 0, height - openingHeight, `Antepecho de abertura ${i + 1}`);
     if (p.type === 'door' && sill !== 0) throw new Error('Las puertas deben comenzar en el piso.');
-    return { id: text(p.id, 'Identificador de abertura'), type: p.type, ...(doorStyle === undefined ? {} : { doorStyle: doorStyle as Opening['doorStyle'] }), ...(p.type === 'door' && doorStyle !== 'frame' ? { open: p.open as boolean } : {}), wall, width, height: openingHeight, sill, offset: number(p.offset, 0, length - width, `Posición de abertura ${i + 1}`) };
+    return { id: text(p.id, 'Identificador de abertura'), type: p.type, ...(Object.hasOwn(p, 'color') ? { color: color(p.color, 'El color') } : {}), ...(doorStyle === undefined ? {} : { doorStyle: doorStyle as Opening['doorStyle'] }), ...(p.type === 'door' && doorStyle !== 'frame' ? { open: p.open as boolean } : {}), wall, width, height: openingHeight, sill, offset: number(p.offset, 0, length - width, `Posición de abertura ${i + 1}`) };
   });
   for (let i = 0; i < openings.length; i++) for (let j = i + 1; j < openings.length; j++) {
     if (openings[i].id === openings[j].id) throw new Error('Las aberturas necesitan identificadores únicos.');
@@ -374,7 +374,7 @@ export function validateRoom(value: unknown): Room {
     const p = record(value, `Luz ${i + 1}`);
     const position = { x: number(p.x, -50, 50, `Luz ${i + 1}, X`), z: number(p.z, -50, 50, `Luz ${i + 1}, Z`) };
     if (editing.bounds && !pointInPolygon(position, vertices)) throw new Error(`La luz ${i + 1} debe estar dentro del cuarto.`);
-    return { ...position, id: text(p.id, 'Identificador de luz'), name: text(p.name, 'Nombre de luz'), y: number(p.y, 0.1, height, `Altura de luz ${i + 1}`), lumens: number(p.lumens, 0, 20000, `Lúmenes de luz ${i + 1}`), temperature: number(p.temperature, 1000, 12000, `Temperatura de luz ${i + 1}`), enabled: boolean(p.enabled, 'Interruptor de luz') };
+    return { ...position, ...(Object.hasOwn(p, 'color') ? { color: color(p.color, 'El color') } : {}), id: text(p.id, 'Identificador de luz'), name: text(p.name, 'Nombre de luz'), y: number(p.y, 0.1, height, `Altura de luz ${i + 1}`), lumens: number(p.lumens, 0, 20000, `Lúmenes de luz ${i + 1}`), temperature: number(p.temperature, 1000, 12000, `Temperatura de luz ${i + 1}`), enabled: boolean(p.enabled, 'Interruptor de luz') };
   });
   if (new Set(lights.map(p => p.id)).size !== lights.length) throw new Error('Las luces necesitan identificadores únicos.');
   const furniture = array(raw.furniture, 0, 64, 'Los muebles').map((value, i) => readFurniture(value, height, i));

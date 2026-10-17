@@ -280,5 +280,20 @@
   "{{name}}; flechas para mover, RePág y AvPág para altura": "{{name}}; flechas para mover, RePág y AvPág para altura",
   "¿Usar la versión del servidor? Descarga antes los cambios que quieras conservar.": "¿Usar la versión del servidor? Descarga antes los cambios que quieras conservar.",
   "¿Usar la versión del servidor? Los cambios pendientes de este dispositivo se descartarán. Puedes descargarlos antes.": "¿Usar la versión del servidor? Los cambios pendientes de este dispositivo se descartarán. Puedes descargarlos antes.",
-  "Ángulo": "Ángulo"
+  "Ángulo": "Ángulo",
+  "Superficies por nivel": "Superficies por nivel",
+  "Toca una pared en la planta": "Toca una pared en la planta",
+  "Superficies de {{level}}": "Superficies de {{level}}",
+  "{{wall}} · {{level}} · {{side}}": "{{wall}} · {{level}} · {{side}}",
+  "Lista de paredes": "Lista de paredes",
+  "Herramientas de pintura": "Herramientas de pintura",
+  "Seleccionar": "Seleccionar",
+  "Cubeta de pintura": "Cubeta de pintura",
+  "Color principal": "Color principal",
+  "Toca un elemento para pintarlo": "Toca un elemento para pintarlo",
+  "Colores del diseño": "Colores del diseño",
+  "Plano editable; toca superficies y elementos para pintar": "Plano editable; toca superficies y elementos para pintar",
+  "Toca una superficie o un elemento para pintarlo. Usa dos dedos para desplazar y acercar.": "Toca una superficie o un elemento para pintarlo. Usa dos dedos para desplazar y acercar.",
+  "El elemento ya no existe.": "El elemento ya no existe.",
+  "Visor 3D. Toca un elemento para pintarlo. Enter o Espacio pinta el elemento seleccionado. Arrastra para girar; usa dos dedos para desplazar y acercar.": "Visor 3D. Toca un elemento para pintarlo. Enter o Espacio pinta el elemento seleccionado. Arrastra para girar; usa dos dedos para desplazar y acercar."
 }

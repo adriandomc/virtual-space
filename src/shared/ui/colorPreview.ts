@@ -15,6 +15,7 @@ export function projectColors(project: ProjectDocument): string[] {
     ...level.walls.flatMap(wall => [wall.left.color, wall.right.color]),
     ...level.surfaces.flatMap(surface => [surface.finish.color, ...(surface.kind === 'floor' ? [surface.undersideFinish.color] : [])]),
     ...level.furniture.flatMap(item => [item.color, ...Object.values(item.parts ?? {}).map(part => part.color)]),
+    ...level.openings.map(opening => opening.color), ...level.lights.map(light => light.color),
   ]).concat(project.roofs.flatMap(roof => [roof.finish.color, roof.undersideFinish.color]), project.stairs.map(stair => stair.finish.color))
     .filter((value): value is string => !!value).map(value => value.toLowerCase()))];
 }

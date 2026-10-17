@@ -54,7 +54,7 @@ export function updateSelection(runtime: SceneRuntime, props: RoomSceneProps) {
   if (runtime.transform.dragging || runtime.directDragging) return;
   runtime.manipulating = null;
   const position = selection ? sceneItemPosition(props, selection) : null;
-  const editable = canMove(selection) && (selection?.kind !== 'stair' || !!props.onProjectChange) && !props.readOnly && props.mode === 'orbit' && !runtime.viewTransition;
+  const editable = canMove(selection) && (selection?.kind !== 'stair' || !!props.onProjectChange) && !props.paintActive && !props.readOnly && props.mode === 'orbit' && !runtime.viewTransition;
   if (!editable || !position) { runtime.transform.detach(); runtime.transform.enabled = false; return; }
   runtime.proxy.position.set(position.x, position.y, position.z);
   const furniture = selection?.kind === 'furniture' ? props.room.furniture.find(item => item.id === selection.id) : null;

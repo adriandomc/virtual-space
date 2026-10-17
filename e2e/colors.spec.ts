@@ -50,11 +50,11 @@ test('onboarding color applies explicitly and Skip preserves it', async ({ page,
   await page.getByRole('button', { name: 'Color', exact: true }).click(); const picker = page.getByRole('dialog', { name: 'Color', exact: true });
   await picker.getByLabel('Código hexadecimal', { exact: true }).fill('abc'); await picker.getByRole('button', { name: 'Aplicar', exact: true }).click();
   await page.getByRole('button', { name: 'Omitir', exact: true }).click(); await expect(page.getByRole('heading', { name: 'Decoración', exact: true })).toBeVisible();
-  await expect.poll(async () => (await saved(context.request, project.id)).project.levels[0].walls.map(wall => wall.left.color)).toEqual(['#aabbcc', '#aabbcc', '#aabbcc', '#aabbcc']);
+  await expect.poll(async () => (await saved(context.request, project.id)).project.levels[0].walls.map(wall => wall.left.color)).toEqual(['#aabbcc', '#ffffff', '#ffffff', '#ffffff']);
 });
 
 test('remote deletion cancels an open color preview and cannot paint another wall', async ({ page, context }) => {
-  const project = await sample(context.request, false, true); await open(page, project); await page.getByLabel('Superficie a pintar', { exact: true }).selectOption('3');
+  const project = await sample(context.request, false, true); await open(page, project); await page.locator('.surface-level.active [data-surface-wall="' + project.levels[0].walls[3].id + '"]').press('Enter');
   await page.getByRole('button', { name: 'Color', exact: true }).click(); const picker = page.getByRole('dialog', { name: 'Color', exact: true }); await picker.getByLabel('Código hexadecimal', { exact: true }).fill('#aabbcc');
   const base = await saved(context.request, project.id), next = deleteWall(base.project, project.levels[0].id, project.levels[0].walls[3].id);
   expect((await context.request.put('/api/rooms/' + project.id, { headers, data: { project: next, revision: base.revision, operationId: randomUUID() } })).status()).toBe(200);

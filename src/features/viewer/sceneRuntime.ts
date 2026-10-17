@@ -9,6 +9,7 @@ import type { ProjectDocument, ProjectLevel } from '../../domain/project/project
 import type { ArchitecturalNavigation, WalkState } from './architecturalNavigation';
 import type { GraphicsProfile } from '../../client/graphics/graphicsSettings';
 import type { StairTransformPreview } from './sceneStairEditing';
+import type { PaintTarget } from '../../domain/project/projectPaint';
 
 export type RoomSceneProps = {
   room: Room;
@@ -30,6 +31,9 @@ export type RoomSceneProps = {
   resetKey: number;
   onReady?: (backend: string) => void;
   animateView?: boolean;
+  paintActive?: boolean;
+  paintWallSide?: 'left' | 'right';
+  onPaint?: (target: PaintTarget) => boolean | void;
 };
 
 type WallView = { group: THREE.Group; midpoint: THREE.Vector3; inward: THREE.Vector3; material: THREE.MeshStandardNodeMaterial; opposite: THREE.MeshStandardNodeMaterial; finishKey: string; index: number };
@@ -81,6 +85,8 @@ export type SceneRuntime = {
   manipulating: Selection | null;
   stairEdit?: StairTransformPreview;
   cancelStairEdit?: () => void;
+  painting?: boolean;
+  cancelPaint?: () => void;
   directDragging: boolean;
   pendingEdit: boolean;
   lastOpeningBuild: number;

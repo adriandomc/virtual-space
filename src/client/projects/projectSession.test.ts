@@ -6,6 +6,7 @@ import { createDesignLocal, persistOfflineProject } from '../offline/repository'
 import { bootstrapOfflineMode, offlineForced, refreshOfflineMode, setOfflineMode } from '../offline/offlineMode';
 import { readOfflineProject, type OfflineProjectRecord } from '../offline/offlineProject';
 import { ProjectSession, type ProjectSessionState } from './projectSession';
+import { syncOfflineAccount } from '../offline/sync';
 
 const owner = { id: '031f3902-316e-4233-931b-6e3776ba8ae6', username: 'owner', verifiedAt: Date.now() };
 const target = Object.assign(new EventTarget(), { location: new URL('https://3d.example.test/editor') });
@@ -99,6 +100,49 @@ test('project sessions isolate locks, account changes, forced-offline events and
         for (let i = 0; i < 10 && !f.events.restarts; i++) await tick();
         assert.equal(f.events.restarts, 1); assert.equal(locks.held.size, 0); assert.equal(f.value.solo, null);
       } finally { await f.value.destroy(); }
+    });
+
+    await t.test('reopening online waits for the running account sync instead of treating its temporary lock as another editor', async () => {
+      const id = await setup(false), record = (await readOfflineProject(id))!;
+      record.localOnly = false; record.snapshot.revision = 1; record.draft = { ...record.snapshot.project, name: 'Offline painted design' }; await persistOfflineProject(record);
+      let remote = structuredClone(record.snapshot), enter!: () => void, release!: () => void, first = true;
+      const entered = new Promise<void>(accept => { enter = accept; }), blocked = new Promise<void>(accept => { release = accept; });
+      const requests: string[] = [];
+      globalThis.fetch = async (input, options) => {
+        const path = String(input); requests.push((options?.method ?? 'GET') + ' ' + path);
+        if (path === '/api/auth/session') return new Response(JSON.stringify({ user: owner }));
+        if (path === '/api/rooms/' + id) {
+          if (options?.method === 'PUT') { remote = { ...remote, project: JSON.parse(String(options.body)).project, revision: remote.revision + 1 }; return new Response(JSON.stringify(remote)); }
+          if (first) { first = false; enter(); await blocked; }
+          return new Response(JSON.stringify(remote));
+        }
+        throw new Error('Unexpected request: ' + path);
+      };
+      const syncing = syncOfflineAccount(), f = session(id);
+      try {
+        await entered; assert.equal(locks.held.size, 1);
+        const starting = f.value.start();
+        for (let index = 0; index < 5; index++) await tick();
+        assert(!f.states.some(state => /otra pestaña/.test(state.error)), 'the ongoing sync is not another editor');
+        release(); await syncing; await starting;
+        assert.equal(f.value.state.canEdit, true); assert.equal(f.value.state.project.name, 'Offline painted design');
+        assert.equal(remote.project.name, 'Offline painted design');
+        assert.equal(requests.filter(request => request.startsWith('PUT ')).length, 1);
+      } finally { release(); await syncing; await f.value.destroy(); }
+    });
+
+    await t.test('a failed background sync keeps the pending local design editable after startup waits', async () => {
+      const id = await setup(false), record = (await readOfflineProject(id))!;
+      record.localOnly = false; record.snapshot.revision = 1; record.draft = { ...record.snapshot.project, name: 'Preserved offline paint' }; await persistOfflineProject(record);
+      let enter!: () => void, release!: () => void;
+      const entered = new Promise<void>(accept => { enter = accept; }), blocked = new Promise<void>(accept => { release = accept; });
+      globalThis.fetch = async () => { enter(); await blocked; throw new TypeError('Network interrupted'); };
+      const syncing = syncOfflineAccount(), rejected = assert.rejects(syncing, /No se pudo conectar/), f = session(id);
+      try {
+        await entered; const starting = f.value.start(); await tick(); release(); await rejected; await starting;
+        assert.equal(f.value.state.canEdit, true); assert.equal(f.value.state.status, 'offline');
+        assert.equal(f.value.state.project.name, 'Preserved offline paint'); assert.equal((await readOfflineProject(id))?.draft?.name, 'Preserved offline paint');
+      } finally { release(); await rejected; await f.value.destroy(); }
     });
 
     await t.test('an expired online session keeps the prepared draft editable locally', async () => {

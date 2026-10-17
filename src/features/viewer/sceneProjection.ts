@@ -5,7 +5,7 @@ import type { Point, Room } from '../../domain/project/types';
 
 /** Appearance and transforms do not invalidate architectural buffers. */
 export function levelGeometrySignature(room: Room, extra = '') {
-  return JSON.stringify({ vertices: room.vertices, height: room.height, thickness: room.thickness, quality: room.renderQuality, walls: room.wallSegments?.map(({ leftColor: _left, rightColor: _right, ...wall }) => wall), surfaces: room.surfaces?.map(({ finish: _finish, undersideFinish: _underside, ...surface }) => surface), openings: room.openings.map(({ open: _open, ...opening }) => opening), extra });
+  return JSON.stringify({ vertices: room.vertices, height: room.height, thickness: room.thickness, quality: room.renderQuality, walls: room.wallSegments?.map(({ leftColor: _left, rightColor: _right, ...wall }) => wall), surfaces: room.surfaces?.map(({ finish: _finish, undersideFinish: _underside, ...surface }) => surface), openings: room.openings.map(({ open: _open, color: _color, ...opening }) => opening), extra });
 }
 
 export function furnitureGeometrySignature({ color: _color, material: _material, name: _name, x: _x, z: _z, rotation: _rotation, ...geometry }: Room['furniture'][number]) { return JSON.stringify(geometry); }
@@ -55,7 +55,7 @@ export function indexedArchitectureGeometry(vertices: Vec3[], triangles: [number
 }
 
 export function projectNavigationSignature(project: ProjectDocument) {
-  return JSON.stringify({ structure: projectStructure(project), openings: project.levels.flatMap(level => level.openings), furniture: project.levels.flatMap(level => level.furniture.map(item => [item.id, item.x, item.z, item.width, item.depth, item.height, item.rotation])) });
+  return JSON.stringify({ structure: projectStructure(project), openings: project.levels.flatMap(level => level.openings.map(({ color: _color, ...opening }) => opening)), furniture: project.levels.flatMap(level => level.furniture.map(item => [item.id, item.x, item.z, item.width, item.depth, item.height, item.rotation])) });
 }
 
 export function slabGeometry(outline: Point[], holes: Point[][], thickness: number, downward = true) {

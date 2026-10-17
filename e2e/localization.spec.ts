@@ -23,9 +23,9 @@ async function settings(page: Page, locale: 'es' | 'en') {
 
 async function screenshots(page: Page, locale: 'es' | 'en') {
   const images = page.locator('.help-content img');
-  await expect(images).toHaveCount(7);
+  await expect(images).toHaveCount(8);
   for (const image of await images.all()) {
-    await expect(image).toHaveAttribute('src', new RegExp('^/help/' + locale + '/(?:library|setup|editor|workshop|offline|sharing|stairs)\\.jpg$'));
+    await expect(image).toHaveAttribute('src', new RegExp('^/help/' + locale + '/(?:library|setup|editor|workshop|offline|sharing|stairs|materials)\\.jpg$'));
     await expect(image).not.toHaveAttribute('alt', '');
     await image.scrollIntoViewIfNeeded();
     await expect.poll(() => image.evaluate(element => (element as HTMLImageElement).complete && (element as HTMLImageElement).naturalWidth > 0)).toBe(true);

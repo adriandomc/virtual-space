@@ -1,0 +1,7 @@
+.paint-toolbar{display:flex;align-items:center;gap:3px;width:max-content;max-width:100%;padding:3px;border:1px solid #d5dfcd;border-radius:8px;background:var(--panel,#fcfdf8)}
+.paint-toolbar>button{display:flex;align-items:center;justify-content:center;min-width:44px;min-height:44px;border-radius:5px;color:#5e7350}
+.paint-toolbar>button.active{background:#dce8ce;color:#354f25;box-shadow:inset 0 0 0 1px #91a77c}
+.paint-toolbar>button:disabled{opacity:.45;cursor:not-allowed}
+.paint-toolbar>button:focus-visible{outline:2px solid #607a4d;outline-offset:1px}
+.paint-toolbar .color-control{margin:0 0 0 3px;padding-left:6px;border-left:1px solid #d5dfcd}
+@media(max-width:1000px){.editor-toolbar{flex-wrap:wrap}.editor-toolbar>.paint-toolbar{order:4;margin:0 auto}.editor-toolbar:has(>.paint-toolbar)::after{content:"";order:3;flex-basis:100%;height:0}}

@@ -131,13 +131,16 @@ const sections: HelpSection[] = [
     "id": "materials",
     "title": "Colores, materiales y calidad visual",
     "steps": [
-      "Abre Materiales o selecciona una pared, piso o techo. Cara de la pared permite cambiar Lado izquierdo o Lado derecho por separado. Aplicar a todas las paredes reutiliza el color en la cara elegida.",
+      "Abre Materiales y despliega el nivel que quieras. Toca una pared en la pequeña planta o elige Piso o Techo; Lista de paredes ofrece una alternativa por nombre. Cambiar de nivel conserva el diseño. Cara de la pared permite editar Lado izquierdo o Lado derecho por separado. Aplicar a todas las paredes reutiliza el color en la cara elegida del nivel activo.",
+      "En la barra del visor, abre Color principal con el icono de rueda de colores y pulsa Aplicar para elegir la pintura. Activa Cubeta de pintura y toca una superficie o un elemento en 3D o Planta. En 3D se pinta la cara visible; en Planta se usa la Cara de la pared elegida en Materiales. Arrastrar navega sin pintar y dos dedos desplazan o acercan. Seleccionar vuelve a los controles de movimiento. Con el visor enfocado, Enter o Espacio pinta el elemento seleccionado. En Planta, Seleccionar también recupera las herramientas de construcción.",
+      "La cubeta pinta paredes, pisos, techos, cubiertas, muebles, escaleras, puertas, marcos de ventanas y cuerpos de focos. Conserva el material, el vidrio y la luz emitida. Cada toque guarda un cambio que puedes deshacer; un lector solo puede consultar. En Colores y Decoración de la preparación están las mismas herramientas y Omitir conserva lo pintado.",
       "Abre la muestra de color para ajustar tono, saturación y brillo, escribir un hexadecimal o valores RGB de 0 a 255. Anterior muestra el color al abrir; Nuevo muestra tu previsualización. Puedes copiar el hexadecimal o reutilizar los colores del diseño, incluidos muebles y escaleras. Aplicar guarda una modificación; Cancelar, Escape o tocar fuera descartan la previsualización.",
       "Selecciona el piso para elegir madera, loseta, loseta trabada, damero, mármol o concreto, además de su color.",
       "Techo selecciona la cara interior que queda sobre el nivel activo: la cara inferior de la losa superior o de la cubierta. Su color y material son independientes del piso que queda encima y del acabado exterior de la cubierta.",
       "Selecciona un mueble para cambiar su acabado entre madera, plástico y metal. En modelos importados puedes conservar los materiales originales o elegir un acabado propio. Los tejidos, espejos y otros componentes del catálogo mantienen sus materiales específicos.",
       "En Opciones de vista → Calidad visual elige Estándar, Realista o Hiperrealista. Los dos últimos añaden detalle de superficies e iluminación. Gráficos, dentro de Ajustes, adapta el rendimiento sin cambiar la calidad guardada del diseño."
     ],
+    "image": { "file": "materials.jpg", "alt": "Cubeta de pintura, rueda de colores y superficies organizadas por nivel.", "caption": "Elige el color principal y pinta directamente; Materiales permite localizar cada superficie en su nivel." },
     "note": "El color y la luz son aproximaciones visuales que dependen de tu pantalla. El modo Hiperrealista no sustituye un cálculo de iluminación ni una muestra física de pintura."
   },
   {

@@ -26,6 +26,9 @@ export function soloNetworkDependencies(record: OfflineProjectRecord) {
   };
 }
 let syncPromise: Promise<void> | undefined;
+/** An editor must not mistake this page's transient sync lock for another editing tab. */
+// shortcut: online opening waits for the account queue; prioritize rooms if large queues delay opening.
+export async function waitForOfflineSync() { await syncPromise?.catch(() => {}); }
 export async function syncOfflineAccount() {
   if (offlineForced()) return;
   if (syncPromise) return syncPromise;

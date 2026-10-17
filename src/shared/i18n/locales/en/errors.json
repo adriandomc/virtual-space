@@ -330,5 +330,6 @@
   "Vuelve a abrir tu diseño para guardar este modelo.": "Open your design again to save this model.",
   "Ya eres el propietario de este diseño.": "You already own this design.",
   "Ya existe un vértice en esas coordenadas.": "A vertex already exists at those coordinates.",
-  "Ya no tienes acceso a este diseño.": "You no longer have access to this design."
+  "Ya no tienes acceso a este diseño.": "You no longer have access to this design.",
+  "No se pudo aplicar el color.": "The color could not be applied."
 }

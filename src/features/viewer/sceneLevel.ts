@@ -2,7 +2,8 @@ import * as THREE from 'three/webgpu';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { RectAreaLightTexturesLib } from 'three/addons/lights/RectAreaLightTexturesLib.js';
 import { bounds, pointInPolygon, polygonArea, roomWallEndpoints, wallCount } from '../../domain/project/model';
-import { createCeilingFinishMaterial, createSlabMaterials, createWallFinishMaterial, createFloorMaterial, createWoodMaterial, setMaterialTextureResolution } from './materials';
+import { createCeilingFinishMaterial, createSlabMaterials, createWallFinishMaterial, createFloorMaterial, setMaterialTextureResolution } from './materials';
+import { openingFrameMaterial, openingLeafMaterial } from './sceneItemAppearance';
 import { box } from './furnitureRendering';
 import { daylightFactor, daylightOpeningArea, renderPixelRatio } from './navigation';
 import type { Point, Room, Selection } from '../../domain/project/types';
@@ -144,12 +145,14 @@ export function buildLevelRoom(runtime: SceneRuntime, room: Room) {
       openingGroup.userData.wall = index;
       runtime.objects.set(`opening:${opening.id}`, openingGroup);
       group.add(openingGroup);
-      for (const edge of [-1, 1]) box(openingGroup, [frame, opening.height + frame, thickness + 0.045], [x + edge * (opening.width / 2 - frame / 2), y + opening.height / 2, 0], trim);
-      box(openingGroup, [opening.width, frame, thickness + 0.045], [x, y + opening.height - frame / 2, 0], trim);
+      const frameMaterial = openingFrameMaterial(opening, room.renderQuality);
+      const frameBox = (size: [number, number, number], at: [number, number, number]) => { const mesh = box(openingGroup, size, at, frameMaterial); mesh.userData.openingPaintId = opening.id; mesh.userData.openingPaintRole = 'frame'; return mesh; };
+      for (const edge of [-1, 1]) frameBox([frame, opening.height + frame, thickness + 0.045], [x + edge * (opening.width / 2 - frame / 2), y + opening.height / 2, 0]);
+      frameBox([opening.width, frame, thickness + 0.045], [x, y + opening.height - frame / 2, 0]);
       if (opening.type === 'window') {
-        box(openingGroup, [opening.width + 0.09, frame, thickness + 0.11], [x, y, 0], trim);
-        box(openingGroup, [frame * 0.65, opening.height, 0.035], [x, y + opening.height / 2, 0], trim);
-        box(openingGroup, [opening.width, frame * 0.65, 0.035], [x, y + opening.height * 0.55, 0], trim);
+        frameBox([opening.width + 0.09, frame, thickness + 0.11], [x, y, 0]);
+        frameBox([frame * 0.65, opening.height, 0.035], [x, y + opening.height / 2, 0]);
+        frameBox([opening.width, frame * 0.65, 0.035], [x, y + opening.height * 0.55, 0]);
         const glass = new THREE.Mesh(new THREE.PlaneGeometry(opening.width, opening.height), glassMaterial);
         glass.position.set(x, y + opening.height / 2, 0);
         openingGroup.add(glass);
@@ -165,8 +168,8 @@ export function buildLevelRoom(runtime: SceneRuntime, room: Room) {
           hinge.userData.doorId = opening.id; hinge.userData.openAngle = direction * innerSide * -Math.PI * 0.4;
           hinge.rotation.y = opening.open === false ? 0 : direction * innerSide * -Math.PI * 0.4;
           openingGroup.add(hinge);
-          const leaf = box(hinge, [opening.width - frame * 2, opening.height - frame, 0.04], [direction * (opening.width - frame * 2) / 2, (opening.height - frame) / 2, 0], architectural ? createWoodMaterial('#c7b297', room.renderQuality) : new THREE.MeshStandardMaterial({ color: '#c7b297', roughness: 0.8 }));
-          leaf.userData.doorLeaf = architectural;
+          const leaf = box(hinge, [opening.width - frame * 2, opening.height - frame, 0.04], [direction * (opening.width - frame * 2) / 2, (opening.height - frame) / 2, 0], openingLeafMaterial(opening, room.renderQuality));
+          leaf.userData.openingPaintId = opening.id; leaf.userData.openingPaintRole = 'leaf';
           leaf.castShadow = true;
           box(hinge, [0.07, 0.025, 0.075], [direction * (opening.width - 0.15), Math.min(0.98, (opening.height - frame) / 2), innerSide * 0.045], new THREE.MeshStandardMaterial({ color: '#7c7b6c', metalness: 0.75, roughness: 0.3 }));
         }
