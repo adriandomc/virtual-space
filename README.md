@@ -74,7 +74,7 @@ npm run test:e2e:webkit
 
 `npm test` runs the TypeScript unit and integration tests. `build` checks TypeScript and builds both applications. Playwright rebuilds the app, starts an isolated production server at `127.0.0.1:5188` and uses a temporary database; it does not use development or production data. Set `PLAYWRIGHT_CHANNEL=chrome` to use an installed Chrome channel. Failure screenshots and traces are written to `test-results/`.
 
-CI uses Node.js 24 on Linux, runs unit/integration tests, the production build, Chromium/WebKit flows and a Docker build. Real-GPU checks remain separate from software-rendered CI.
+CI uses Node.js 24 on Linux, runs unit/integration tests, the production build, Chromium/WebKit flows and a Docker build. Each run retains isolated browser screenshots and failure traces as `browser-test-results` artifacts for seven days. Real-GPU checks remain separate from software-rendered CI.
 
 The [architecture and resource review](docs/architecture-review.md) records the verified changes, measurements and remaining operating limits.
 

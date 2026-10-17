@@ -52,6 +52,12 @@ async function selectStair(page: Page, canvas: Locator, project: ProjectDocument
   await expect(page.getByRole('button', { name: /^(Mover elemento|Move item)$/, exact: true })).toBeVisible();
 }
 async function handle(canvas: Locator, axis: string) {
+  // Selecting a stair opens the inspector and resizes the canvas before its next render.
+  await canvas.hover();
+  await expect.poll(() => canvas.evaluate(element => {
+    const rect = element.getBoundingClientRect(), host = element.parentElement!;
+    return Math.abs(rect.width - host.clientWidth) < 1 && Math.abs(rect.height - host.clientHeight) < 1;
+  })).toBe(true);
   await expect.poll(async () => (await interaction(canvas)).handles.some(item => item.axis === axis && item.points.length > 0)).toBe(true);
   const points = (await interaction(canvas)).handles.find(item => item.axis === axis)!.points;
   return { point: await screen(canvas, points[0]), points };
