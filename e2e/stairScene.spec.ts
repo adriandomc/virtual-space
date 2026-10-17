@@ -11,7 +11,8 @@ type Interaction = { stairs: { id: string; point: ScreenPoint; points: ScreenPoi
 
 async function sample(request: APIRequestContext, setup = false, snap = true, pose?: Pick<ProjectStair, 'x' | 'z' | 'rotation'>, withStair = true) {
   const suffix = randomUUID().slice(0, 8);
-  const registration = await request.post('/api/auth/register', { headers: { ...headers, 'X-Forwarded-For': `198.18.${parseInt(suffix.slice(0, 2), 16)}.${parseInt(suffix.slice(2, 4), 16)}` }, data: { username: 'stair_scene_' + suffix, password: 'Stair-handles-5913', confirmPassword: 'Stair-handles-5913', termsVersion: TERMS_VERSION } });
+  const sampleHeaders = { ...headers, 'X-Forwarded-For': `198.18.${parseInt(suffix.slice(0, 2), 16)}.${parseInt(suffix.slice(2, 4), 16)}` };
+  const registration = await request.post('/api/auth/register', { headers: sampleHeaders, data: { username: 'stair_scene_' + suffix, password: 'Stair-handles-5913', confirmPassword: 'Stair-handles-5913', termsVersion: TERMS_VERSION } });
   expect(registration.status(), await registration.text()).toBe(201);
   let project = createDefaultProject('Stair placement');
   project.levels[0].points.forEach(point => { point.x *= 1.6; point.z *= 1.6; });
@@ -21,7 +22,7 @@ async function sample(request: APIRequestContext, setup = false, snap = true, po
   if (pose) project = updateStair(project, project.stairs[0].id, pose);
   project.editing.snap = snap;
   if (setup) project.setupStep = 3;
-  const created = await request.post('/api/rooms', { headers, data: { id: project.id, project } });
+  const created = await request.post('/api/rooms', { headers: sampleHeaders, data: { id: project.id, project } });
   expect(created.status(), await created.text()).toBe(201);
   return project;
 }
