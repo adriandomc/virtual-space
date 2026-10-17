@@ -136,7 +136,18 @@ export function addStair(project: ProjectDocument, parameters: Partial<ProjectSt
     next.stairs.push(stair); syncStairHole(next, stair);
   });
 }
-export function updateStair(project: ProjectDocument, id: string, patch: Partial<Omit<ProjectStair, 'id'>>): ProjectDocument { return atomic(project, next => { const stair = next.stairs.find(s => s.id === id); if (!stair) throw new Error('La escalera no existe.'); Object.assign(stair, patch); syncStairHole(next, stair); }); }
+export function updateStair(project: ProjectDocument, id: string, patch: Partial<Omit<ProjectStair, 'id'>>): ProjectDocument {
+  return atomic(project, next => {
+    const stair = next.stairs.find(s => s.id === id); if (!stair) throw new Error('La escalera no existe.');
+    const { x, z, rotation } = stair;
+    Object.assign(stair, patch);
+    if (stair.hole && !Object.hasOwn(patch, 'hole') && (stair.x !== x || stair.z !== z || stair.rotation !== rotation)) {
+      const angle = (stair.rotation - rotation) * Math.PI / 180, c = Math.cos(angle), s = Math.sin(angle);
+      stair.hole = stair.hole.map(point => ({ x: stair.x + (point.x - x) * c + (point.z - z) * s, z: stair.z - (point.x - x) * s + (point.z - z) * c }));
+    }
+    syncStairHole(next, stair);
+  });
+}
 export function deleteStair(project: ProjectDocument, id: string): ProjectDocument { return atomic(project, next => { next.stairs = next.stairs.filter(s => s.id !== id); next.levels.forEach(level => level.surfaces.forEach(surface => { surface.holes = surface.holes.filter(h => h.stairId !== id); })); }); }
 function defaultRoof(level: ProjectLevel): ParametricRoof { return { id: projectId(), levelId: level.id, type: 'flat', footprint: levelOutline(level), baseHeight: level.height, pitch: 0, overhang: 0, rotation: 0, thickness: .15, finish: whiteFinish(), undersideFinish: whiteFinish() }; }
 export function addRoof(project: ProjectDocument, levelId: string, parameters: Partial<ParametricRoof> = {}): ProjectDocument { return atomic(project, next => { next.roofs.push({ ...defaultRoof(projectLevel(next, levelId)), ...parameters, levelId }); }); }

@@ -77,7 +77,11 @@ const sections: HelpSection[] = [
     "title": "Escaleras y huecos entre niveles",
     "steps": [
       "Necesitas dos niveles consecutivos. Selecciona el nivel inferior y abre Agregar → Escaleras. Elige Recta, Recta con descanso, En L, En U o En caracol. Durante la preparación, abre Escaleras en Croquis o elige Escaleras en Decoración.",
+      "En la vista 3D del móvil, al añadir una escalera se cierra el catálogo y queda seleccionada en el visor para colocarla. Pulsa Editar para abrir sus medidas y acabados. En Decoración, Editar te lleva a las propiedades de la escalera seleccionada.",
       "Selecciona la escalera en la escena o en Elementos y pulsa Editar para abrir sus propiedades. Puedes cambiar ancho, número de escalones, huella, posición y giro. La altura total se obtiene de los niveles conectados; Contrahuella muestra la altura de cada peldaño.",
+      "En 3D, toca la escalera y usa Mover para arrastrar las flechas o el control horizontal. También puedes arrastrar directamente la escalera seleccionada. Girar muestra el aro para cambiar su orientación. Estos controles están disponibles en Decoración durante la preparación y en el editor, también en móvil. En Planta, arrastra la escalera para cambiar su posición.",
+      "En el visor 3D, las flechas del teclado desplazan la escalera seleccionada y Q y E la giran. En el editor, Ajustar a cuadrícula, en Opciones de vista → Movimiento, activa los pasos de posición y los giros de 15°. Desactívalo para colocarla libremente.",
+      "El movimiento se guarda al soltar, junto con el hueco del piso superior. Deshacer construcción revierte ambos. En 3D, una ubicación inválida aparece roja y al soltar se conserva la posición anterior; Escape o cancelar el gesto descartan el movimiento provisional. En Planta, un movimiento inválido queda como borrador con un aviso. Cancelar borrador recupera la posición guardada.",
       "Más opciones reúne descanso, espesor del escalón y barandales. En caracol también puedes cambiar los radios interior y exterior, el ángulo de desarrollo y el sentido de giro. Acabado de escalera controla color y material.",
       "La escalera propone un hueco real en el piso superior. Debe caber en una superficie sin superponerse con otros huecos. En Planta puedes seleccionar el hueco y mover sus esquinas; la forma ajustada se conserva como elección propia.",
       "Si no cabe, revisa las medidas del espacio, forma y parámetros antes de añadirla otra vez. Una medida incompatible conserva la última construcción válida. Eliminar escalera retira también su hueco asociado.",
@@ -86,8 +90,8 @@ const sections: HelpSection[] = [
     "note": "Las comprobaciones geométricas sirven para visualizar espacios. No sustituyen el diseño estructural, la normativa de construcción ni una revisión profesional.",
     "image": {
       "file": "stairs.jpg",
-      "alt": "Catálogo de escaleras con cinco formas para conectar dos niveles.",
-      "caption": "Agregar → Escaleras reúne las cinco formas; selecciona una para añadirla al diseño."
+      "alt": "Escalera seleccionada en 3D con controles para moverla y girarla.",
+      "caption": "Selecciona la escalera y usa Mover o Girar; Editar abre sus medidas y acabados."
     }
   },
   {

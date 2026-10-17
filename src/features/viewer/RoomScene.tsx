@@ -17,7 +17,9 @@ import { registerAppActivity, registerBeforeAppUpdate } from '../../client/pwa/a
 import type { RoomSceneProps, SceneRuntime } from './sceneRuntime';
 import { disposeArchitecture, disposeContent } from './sceneResources';
 import { updateRoom, buildProjectScene, buildRoom } from './sceneArchitecture';
-import { sameSelection, canMove, canInteract, updateSelection } from './sceneSelection';
+import { sameSelection, canMove, canRotate, canInteract, sceneItemPosition, updateSelection } from './sceneSelection';
+import { StairTransformPreview } from './sceneStairEditing';
+import { updateSceneInteraction } from './sceneInteraction';
 import { fitOrbitCamera, resetCamera, finishViewTransition, startViewTransition } from './sceneCamera';
 import { updatePresentation } from './scenePresentation';
 
@@ -61,12 +63,12 @@ export default function RoomScene(props: RoomSceneProps) {
   useEffect(() => {
     const active = runtime.current;
     if (!active || !ready) return;
-    active.graphics = getGraphicsProfile(); active.postProcessing?.dispose(); active.postProcessing = null; active.postFailed = false;
+    active.cancelStairEdit?.(); active.graphics = getGraphicsProfile(); active.postProcessing?.dispose(); active.postProcessing = null; active.postFailed = false;
     buildRoom(active, current.current.room); updateSelection(active, current.current);
   }, [graphicsPreferences, ready]);
   useEffect(() => {
     if (runtime.current) runtime.current.needsRender = true;
-    if (props.paused) { directions.current.clear(); joystick.current = { x: 0, z: 0 }; setStick({ x: 0, z: 0 }); }
+    if (props.paused) { runtime.current?.cancelStairEdit?.(); directions.current.clear(); joystick.current = { x: 0, z: 0 }; setStick({ x: 0, z: 0 }); }
   }, [props.paused]);
   useEffect(() => {
     runtime.current?.renderer.domElement.setAttribute('aria-label', t('Visor 3D del cuarto. Arrastra para mirar. En recorrido: WASD o flechas para moverte, Q y E para girar, R y F para mirar arriba y abajo. Toca puertas y focos, o mira hacia ellos y pulsa Enter o espacio.'));
@@ -160,6 +162,7 @@ export default function RoomScene(props: RoomSceneProps) {
           const ratio = renderPixelRatio(window.devicePixelRatio, current.current.room.renderQuality, highResolution) * active.graphics.renderScale;
           const size = active.renderer.getSize(new THREE.Vector2());
           if (size.x !== width || size.y !== height || active.renderer.getPixelRatio() !== ratio) {
+            active.cancelStairEdit?.();
             active.postProcessing?.dispose(); active.postProcessing = null;
             active.renderer.setPixelRatio(ratio); active.renderer.setSize(width, height);
           }
@@ -207,7 +210,17 @@ export default function RoomScene(props: RoomSceneProps) {
             }
             let item: THREE.Object3D | null = hit.object;
             while (item && !item.userData.selection) item = item.parent;
-            if (item?.userData.selection) return item.userData.selection;
+            if (item?.userData.selection) {
+              const selected = item.userData.selection as Selection;
+              if (selected.kind === 'stair' && active.project) {
+                const stair = active.project.stairs.find(stair => stair.id === selected.id);
+                if (stair && active.activeLevelId !== stair.fromLevelId && active.activeLevelId !== stair.toLevelId) {
+                  if (!changeLevel) continue;
+                  current.current.onActiveLevelChange?.(stair.fromLevelId);
+                }
+              }
+              return selected;
+            }
           }
           return null;
         };
@@ -232,11 +245,46 @@ export default function RoomScene(props: RoomSceneProps) {
           return null;
         };
         let lastCommitError: Error | null = null;
+        const beginManipulation = (selected: Selection | null) => {
+          active.manipulating = selected;
+          const state = current.current;
+          if (selected?.kind === 'stair' && state.project && !active.stairEdit) {
+            const group = active.objects.get(`stair:${selected.id}`);
+            if (group && state.project.stairs.some(stair => stair.id === selected.id)) active.stairEdit = new StairTransformPreview(state.project, selected.id, group);
+          }
+        };
         const commitProxy = (force = false) => {
           if (!active.pendingEdit) return;
           const state = current.current;
           const selected = active.manipulating;
           if (state.readOnly || state.mode !== 'orbit' || !selected) { active.pendingEdit = false; return; }
+          if (selected.kind === 'stair') {
+            if (!state.project || !state.onProjectChange || !active.stairEdit) { active.pendingEdit = false; return false; }
+            const validate = force || performance.now() - active.lastOpeningBuild >= 80;
+            if (validate) active.lastOpeningBuild = performance.now();
+            active.pendingEdit = !validate;
+            const draft = active.stairEdit;
+            draft.preview({ x: proxy.position.x, z: proxy.position.z, rotation: THREE.MathUtils.radToDeg(proxy.rotation.y) }, validate);
+            active.needsRender = true;
+            if (active.selectionBox) { active.selectionBox.setFromObject(draft.group); (active.selectionBox.material as THREE.LineBasicMaterial).color.set(draft.error ? '#d63f3f' : '#b78436'); }
+            setNotice(draft.error);
+            if (!force) return !draft.error;
+            try {
+              const next = draft.apply(state.project);
+              draft.dispose(); active.stairEdit = undefined;
+              if (state.onProjectChange(next) === false) throw new Error('No se pudo aplicar el cambio.');
+              active.project = next;
+              const room = projectToRoom(next, state.activeLevelId ?? next.activeLevelId);
+              current.current = { ...state, project: next, room };
+              updateRoom(active, room); lastCommitError = null; setNotice('');
+              return true;
+            } catch (cause) {
+              if (active.stairEdit) { active.stairEdit.dispose(); active.stairEdit = undefined; }
+              lastCommitError = cause instanceof Error ? cause : new Error('No se puede colocar aquí.');
+              setNotice(lastCommitError.message); active.needsRender = true;
+              return false;
+            }
+          }
           if (selected.kind === 'opening' && !force && performance.now() - active.lastOpeningBuild < 80) return;
           active.pendingEdit = false;
           active.lastOpeningBuild = performance.now();
@@ -255,10 +303,12 @@ export default function RoomScene(props: RoomSceneProps) {
             return true;
           } catch (cause) { lastCommitError = cause instanceof Error ? cause : new Error('No se puede colocar aquí.'); setNotice(lastCommitError.message); return false; }
         };
-        unregisterFlush = registerBeforeAppUpdate(async () => { if (active.pendingEdit && commitProxy(true) === false) throw lastCommitError ?? new Error('No se puede colocar aquí.'); });
+        unregisterFlush = registerBeforeAppUpdate(async () => { if (active.stairEdit) throw new Error('El movimiento pendiente se conserva. Revísalo antes de continuar.'); if (active.pendingEdit && commitProxy(true) === false) throw lastCommitError ?? new Error('No se puede colocar aquí.'); });
         unregisterActivity = registerAppActivity(() => !current.current.publicView && (active.directDragging || transform.dragging) ? 'El movimiento pendiente se conserva. Revísalo antes de continuar.' : false);
         const finishDrag = () => {
+          if (active.stairEdit?.hasPreview) active.pendingEdit = true;
           commitProxy(true);
+          active.stairEdit?.dispose(); active.stairEdit = undefined;
           active.directDragging = false;
           active.manipulating = null;
           active.pendingEdit = false;
@@ -268,7 +318,7 @@ export default function RoomScene(props: RoomSceneProps) {
         };
         const changed = () => { if (active.transform.dragging) active.pendingEdit = true; };
         const dragging = (event: { value: unknown }) => {
-          if (event.value) { active.manipulating = current.current.selection; controls.enabled = false; }
+          if (event.value) { beginManipulation(current.current.selection); controls.enabled = false; }
           else finishDrag();
         };
         transform.addEventListener('objectChange', changed);
@@ -287,10 +337,11 @@ export default function RoomScene(props: RoomSceneProps) {
           if (transform.axis) { pointer.handled = true; controls.enabled = false; return; }
           const selected = pick(event);
           if (current.current.transformMode !== 'translate' || !canMove(selected) || !sameSelection(selected, current.current.selection)) return;
-          directPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -proxy.position.y);
+          const stairHit = selected?.kind === 'stair' ? ray.intersectObject(active.objects.get(`stair:${selected.id}`)!, true)[0] : null;
+          directPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -(stairHit?.point.y ?? proxy.position.y));
           if (!ray.ray.intersectPlane(directPlane, point)) { directPlane = null; return; }
           dragOffset.copy(proxy.position).sub(point);
-          active.manipulating = selected;
+          beginManipulation(selected);
           active.directDragging = true;
           controls.enabled = false;
           pointer.handled = true;
@@ -299,6 +350,7 @@ export default function RoomScene(props: RoomSceneProps) {
         };
         const move = (event: PointerEvent) => {
           if (active.viewTransition) { event.preventDefault(); event.stopImmediatePropagation(); return; }
+          if ((transform.dragging || active.directDragging) && pointer && pointer.id !== event.pointerId) { event.preventDefault(); event.stopImmediatePropagation(); return; }
           if (!pointer || pointer.id !== event.pointerId) return;
           if (active.directDragging && directPlane) {
             event.preventDefault(); event.stopImmediatePropagation();
@@ -317,6 +369,7 @@ export default function RoomScene(props: RoomSceneProps) {
         };
         const up = (event: PointerEvent) => {
           pointers.delete(event.pointerId);
+          if ((transform.dragging || active.directDragging) && pointer && pointer.id !== event.pointerId) { event.preventDefault(); event.stopImmediatePropagation(); return; }
           if (active.viewTransition) { pointer = null; event.preventDefault(); event.stopImmediatePropagation(); return; }
           if (!pointer || pointer.id !== event.pointerId) return;
           if (active.directDragging) { event.preventDefault(); event.stopImmediatePropagation(); finishDrag(); if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId); }
@@ -327,21 +380,31 @@ export default function RoomScene(props: RoomSceneProps) {
           }
           pointer = null;
         };
-        const cancel = () => { pointers.clear(); if (transform.dragging) transform.pointerUp(null); if (active.directDragging) finishDrag(); pointer = null; controls.enabled = current.current.mode === 'orbit' && !active.viewTransition; };
+        const cancel = (event?: PointerEvent) => {
+          if ((transform.dragging || active.directDragging) && pointer && event && pointer.id !== event.pointerId) { event.preventDefault(); event.stopImmediatePropagation(); return; }
+          pointers.clear();
+          if (active.stairEdit) { active.stairEdit.dispose(); active.stairEdit = undefined; active.pendingEdit = false; setNotice(''); }
+          if (transform.dragging) transform.pointerUp(null);
+          if (active.directDragging) finishDrag();
+          pointer = null; controls.enabled = current.current.mode === 'orbit' && !active.viewTransition;
+          updateSelection(active, current.current);
+        };
+        active.cancelStairEdit = () => { if (active.stairEdit) cancel(); };
         const keyDown = (event: KeyboardEvent) => {
           if (event.target !== canvas) return;
           if (active.viewTransition) { if (KEY_DIRECTIONS[event.code] || event.code === 'Enter' || event.code === 'Space') event.preventDefault(); return; }
           if (event.code === 'Escape') { cancel(); current.current.onSelect(null); return; }
+          if (active.stairEdit && (transform.dragging || active.directDragging)) { if (KEY_DIRECTIONS[event.code]) event.preventDefault(); return; }
           if (current.current.mode === 'orbit' && !current.current.readOnly && canMove(current.current.selection)) {
             const selected = current.current.selection;
-            const position = selected ? itemWorldPosition(current.current.room, selected) : null;
+            const position = selected ? sceneItemPosition(current.current, selected) : null;
             const step = current.current.room.editing.snap ? current.current.room.editing.step : 0.05;
             const shift = ({ ArrowLeft: [-step, 0, 0], ArrowRight: [step, 0, 0], ArrowUp: [0, 0, -step], ArrowDown: [0, 0, step], KeyR: [0, step, 0], KeyF: [0, -step, 0] } as Record<string, number[]>)[event.code];
-            const rotation = selected?.kind === 'furniture' && (event.code === 'KeyQ' || event.code === 'KeyE');
-            if (position && selected && (shift || rotation)) {
+            const rotation = canRotate(selected) && (event.code === 'KeyQ' || event.code === 'KeyE');
+            if (position && selected && (shift || rotation) && !(selected.kind === 'stair' && shift?.[1])) {
               event.preventDefault();
-              active.manipulating = selected;
-              proxy.position.set(position.x + (shift?.[0] ?? 0), (current.current.room.elevation ?? 0) + position.y + (shift?.[1] ?? 0), position.z + (shift?.[2] ?? 0));
+              beginManipulation(selected);
+              proxy.position.set(position.x + (shift?.[0] ?? 0), position.y + (shift?.[1] ?? 0), position.z + (shift?.[2] ?? 0));
               if (rotation) proxy.rotation.y += THREE.MathUtils.degToRad(event.code === 'KeyQ' ? 15 : -15);
               active.pendingEdit = true; commitProxy(true); active.manipulating = null; updateSelection(active, current.current);
             }
@@ -370,6 +433,7 @@ export default function RoomScene(props: RoomSceneProps) {
         window.addEventListener('keyup', keyUp);
         window.addEventListener('blur', blur);
         removeEvents = () => {
+          active.stairEdit?.dispose(); active.stairEdit = undefined;
           canvas.removeEventListener('pointerdown', down, true);
           canvas.removeEventListener('pointermove', move, true);
           canvas.removeEventListener('pointerup', up, true);
@@ -449,6 +513,7 @@ export default function RoomScene(props: RoomSceneProps) {
               }
             } else active.renderer.render(scene, camera);
             active.needsRender = false;
+            updateSceneInteraction(active, current.current);
             if (time - lastMetricsUpdate >= 1000) {
               const resources = sceneResourceUsage(scene), info = active.renderer.info;
               canvas.dataset.sceneMetrics = JSON.stringify({ sampledAt: Date.now(), activeLevelId: active.activeLevelId ?? active.builtRoom?.levelId ?? null, levels: active.project?.levels.length ?? 1, residentLevels: active.levelViews ? [...active.levelViews.values()].filter(view => view.resident).length : 1, architectureBuilds: active.levelViews ? [...active.levelViews.values()].reduce((sum, view) => sum + (view.runtime.architectureBuilds ?? 0), 0) : active.architectureBuilds ?? 0, gpuGeometries: info.memory.geometries, gpuTextures: info.memory.textures, drawCalls: info.render.drawCalls, renderedTriangles: info.render.triangles, frameMs: Math.round((performance.now() - renderStarted) * 100) / 100, walk: active.walkState ? { levelId: active.walkState.levelId, feetY: active.walkState.y, eyeY: active.walkState.eyeY, x: active.walkState.x, z: active.walkState.z, yaw: active.yaw, surfaceId: active.walkState.surfaceId, blocked: active.walkState.blocked } : null, ...resources }); lastMetricsUpdate = time;
@@ -519,6 +584,7 @@ export default function RoomScene(props: RoomSceneProps) {
     if (!active || !ready) return;
     const previousLevelId = active.activeLevelId;
     const previousLevelsMode = active.presentation?.levels;
+    if (active.stairEdit && (!effectiveProject || previousLevelId !== effectiveActiveLevelId || !active.stairEdit.compatible(effectiveProject))) { active.cancelStairEdit?.(); setNotice('El movimiento se canceló porque cambió la construcción.'); }
     active.project = effectiveProject; active.activeLevelId = effectiveActiveLevelId ?? effectiveProject?.activeLevelId; active.presentation = props.presentation;
     if (active.roomId !== props.roomId || active.publicView !== props.publicView) {
       active.roomId = props.roomId;
@@ -537,6 +603,7 @@ export default function RoomScene(props: RoomSceneProps) {
   useEffect(() => {
     if (runtime.current && ready) {
       const active = runtime.current;
+      active.cancelStairEdit?.();
       directions.current.clear();
       joystickPointer.current = null;
       joystick.current = { x: 0, z: 0 };
@@ -566,6 +633,7 @@ export default function RoomScene(props: RoomSceneProps) {
     const active = runtime.current;
     if (!active || !ready) return;
     if (props.readOnly || props.mode !== 'orbit' || active.manipulating && !sameSelection(active.manipulating, props.selection)) {
+      active.cancelStairEdit?.();
       active.transform.pointerUp(null);
       active.directDragging = false;
       active.pendingEdit = false;

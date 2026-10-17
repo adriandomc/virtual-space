@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createDefaultProject, projectToRoom, updateProjectRoom } from '../../domain/project/projectDocument';
-import { addHole, addLevel, addRoom, movePoint } from '../../domain/project/projectOperations';
+import { addHole, addLevel, addRoom, addStair, movePoint } from '../../domain/project/projectOperations';
 import { addFurniture } from '../../domain/project/model';
 import { applyPlanMove, containingFloor, planUpdateActivityReason, samePlanBase, type PlanMoveIntent } from './planDraft';
 
@@ -47,4 +47,42 @@ test('unfinished plan tools block an update synchronously, while a released vali
   }
   assert.equal(planUpdateActivityReason({ ...idle, pending: true }), '', 'the update flush phase may persist a released valid movement');
   assert.match(planUpdateActivityReason({ ...idle, pending: true, blocked: true }), /movimiento pendiente/);
+});
+
+test('plan stair moves keep their linked upper floor opening in the same operation for every shape', () => {
+  for (const type of ['straight', 'landing', 'l', 'u', 'spiral'] as const) {
+    const levels = addLevel(createDefaultProject(), { copy: true });
+    const base = addStair(levels, { fromLevelId: levels.levels[0].id, toLevelId: levels.levels[1].id, type, run: 3.4 });
+    const stair = base.stairs[0], hole = base.levels[1].surfaces.flatMap(surface => surface.holes)[0];
+    const intent: PlanMoveIntent = { kind: 'stair', id: stair.id, position: { x: stair.x + .1, z: stair.z + .1 } };
+    for (const level of base.levels) {
+      assert(samePlanBase(base, base, level.id, intent));
+      const moved = applyPlanMove(base, level.id, intent), movedHole = moved.levels[1].surfaces.flatMap(surface => surface.holes)[0];
+      assert.equal(moved.stairs[0].x, stair.x + .1); assert.equal(moved.stairs[0].z, stair.z + .1);
+      assert.equal(movedHole.id, hole.id); assert.equal(movedHole.stairId, stair.id);
+      for (const axis of ['x', 'z'] as const) for (const extent of [Math.min, Math.max]) assert(Math.abs(extent(...movedHole.vertices.map(point => point[axis])) - extent(...hole.vertices.map(point => point[axis])) - .1) < 1e-9, type + ' moves the hole by the same delta');
+      assert.equal(base.stairs[0].x, stair.x); assert.deepEqual(base.levels[1].surfaces.flatMap(surface => surface.holes)[0], hole);
+    }
+    assert.throws(() => applyPlanMove(base, base.levels[0].id, { ...intent, position: { x: 100, z: 0 } }));
+    assert.deepEqual(base.levels[1].surfaces.flatMap(surface => surface.holes)[0], hole, 'invalid drags never partly move an opening');
+  }
+});
+
+test('a pending plan stair drag checks both connected floors without blocking unrelated finishes or levels', () => {
+  const levels = addLevel(addLevel(createDefaultProject(), { copy: true }), { copy: true });
+  const base = addStair(levels, { fromLevelId: levels.levels[0].id, toLevelId: levels.levels[1].id, run: 3.4 });
+  const stair = base.stairs[0], intent: PlanMoveIntent = { kind: 'stair', id: stair.id, position: { x: stair.x + .1, z: stair.z } };
+  const changedUpper = structuredClone(base); changedUpper.levels[1].points[0].x -= .1;
+  assert.equal(samePlanBase(base, changedUpper, base.levels[0].id, intent), false);
+  const changedLower = structuredClone(base); changedLower.levels[0].height += .1;
+  assert.equal(samePlanBase(base, changedLower, base.levels[1].id, intent), false);
+  const changedHole = structuredClone(base); changedHole.levels[1].surfaces.flatMap(surface => surface.holes)[0].vertices[0].x += .1;
+  assert.equal(samePlanBase(base, changedHole, base.levels[0].id, intent), false);
+  const latest = structuredClone(base); latest.levels[2].points[0].x -= .1; latest.stairs[0].finish.color = '#223344';
+  assert(samePlanBase(base, latest, base.levels[0].id, intent));
+  const moved = applyPlanMove(latest, base.levels[0].id, intent);
+  assert.equal(moved.stairs[0].finish.color, '#223344'); assert.equal(moved.levels[2].points[0].x, latest.levels[2].points[0].x);
+  const removed = structuredClone(base); removed.stairs = [];
+  assert.equal(samePlanBase(base, removed, base.levels[0].id, intent), false);
+  assert.equal(samePlanBase(removed, base, base.levels[0].id, intent), false);
 });

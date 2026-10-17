@@ -8,12 +8,13 @@ import type { Room, Selection, ViewMode } from '../../domain/project/types';
 import type { ProjectDocument, ProjectLevel } from '../../domain/project/projectDocument';
 import type { ArchitecturalNavigation, WalkState } from './architecturalNavigation';
 import type { GraphicsProfile } from '../../client/graphics/graphicsSettings';
+import type { StairTransformPreview } from './sceneStairEditing';
 
 export type RoomSceneProps = {
   room: Room;
   project?: ProjectDocument;
   activeLevelId?: string;
-  onProjectChange?: (project: ProjectDocument) => void;
+  onProjectChange?: (project: ProjectDocument) => boolean | void;
   onActiveLevelChange?: (levelId: string) => void;
   presentation?: { walls: 'full' | 'cut' | 'hidden'; roofs: boolean; levels: 'active' | 'below' | 'all' };
   paused?: boolean;
@@ -78,6 +79,8 @@ export type SceneRuntime = {
   transform: TransformControls;
   proxy: THREE.Object3D;
   manipulating: Selection | null;
+  stairEdit?: StairTransformPreview;
+  cancelStairEdit?: () => void;
   directDragging: boolean;
   pendingEdit: boolean;
   lastOpeningBuild: number;
