@@ -386,7 +386,7 @@ export default function RoomScene(props: RoomSceneProps) {
             if (!force) { checkpoints?.queue(next); return true; }
             next = itemEdit.apply(state.room);
             if (next !== state.room && state.onChange(next) === false) throw new Error('No se pudo aplicar el cambio.');
-            itemEdit.dispose(); itemEdit = undefined; checkpoints?.stop(); checkpoints = undefined; dragShadowLights = [];
+            itemEdit.dispose(); itemEdit = undefined; checkpoints?.stop(next === state.room); checkpoints = undefined; dragShadowLights = [];
             current.current = { ...state, room: next };
             if (state.project) { active.project = updateProjectRoom(state.project, active.activeLevelId ?? state.project.activeLevelId, next); current.current.project = active.project; }
             updateRoom(active, next);

@@ -107,6 +107,34 @@ test('render scale changes the drawing buffer immediately and color edits preser
   expect(after.architectureBuilds).toBe(before.architectureBuilds);
 });
 
+test('returning a long drag to its original position removes its recovery checkpoint', async ({ page, context }) => {
+  const project = await sample(context.request), canvas = await open(page, project);
+  const checkpoint = () => page.evaluate(id => new Promise<ProjectDocument | undefined>((resolve, reject) => {
+    const request = indexedDB.open('3d-space-v3', 1);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const db = request.result, tx = db.transaction('meta', 'readonly'), values = tx.objectStore('meta').getAll();
+      tx.oncomplete = () => { db.close(); resolve(values.result.find(value => value.roomId === id && value.project)?.project); };
+      tx.onabort = () => { db.close(); reject(tx.error); };
+    };
+  }), project.id);
+  await page.getByRole('button', { name: 'Elementos', exact: true }).click();
+  await page.locator('.tree-item').filter({ hasText: 'Buró' }).first().click();
+  await expect.poll(async () => JSON.parse((await canvas.getAttribute('data-scene-interaction'))!).handles.some((handle: { axis: string }) => handle.axis === 'X')).toBe(true);
+  await metrics(canvas);
+  const handle = JSON.parse((await canvas.getAttribute('data-scene-interaction'))!).handles.find((handle: { axis: string }) => handle.axis === 'X').points[0];
+  const box = (await canvas.boundingBox())!, grab = { x: box.x + handle.x, y: box.y + handle.y };
+  await page.mouse.move(grab.x, grab.y); await page.mouse.down(); await page.mouse.move(grab.x + 40, grab.y, { steps: 8 });
+  await expect.poll(async () => (await checkpoint())?.levels[0].furniture[0].x).not.toBeUndefined();
+  expect((await checkpoint())!.levels[0].furniture[0].x).not.toBe(project.levels[0].furniture[0].x);
+  await page.mouse.move(grab.x, grab.y, { steps: 8 }); await page.mouse.up();
+  await expect.poll(checkpoint).toBeUndefined();
+  expect(await saved(context.request, project.id)).toEqual(project);
+  await page.reload(); await expect(page.getByLabel('Nombre del proyecto', { exact: true })).toBeEditable();
+  expect(await checkpoint()).toBeUndefined();
+  expect(await saved(context.request, project.id)).toEqual(project);
+});
+
 test('a lost graphics context recreates the viewer without resetting the walkthrough or design', async ({ page, context }) => {
   const project = await sample(context.request), canvas = await open(page, project);
   test.skip((await canvas.getAttribute('data-backend')) !== 'webgl2', 'This regression exercises the WebGL context-loss event. Hardware WebGPU is tested separately.');

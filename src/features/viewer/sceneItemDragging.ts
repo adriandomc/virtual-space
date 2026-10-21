@@ -82,6 +82,13 @@ export class GestureCheckpoints {
   }
   stop(clear = false) {
     this.stopped = true; this.next = undefined;
-    if (clear && this.write) this.tail = this.tail.then(() => this.write!(null)).catch(this.onError);
+    if (clear && this.write) {
+      // Reserve cleanup's generation now, before another gesture can start. Persistence
+      // serializes the actual storage writes and rechecks that generation before clearing.
+      let clearing: Promise<void>;
+      try { clearing = this.write(null); }
+      catch (cause) { clearing = Promise.reject(cause); }
+      this.tail = Promise.all([this.tail, clearing]).then(() => {}).catch(this.onError);
+    }
   }
 }
