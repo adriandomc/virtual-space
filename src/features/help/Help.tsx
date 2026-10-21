@@ -149,9 +149,12 @@ const sections: HelpSection[] = [
     "title": "Ajustar el rendimiento del dispositivo",
     "steps": [
       "Abre Ajustes → Gráficos desde la biblioteca o editor. Automático adapta las opciones al dispositivo. Puedes fijar una opción concreta y dejar las demás en Automático; Manual conserva tus valores.",
+      "Automático observa el rendimiento mientras navegas y ajusta gradualmente las opciones que no hayas fijado. Una pausa o el primer instante de carga no provoca un cambio de calidad. Cambiar de nivel conserva el ajuste del dispositivo.",
       "Puedes ajustar sombras, resolución de texturas, escala de renderizado, detalle de geometría, distancia de detalle, sombras de contacto y límite de fotogramas.",
       "Si el visor va lento, reduce la escala y las sombras, usa menos detalle y elige 30 fotogramas. Estándar también reduce el trabajo de materiales frente a Realista e Hiperrealista.",
-      "Restablecer gráficos vuelve a la configuración automática. Estas preferencias se guardan solo en este navegador, sin cambiar los ajustes de colaboradores ni de otros dispositivos."
+      "Restablecer gráficos vuelve a la configuración automática. Estas preferencias se guardan solo en este navegador, sin cambiar los ajustes de colaboradores ni de otros dispositivos.",
+      "Al abrir el taller o dejar la aplicación en segundo plano, el visor pausa su dibujo. Al volver conserva la vista. Si el navegador interrumpe los gráficos, la aplicación intenta recuperar el visor; si no puede, pulsa Reintentar. No hace falta borrar tus diseños.",
+      "Si un material no termina de cargar, se intenta usar su imagen original. Puedes seguir trabajando mientras se recupera."
     ],
     "note": "Calidad visual forma parte del diseño. Gráficos controla el rendimiento local y puede tener valores distintos en cada dispositivo."
   },
@@ -218,6 +221,7 @@ const sections: HelpSection[] = [
     "steps": [
       "Con conexión, entra a tu cuenta y abre Ajustes → Sin conexión desde la biblioteca o el editor. Pulsa Preparar diseños y espera a que Aplicación y Diseños y modelos estén disponibles.",
       "La preparación descarga todos los niveles de tus diseños privados, los croquis de cada planta, sus modelos y tu biblioteca de modelos. Un diseño con colaboradores, invitaciones pendientes o enlace público necesita una copia personal independiente.",
+      "La preparación incluye los materiales y sus distintas resoluciones. Al actualizar, se comprueban y reutilizan los recursos que no cambiaron. Si una descarga falla, se conserva la copia completa anterior; espera a que la nueva preparación termine antes de desconectarte.",
       "Activa Modo sin conexión para trabajar localmente, incluso si tienes internet. La elección se conserva al cerrar y reabrir y se comparte entre las pestañas de esa cuenta.",
       "Puedes abrir la biblioteca, crear y editar diseños, dibujar plantas, importar proyectos, crear modelos y recorrer habitaciones. No se envían cambios ni se consultan notificaciones. Compartir y la colaboración permanecen desactivados.",
       "Cuando quieras enviar tus cambios, vuelve a tener conexión y desactiva el modo. La aplicación comprueba la cuenta y los permisos y sincroniza todos los pendientes, también los diseños que no tienes abiertos y los modelos no insertados.",

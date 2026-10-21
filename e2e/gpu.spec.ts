@@ -23,7 +23,7 @@ test('hardware browser keeps resources stable through twenty level switches and 
   const results: unknown[] = [], errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   async function metrics(canvas: Locator, after: number, levelId: string, walk: boolean) {
     await expect.poll(async () => {
-      if (!walk) { await canvas.hover(); await page.mouse.wheel(0, 1); }
+      await canvas.dispatchEvent('space-profile-snapshot');
       const raw = await canvas.getAttribute('data-scene-metrics'), value = raw ? JSON.parse(raw) : null;
       return value?.sampledAt >= after && value?.activeLevelId === levelId && (!walk || Boolean(value.walk));
     }, { timeout: 25000, intervals: [100, 250] }).toBe(true);

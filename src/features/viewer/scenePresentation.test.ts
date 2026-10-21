@@ -39,3 +39,43 @@ test('a lower slab ceiling never reveals an unrelated roof and a ceiling without
   updatePresentation(context.runtime, context.props, .016); assert(context.runtime.projectExtras!.children.every(group => !group.children[0].layers.isEnabled(0)));
   context.props.presentation!.roofs = true; updatePresentation(context.runtime, context.props, .016); assert(context.runtime.projectExtras!.children.every(group => group.children[0].layers.isEnabled(0)));
 });
+
+test('cached level layers still reset slab ceiling overrides and update camera-facing walls', () => {
+  const project = addLevel(createDefaultProject(), { copy: true }), lower = project.levels[0], upper = project.levels[1];
+  const { runtime, props } = fixture(project);
+  runtime.activeLevelId = lower.id;
+  const upperView = runtime.levelViews!.get(upper.id)!.runtime;
+  const slab = new THREE.Object3D(); slab.userData.slabSurfaceId = upper.surfaces[0].id;
+  upperView.content.add(slab); upperView.objects.set(`floor:${upper.surfaces[0].id}`, slab);
+  const lowerView = runtime.levelViews!.get(lower.id)!.runtime, wall = new THREE.Group();
+  wall.userData.selection = { kind: 'wall', id: lower.walls[0].id };
+  lowerView.walls.push({ group: wall, index: 0, midpoint: { x: 0, z: 0 }, inward: { x: 1, z: 0 } } as typeof lowerView.walls[number]);
+  runtime.camera.position.x = 1;
+  updatePresentation(runtime, props, .016); assert.equal(slab.layers.mask, 2); assert.equal(wall.visible, true);
+  props.selection = { kind: 'ceiling', id: upper.surfaces[0].id };
+  updatePresentation(runtime, props, .016); assert.equal(slab.layers.mask, 1);
+  props.selection = null; runtime.camera.position.x = -1;
+  updatePresentation(runtime, props, .016); assert.equal(slab.layers.mask, 2); assert.equal(wall.visible, false);
+});
+
+test('independent ceiling fades settle even when visible surfaces have opposite targets', () => {
+  const { runtime, props } = fixture(); runtime.animateView = true; runtime.ceilingOpacity = 0;
+  const view = runtime.levelViews!.get(runtime.activeLevelId!)!.runtime;
+  const first = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial()), second = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+  first.userData.selection = { kind: 'ceiling', id: 'first' }; second.userData.selection = { kind: 'ceiling', id: 'second' };
+  first.material.opacity = second.material.opacity = 0; view.ceilings = [first, second]; view.content.add(first, second);
+  props.selection = { kind: 'ceiling', id: 'first' };
+  assert.equal(updatePresentation(runtime, props, 1 / 60), true);
+  for (let frame = 0; frame < 100; frame++) updatePresentation(runtime, props, 1 / 60);
+  assert.equal(updatePresentation(runtime, props, 1 / 60), false);
+  assert.equal(first.material.opacity, 1); assert.equal(second.material.opacity, 0);
+  props.selection = { kind: 'ceiling', id: 'second' };
+  for (let frame = 0; frame < 100; frame++) updatePresentation(runtime, props, 1 / 60);
+  assert.equal(updatePresentation(runtime, props, 1 / 60), false);
+  assert.equal(first.material.opacity, 0); assert.equal(second.material.opacity, 1);
+  props.selection = null; props.presentation!.roofs = true;
+  for (let frame = 0; frame < 100; frame++) updatePresentation(runtime, props, 1 / 60);
+  assert.equal(updatePresentation(runtime, props, 1 / 60), false);
+  assert.equal(first.material.opacity, 1); assert.equal(second.material.opacity, 1);
+  first.geometry.dispose(); first.material.dispose(); second.geometry.dispose(); second.material.dispose();
+});

@@ -26,6 +26,26 @@
         "width": 1024,
         "height": 1024
       }
+    },
+    "compressed": {
+      "512": {
+        "path": "/materials/ktx2/512/wood/color.ktx2",
+        "bytes": 81943,
+        "sha256": "5c5b8e0c2aefb11b54c1ed4dafd548e8037a5edab9b7a8401b9c78209cab9956",
+        "width": 512,
+        "height": 512,
+        "encoding": "basis-lz",
+        "transfer": "srgb"
+      },
+      "1024": {
+        "path": "/materials/ktx2/1024/wood/color.ktx2",
+        "bytes": 225605,
+        "sha256": "b8232d485f34ea83729324f9a547a43797951882a9e65623ab80d9549673f2e5",
+        "width": 1024,
+        "height": 1024,
+        "encoding": "basis-lz",
+        "transfer": "srgb"
+      }
     }
   },
   {
@@ -54,6 +74,26 @@
         "sha256": "452247f0d0d1b7fc7f8324ff3b6ed60bcc6de1405f4284eeb8d9bce90d4939c2",
         "width": 1024,
         "height": 1024
+      }
+    },
+    "compressed": {
+      "512": {
+        "path": "/materials/ktx2/512/wood/normal.ktx2",
+        "bytes": 57854,
+        "sha256": "0c7f3b11eb685634037f1fa36eead23dc1d4e442a23943701fd92e2372547b8e",
+        "width": 512,
+        "height": 512,
+        "encoding": "uastc",
+        "transfer": "linear"
+      },
+      "1024": {
+        "path": "/materials/ktx2/1024/wood/normal.ktx2",
+        "bytes": 567779,
+        "sha256": "4bee0ca270c98eed1fc5346df31cb20fabd1267bab0a63191eafdb444aafb5c8",
+        "width": 1024,
+        "height": 1024,
+        "encoding": "uastc",
+        "transfer": "linear"
       }
     }
   },
@@ -84,6 +124,26 @@
         "width": 1024,
         "height": 1024
       }
+    },
+    "compressed": {
+      "512": {
+        "path": "/materials/ktx2/512/wood/arm.ktx2",
+        "bytes": 28792,
+        "sha256": "151b7208e48eddc71d9bff01a08b203f7c6de97eaf1909ea25cce0275711107b",
+        "width": 512,
+        "height": 512,
+        "encoding": "basis-lz",
+        "transfer": "linear"
+      },
+      "1024": {
+        "path": "/materials/ktx2/1024/wood/arm.ktx2",
+        "bytes": 139528,
+        "sha256": "88d37c967a79be738ddbaccb88fe55d6f7be6710f6ce491b11d050eaa1d004e0",
+        "width": 1024,
+        "height": 1024,
+        "encoding": "basis-lz",
+        "transfer": "linear"
+      }
     }
   },
   {
@@ -92,7 +152,7 @@
     "author": {
       "Rob Tuytel": "All"
     },
-    "tileMeters": 1.0,
+    "tileMeters": 1,
     "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/white_plaster_02/white_plaster_02_diff_1k.jpg",
     "bytes": 527219,
     "md5": "7b10c2686bcfd76d1f309a20fd06b57e",
@@ -113,6 +173,26 @@
         "width": 1024,
         "height": 1024
       }
+    },
+    "compressed": {
+      "512": {
+        "path": "/materials/ktx2/512/plaster/color.ktx2",
+        "bytes": 89915,
+        "sha256": "7afd0574598a05a351fa0b19191c95da779e6e27c7438315a63502f65e2fc9f9",
+        "width": 512,
+        "height": 512,
+        "encoding": "basis-lz",
+        "transfer": "srgb"
+      },
+      "1024": {
+        "path": "/materials/ktx2/1024/plaster/color.ktx2",
+        "bytes": 241820,
+        "sha256": "2737737a2b9df86c0689a3778a430e5d5755a8fb485c20a4f87ef33256f37a2b",
+        "width": 1024,
+        "height": 1024,
+        "encoding": "basis-lz",
+        "transfer": "srgb"
+      }
     }
   },
   {
@@ -121,7 +201,7 @@
     "author": {
       "Rob Tuytel": "All"
     },
-    "tileMeters": 1.0,
+    "tileMeters": 1,
     "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/white_plaster_02/white_plaster_02_nor_gl_1k.jpg",
     "bytes": 652310,
     "md5": "55fc03203ebf1dc703a380fde93ff502",
@@ -142,6 +222,26 @@
         "width": 1024,
         "height": 1024
       }
+    },
+    "compressed": {
+      "512": {
+        "path": "/materials/ktx2/512/plaster/normal.ktx2",
+        "bytes": 237489,
+        "sha256": "ab122a5a5923c86de29cc3a310492dedb569cf81e2a5b4f93b5a94a162a149e6",
+        "width": 512,
+        "height": 512,
+        "encoding": "uastc",
+        "transfer": "linear"
+      },
+      "1024": {
+        "path": "/materials/ktx2/1024/plaster/normal.ktx2",
+        "bytes": 1164854,
+        "sha256": "b74cdb75e1314db309fdc94e317a0f7a50d9abe7a7aba7ccee2e997f05c74ef9",
+        "width": 1024,
+        "height": 1024,
+        "encoding": "uastc",
+        "transfer": "linear"
+      }
     }
   },
   {
@@ -150,7 +250,7 @@
     "author": {
       "Rob Tuytel": "All"
     },
-    "tileMeters": 1.0,
+    "tileMeters": 1,
     "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/white_plaster_02/white_plaster_02_arm_1k.jpg",
     "bytes": 191017,
     "md5": "4a5a080e2421fac4fa602680bef4c8b1",
@@ -170,6 +270,26 @@
         "sha256": "2bb1115821715dfd8bbd1c5a294a5bb43b97d5c46b1aa8aa8f744bcaf5eeeb10",
         "width": 1024,
         "height": 1024
+      }
+    },
+    "compressed": {
+      "512": {
+        "path": "/materials/ktx2/512/plaster/arm.ktx2",
+        "bytes": 87175,
+        "sha256": "7d2fde1bf37c7b6b73730d5536be44e7a80898bd0e28182956c11d4fde675606",
+        "width": 512,
+        "height": 512,
+        "encoding": "basis-lz",
+        "transfer": "linear"
+      },
+      "1024": {
+        "path": "/materials/ktx2/1024/plaster/arm.ktx2",
+        "bytes": 230311,
+        "sha256": "66b55674d6ce849bb6086ec49feaff896f48a1cfe6478ad61f85b007e00b4b91",
+        "width": 1024,
+        "height": 1024,
+        "encoding": "basis-lz",
+        "transfer": "linear"
       }
     }
   },
@@ -200,6 +320,26 @@
         "width": 1024,
         "height": 1024
       }
+    },
+    "compressed": {
+      "512": {
+        "path": "/materials/ktx2/512/stone/color.ktx2",
+        "bytes": 91526,
+        "sha256": "e71b343a73fe362f55a072d562468cf0767cd6a19593a03523cda34490c2f9d5",
+        "width": 512,
+        "height": 512,
+        "encoding": "basis-lz",
+        "transfer": "srgb"
+      },
+      "1024": {
+        "path": "/materials/ktx2/1024/stone/color.ktx2",
+        "bytes": 246376,
+        "sha256": "83ba51eed17919c8b2420a1fe3206026d1f39bc32ae8a9b683105a429e0f48a3",
+        "width": 1024,
+        "height": 1024,
+        "encoding": "basis-lz",
+        "transfer": "srgb"
+      }
     }
   },
   {
@@ -228,6 +368,26 @@
         "sha256": "5a403c176361193b785198ab363d3dc3755773ca5b023f19e05874e50caea302",
         "width": 1024,
         "height": 1024
+      }
+    },
+    "compressed": {
+      "512": {
+        "path": "/materials/ktx2/512/stone/normal.ktx2",
+        "bytes": 257160,
+        "sha256": "e5e92755ff33acb33f53069e2a27845257eab0a1a9db7b857fd6454687ee259c",
+        "width": 512,
+        "height": 512,
+        "encoding": "uastc",
+        "transfer": "linear"
+      },
+      "1024": {
+        "path": "/materials/ktx2/1024/stone/normal.ktx2",
+        "bytes": 1114094,
+        "sha256": "c925dc5493d1c1a2ebcdec59b94522b139eaae4ef13536be7e613aaf964f84cf",
+        "width": 1024,
+        "height": 1024,
+        "encoding": "uastc",
+        "transfer": "linear"
       }
     }
   },
@@ -258,6 +418,26 @@
         "width": 1024,
         "height": 1024
       }
+    },
+    "compressed": {
+      "512": {
+        "path": "/materials/ktx2/512/stone/arm.ktx2",
+        "bytes": 42176,
+        "sha256": "626142625059abe61fca3249c797e005b6d3f4ce1f1f0b39f5e191a88126d03f",
+        "width": 512,
+        "height": 512,
+        "encoding": "basis-lz",
+        "transfer": "linear"
+      },
+      "1024": {
+        "path": "/materials/ktx2/1024/stone/arm.ktx2",
+        "bytes": 191093,
+        "sha256": "747fedea36b86d079569f007b56392eca5f421a794e7a3f977d2f9a39c2402b3",
+        "width": 1024,
+        "height": 1024,
+        "encoding": "basis-lz",
+        "transfer": "linear"
+      }
     }
   },
   {
@@ -286,6 +466,26 @@
         "sha256": "b10dabea976d68baa976a0d4e8dac58789df8d26a1b50697f320106f1b00a229",
         "width": 1024,
         "height": 1024
+      }
+    },
+    "compressed": {
+      "512": {
+        "path": "/materials/ktx2/512/marble/color.ktx2",
+        "bytes": 64695,
+        "sha256": "77f559e4d068cdd0cdd3eddc5f352b522ce983d42d4e45292f7c42769f608148",
+        "width": 512,
+        "height": 512,
+        "encoding": "basis-lz",
+        "transfer": "srgb"
+      },
+      "1024": {
+        "path": "/materials/ktx2/1024/marble/color.ktx2",
+        "bytes": 205477,
+        "sha256": "836c16e436990edc38ddeec7e578836dff9b249bbfb057e38c6a9a0a9073d06c",
+        "width": 1024,
+        "height": 1024,
+        "encoding": "basis-lz",
+        "transfer": "srgb"
       }
     }
   },
@@ -316,6 +516,26 @@
         "width": 1024,
         "height": 1024
       }
+    },
+    "compressed": {
+      "512": {
+        "path": "/materials/ktx2/512/marble/normal.ktx2",
+        "bytes": 51529,
+        "sha256": "22a2b5d77c5c613071704527bcf00c3779fa756d8f057de7d16bfbe2eb41ec88",
+        "width": 512,
+        "height": 512,
+        "encoding": "uastc",
+        "transfer": "linear"
+      },
+      "1024": {
+        "path": "/materials/ktx2/1024/marble/normal.ktx2",
+        "bytes": 344261,
+        "sha256": "237ecacd16ace657eb3a84811649121cc6838702e7b25bdd60ab5cdfedf0df67",
+        "width": 1024,
+        "height": 1024,
+        "encoding": "uastc",
+        "transfer": "linear"
+      }
     }
   },
   {
@@ -344,6 +564,26 @@
         "sha256": "84b1516c27b4393230e77e0aa525186b4a8a415169661a4385f02dcb10c14104",
         "width": 1024,
         "height": 1024
+      }
+    },
+    "compressed": {
+      "512": {
+        "path": "/materials/ktx2/512/marble/arm.ktx2",
+        "bytes": 24243,
+        "sha256": "a5ee7a8745459007d94d95b97c486f6900e225ac767e635f9d073882c4d82c40",
+        "width": 512,
+        "height": 512,
+        "encoding": "basis-lz",
+        "transfer": "linear"
+      },
+      "1024": {
+        "path": "/materials/ktx2/1024/marble/arm.ktx2",
+        "bytes": 67009,
+        "sha256": "e1628b4cc958484eaca3ef9e084d1fb5c5bee28398cfef8a7f2b06ba3b3eb0b1",
+        "width": 1024,
+        "height": 1024,
+        "encoding": "basis-lz",
+        "transfer": "linear"
       }
     }
   },
@@ -375,6 +615,26 @@
         "width": 1024,
         "height": 1025
       }
+    },
+    "compressed": {
+      "512": {
+        "path": "/materials/ktx2/512/fabric/color.ktx2",
+        "bytes": 26766,
+        "sha256": "6303459cee71684f4d20859202292948d634da73455e4ba04460755df9c8e18c",
+        "width": 512,
+        "height": 512,
+        "encoding": "basis-lz",
+        "transfer": "srgb"
+      },
+      "1024": {
+        "path": "/materials/ktx2/1024/fabric/color.ktx2",
+        "bytes": 195426,
+        "sha256": "982e9512ff3f3c4ade0bfe87a203b7860158b90b45cc57a59d293aafe68c4236",
+        "width": 1024,
+        "height": 1024,
+        "encoding": "basis-lz",
+        "transfer": "srgb"
+      }
     }
   },
   {
@@ -405,6 +665,26 @@
         "width": 1024,
         "height": 1025
       }
+    },
+    "compressed": {
+      "512": {
+        "path": "/materials/ktx2/512/fabric/normal.ktx2",
+        "bytes": 86742,
+        "sha256": "c2477436e7f0f99e7e93c228e38bdccdc0f0001c7fcbd54f37ee158c4d5f0228",
+        "width": 512,
+        "height": 512,
+        "encoding": "uastc",
+        "transfer": "linear"
+      },
+      "1024": {
+        "path": "/materials/ktx2/1024/fabric/normal.ktx2",
+        "bytes": 946110,
+        "sha256": "aae9df800a58f76237b13b7a5f2f784d8d9150a2622202e640157ef21468825e",
+        "width": 1024,
+        "height": 1024,
+        "encoding": "uastc",
+        "transfer": "linear"
+      }
     }
   },
   {
@@ -434,6 +714,26 @@
         "sha256": "c3d38c2d862df80f0133f895bb7142978f097d69b4507374d5a8eafd6e088d71",
         "width": 1024,
         "height": 1025
+      }
+    },
+    "compressed": {
+      "512": {
+        "path": "/materials/ktx2/512/fabric/arm.ktx2",
+        "bytes": 79329,
+        "sha256": "4eb938dda19c99e7a2892a398a8eaca78a5d797b79dc507410cf268a3a76fc14",
+        "width": 512,
+        "height": 512,
+        "encoding": "basis-lz",
+        "transfer": "linear"
+      },
+      "1024": {
+        "path": "/materials/ktx2/1024/fabric/arm.ktx2",
+        "bytes": 229011,
+        "sha256": "0350923a3fa6b4f29be8d9502b810454239df4e29c2f7bf27561603b5383fed1",
+        "width": 1024,
+        "height": 1024,
+        "encoding": "basis-lz",
+        "transfer": "linear"
       }
     }
   }

@@ -1,5 +1,7 @@
-import { buildRoofGeometry, buildStairGeometry, roofHeightAt, triangulatePolygon, type Triangle3, type Vec3, type WalkSurface } from '../../domain/project/projectGeometry.js';
+import { cachedRoofGeometry } from './sceneGeometryCache';
+import { buildStairGeometry, roofHeightAt, triangulatePolygon, type Triangle3, type Vec3, type WalkSurface } from '../../domain/project/projectGeometry.js';
 import { levelOutline, pointInRing, projectLevel, segmentDistance, wallEndpoints, type ProjectDocument, type ProjectFurniture, type ProjectLevel, type ProjectWall } from '../../domain/project/projectDocument.js';
+import { SpatialIndex as BroadPhase } from '../../shared/spatialIndex';
 import type { Point } from '../../domain/project/types.js';
 
 export type WalkState = Vec3 & { surfaceId: string; levelId: string; eyeY: number; blocked: boolean };
@@ -18,8 +20,9 @@ function cacheSurface(surface: WalkSurface): CachedSurface {
   return { ...surface, ...bounds(surface.vertices), triangles: triangles.map(t => t.map(i => vertices[i]) as Triangle3) };
 }
 class SpatialIndex<T extends { minX: number; maxX: number; minZ: number; maxZ: number }> {
-  private cells = new Map<string, T[]>();
-  add(item: T): void { for (let x = Math.floor(item.minX / CELL); x <= Math.floor(item.maxX / CELL); x++) for (let z = Math.floor(item.minZ / CELL); z <= Math.floor(item.maxZ / CELL); z++) { const key = `${x}:${z}`, values = this.cells.get(key) ?? []; values.push(item); this.cells.set(key, values); } }
+  private cells = new Map<string, Set<T>>();
+  add(item: T): void { for (let x = Math.floor(item.minX / CELL); x <= Math.floor(item.maxX / CELL); x++) for (let z = Math.floor(item.minZ / CELL); z <= Math.floor(item.maxZ / CELL); z++) { const key = `${x}:${z}`, values = this.cells.get(key) ?? new Set<T>(); values.add(item); this.cells.set(key, values); } }
+  remove(item: T) { for (let x = Math.floor(item.minX / CELL); x <= Math.floor(item.maxX / CELL); x++) for (let z = Math.floor(item.minZ / CELL); z <= Math.floor(item.maxZ / CELL); z++) { const key = `${x}:${z}`, values = this.cells.get(key); values?.delete(item); if (!values?.size) this.cells.delete(key); } }
   near(point: Point, radius: number): T[] { const values = new Set<T>(); for (let x = Math.floor((point.x - radius) / CELL); x <= Math.floor((point.x + radius) / CELL); x++) for (let z = Math.floor((point.z - radius) / CELL); z <= Math.floor((point.z + radius) / CELL); z++) for (const item of this.cells.get(`${x}:${z}`) ?? []) values.add(item); return [...values]; }
 }
 
@@ -33,8 +36,12 @@ export class ArchitecturalNavigation {
   private walls = new SpatialIndex<WallCollider>();
   private furniture = new SpatialIndex<FurnitureCollider>();
   private overhead: Triangle3[] = [];
+  private wallEntries: WallCollider[] = [];
+  private furnitureEntries = new Map<string, FurnitureCollider>();
+  private overheadIndex = new BroadPhase(CELL);
+  private overheadEntries: { triangle: Triangle3; stairId?: string }[] = [];
   private stairCeilings: { stairId: string; triangles: Triangle3[] }[] = [];
-  constructor(private readonly project: ProjectDocument, options: NavigationOptions = {}) {
+  constructor(private project: ProjectDocument, options: NavigationOptions = {}) {
     this.radius = options.radius ?? .18; this.height = options.height ?? 1.7; this.eyeHeight = options.eyeHeight ?? 1.6; this.maxStep = options.maxStep ?? .25;
     for (const level of project.levels) {
       for (const surface of level.surfaces) {
@@ -42,10 +49,10 @@ export class ArchitecturalNavigation {
         if (surface.kind === 'floor') { const support = cacheSurface({ id: surface.id, levelId: level.id, vertices, holes: surface.holes.map(h => h.vertices), neighbors: [], kind: 'floor' }); this.surfaces.set(support.id, support); }
         if (level.elevation > 0 || surface.kind === 'ceiling') { const y = level.elevation + surface.elevation - (surface.kind === 'floor' ? surface.thickness : 0), { points, triangles } = triangulatePolygon(vertices, surface.holes.map(h => h.vertices)); this.overhead.push(...triangles.map(t => t.map(i => ({ ...points[i], y })) as Triangle3)); }
       }
-      for (const wall of level.walls) { const [a, b] = wallEndpoints(level, wall), margin = Math.max(wall.thickness / 2, ...level.openings.filter(o => o.wallId === wall.id && o.type === 'door' && o.open).map(o => o.width)); this.walls.add({ level, wall, a, b, minX: Math.min(a.x, b.x) - margin, maxX: Math.max(a.x, b.x) + margin, minZ: Math.min(a.z, b.z) - margin, maxZ: Math.max(a.z, b.z) + margin }); }
-      for (const item of level.furniture) { const radius = Math.hypot(item.width, item.depth) / 2; this.furniture.add({ level, item, minX: item.x - radius, maxX: item.x + radius, minZ: item.z - radius, maxZ: item.z + radius }); }
+      for (const wall of level.walls) { const [a, b] = wallEndpoints(level, wall), margin = Math.max(wall.thickness / 2, ...level.openings.filter(o => o.wallId === wall.id && o.type === 'door').map(o => o.width)); const collider = { level, wall, a, b, minX: Math.min(a.x, b.x) - margin, maxX: Math.max(a.x, b.x) + margin, minZ: Math.min(a.z, b.z) - margin, maxZ: Math.max(a.z, b.z) + margin }; this.walls.add(collider); this.wallEntries.push(collider); }
+
     }
-    for (const roof of project.roofs) this.overhead.push(...buildRoofGeometry(project, roof).underside);
+    for (const roof of project.roofs) this.overhead.push(...cachedRoofGeometry(project, roof).underside);
     for (const stair of project.stairs) {
       const geometry = buildStairGeometry(project, stair);
       for (const surface of geometry.surfaces) this.surfaces.set(surface.id, cacheSurface(surface));
@@ -54,17 +61,43 @@ export class ArchitecturalNavigation {
       const link = (support: WalkSurface, levelId: string) => { for (const floor of this.surfaces.values()) if (floor.kind === 'floor' && floor.levelId === levelId) { this.surfaces.get(support.id)!.neighbors.push(floor.id); floor.neighbors.push(support.id); } };
       link(first, stair.fromLevelId); link(last, stair.toLevelId);
     }
+    this.overheadEntries = this.overhead.map(triangle => ({ triangle }));
+    for (const ceiling of this.stairCeilings) for (const triangle of ceiling.triangles) this.overheadEntries.push({ triangle, stairId: ceiling.stairId });
+    this.overheadEntries.forEach((entry, index) => this.overheadIndex.set(String(index), bounds(entry.triangle)));
+    this.updateDynamic(project);
     // Adjacent room surfaces are connected, while stacked floors never connect by X/Z alone.
     const floors = [...this.surfaces.values()].filter(s => s.kind === 'floor');
     for (let i = 0; i < floors.length; i++) for (let j = i + 1; j < floors.length; j++) if (floors[i].levelId === floors[j].levelId && Math.abs(floors[i].vertices[0].y - floors[j].vertices[0].y) < EPS) { floors[i].neighbors.push(floors[j].id); floors[j].neighbors.push(floors[i].id); }
+  }
+  /** Update moving obstacles without retriangulating slabs, roofs or stair connections. */
+  updateDynamic(project: ProjectDocument) {
+    this.project = project;
+    const levels = new Map(project.levels.map(level => [level.id, level]));
+    for (const collider of this.wallEntries) collider.level = levels.get(collider.level.id)!;
+    const retained = new Set<string>();
+    for (const level of project.levels) for (const item of level.furniture) {
+      retained.add(item.id);
+      const before = this.furnitureEntries.get(item.id);
+      if (before && before.item.x === item.x && before.item.z === item.z && before.item.width === item.width && before.item.depth === item.depth && before.item.height === item.height && before.item.rotation === item.rotation && before.level.id === level.id) { before.item = item; before.level = level; continue; }
+      if (before) this.furniture.remove(before);
+      const radius = Math.hypot(item.width, item.depth) / 2;
+      const collider = { level, item, minX: item.x - radius, maxX: item.x + radius, minZ: item.z - radius, maxZ: item.z + radius };
+      this.furniture.add(collider); this.furnitureEntries.set(item.id, collider);
+    }
+    for (const [id, collider] of this.furnitureEntries) if (!retained.has(id)) { this.furniture.remove(collider); this.furnitureEntries.delete(id); }
   }
   headroom(point: Vec3, stairId?: string): number {
     let ceiling = Infinity;
     // Capsule footprint samples catch sloping roofs over a shoulder as well as directly above the eye.
     for (const sample of [{ x: 0, z: 0 }, { x: this.radius, z: 0 }, { x: -this.radius, z: 0 }, { x: 0, z: this.radius }, { x: 0, z: -this.radius }]) {
-      const x = point.x + sample.x, z = point.z + sample.z, y = roofHeightAt(this.overhead, x, z, point.y + .03);
-      if (y !== null) ceiling = Math.min(ceiling, y - point.y);
-      for (const stair of this.stairCeilings) if (stair.stairId !== stairId) { const y = roofHeightAt(stair.triangles, x, z, point.y + .03); if (y !== null) ceiling = Math.min(ceiling, y - point.y); }
+      const x = point.x + sample.x, z = point.z + sample.z;
+      const candidates = this.overheadIndex.query({ minX: x - EPS, maxX: x + EPS, minZ: z - EPS, maxZ: z + EPS });
+      for (const id of candidates) {
+        const entry = this.overheadEntries[Number(id)];
+        if (entry.stairId && entry.stairId === stairId) continue;
+        const y = roofHeightAt([entry.triangle], x, z, point.y + .03);
+        if (y !== null) ceiling = Math.min(ceiling, y - point.y);
+      }
     }
     return ceiling;
   }

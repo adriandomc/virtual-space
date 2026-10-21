@@ -82,7 +82,7 @@ function addRoomLight(runtime: SceneRuntime, room: Room, light: Room['lights'][n
 export function reconcileRoomItems(runtime: SceneRuntime, room: Room) {
   const before = runtime.builtRoom;
   let changed = false;
-  const profile = runtime.graphics.geometry + ':' + runtime.graphics.textures, profileChanged = runtime.itemProfile !== profile;
+  const profile = runtime.graphics.geometry, profileChanged = runtime.itemProfile !== profile;
   const furniture = new Map(room.furniture.map(item => [item.id, item])), lights = new Set(room.lights.map(light => light.id));
   for (const [key, object] of runtime.objects) if (key.startsWith('furniture:') && !furniture.has(key.slice(10)) || key.startsWith('light:') && !lights.has(key.slice(6))) { removeSceneItem(object); runtime.objects.delete(key); changed = true; }
   for (const item of room.furniture) {

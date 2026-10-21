@@ -1,6 +1,8 @@
 import * as THREE from 'three/webgpu';
 import { TransformControlsGizmo } from 'three/addons/controls/TransformControls.js';
 import type { RoomSceneProps, SceneRuntime } from './sceneRuntime';
+import { sceneDiagnosticsEnabled } from './sceneFrame';
+import { selectionKey } from './sceneSelection';
 
 const treadCenters = new WeakMap<THREE.BufferGeometry, THREE.Vector3[]>();
 function stairPoints(geometry: THREE.BufferGeometry) {
@@ -19,6 +21,7 @@ function stairPoints(geometry: THREE.BufferGeometry) {
 // Read-only screen geometry accompanies the existing renderer diagnostics for real pointer regressions.
 export function updateSceneInteraction(runtime: SceneRuntime, props: RoomSceneProps) {
   const canvas = runtime.renderer.domElement;
+  if (!sceneDiagnosticsEnabled()) return;
   if (props.mode !== 'orbit') { delete canvas.dataset.sceneInteraction; return; }
   const rect = canvas.getBoundingClientRect();
   const project = (point: THREE.Vector3) => { point.project(runtime.camera); return { x: (point.x + 1) * rect.width / 2, y: (1 - point.y) * rect.height / 2 }; };
@@ -36,6 +39,10 @@ export function updateSceneInteraction(runtime: SceneRuntime, props: RoomScenePr
     } else { mesh.geometry.computeBoundingBox(); points = [project(mesh.geometry.boundingBox!.getCenter(new THREE.Vector3()).applyMatrix4(object.matrixWorld))]; }
     return { axis: object.name, points };
   }) : [];
-  const value = JSON.stringify({ stairs, handles, selection: props.selection, dragging: runtime.transform.dragging || runtime.directDragging, invalid: !!runtime.stairEdit?.error });
+  const selected = props.selection ? runtime.objects.get(selectionKey(props.selection)) : undefined;
+  const selectedGeometryIds: string[] = [];
+  selected?.traverse(object => { if (object instanceof THREE.Mesh) selectedGeometryIds.push(object.geometry.uuid); });
+  const selectedPoint = selected ? project(new THREE.Box3().setFromObject(selected).getCenter(new THREE.Vector3())) : null;
+  const value = JSON.stringify({ stairs, handles, selection: props.selection, selectedGeometryIds, selectedPoint, dragging: runtime.transform.dragging || runtime.directDragging, invalid: !!runtime.stairEdit?.error });
   if (canvas.dataset.sceneInteraction !== value) canvas.dataset.sceneInteraction = value;
 }

@@ -14,6 +14,8 @@ export type WorkshopGeometryTool = 'vertices' | 'faces';
 
 export type WorkshopSceneRuntime = {
   scene: THREE.Scene;
+  sun: THREE.DirectionalLight;
+  invalidate: (shadows?: boolean) => void;
   camera: THREE.PerspectiveCamera;
   renderer: WebGLRenderer;
   controls: OrbitControls;
@@ -73,13 +75,13 @@ export function createWorkshopScene(host: HTMLElement, label: string): WorkshopS
   renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.15;
   const scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(43, 1, .01, 1000), content = new THREE.Group(), proxy = new THREE.Object3D();
   scene.add(content, proxy, new THREE.HemisphereLight('#ffffff', '#68705e', 2.4));
-  const sun = new THREE.DirectionalLight('#fff6e5', 3); sun.position.set(4, 7, 5); sun.castShadow = true; sun.shadow.mapSize.set(1024, 1024); scene.add(sun);
+  const sun = new THREE.DirectionalLight('#fff6e5', 3); sun.position.set(4, 7, 5); sun.castShadow = true; sun.shadow.autoUpdate = false; sun.shadow.needsUpdate = true; sun.shadow.mapSize.set(1024, 1024); scene.add(sun);
   const grid = new THREE.GridHelper(10, 10, '#a0ac98', '#d3dbca'); grid.position.y = -.006; scene.add(grid);
   const canvas = renderer.domElement; canvas.setAttribute('aria-label', label); canvas.tabIndex = 0; host.append(canvas);
   const controls = new OrbitControls(camera, canvas); controls.enableDamping = true; controls.dampingFactor = .08;
   camera.position.set(1.8, 1.2, 1.8); controls.target.set(0, .25, 0); controls.update();
   const transform = new TransformControls(camera, canvas); transform.setSize(window.matchMedia('(pointer: coarse)').matches ? 1.35 : 1.05); transform.setColors('#ce756a', '#819968', '#6d97b4', '#d7ab5b'); scene.add(transform.getHelper());
-  return { scene, camera, renderer, controls, transform, content, proxy, selectionProxy: null, selectionTransform: null, selectionOutlines: [], outline: null, toolOutline: null, snapGuide: null, points: null, face: null, dragged: false, vertexIndices: [], vertexMesh: null, vertexId: 0, pendingNormals: false };
+  return { scene, sun, invalidate: () => {}, camera, renderer, controls, transform, content, proxy, selectionProxy: null, selectionTransform: null, selectionOutlines: [], outline: null, toolOutline: null, snapGuide: null, points: null, face: null, dragged: false, vertexIndices: [], vertexMesh: null, vertexId: 0, pendingNormals: false };
 }
 
 export function disposeWorkshopScene(active: WorkshopSceneRuntime) {

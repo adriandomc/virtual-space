@@ -22,6 +22,7 @@ async function fixture({ designs = 50, bytes = 500 * 1024 * 1024, receipts = 100
   mkdirSync(dataDir); mkdirSync(join(staticDir, 'assets'), { recursive: true });
   writeFileSync(join(staticDir, 'index.html'), '<html>3D Space</html>');
   writeFileSync(join(staticDir, 'assets', 'sample.js'), 'console.log("ready");'.repeat(prepared ? 150000 : 1000));
+  if (prepared) writeFileSync(join(staticDir, 'assets', 'sample.wasm'), readFileSync(resolve('public/decoders/basis/basis_transcoder.wasm')));
   if (prepared) execFileSync(process.execPath, [resolve('scripts/build-static-assets.mjs'), staticDir]);
   const database = new DatabaseSync(join(dataDir, 'accounts.sqlite')); initializeTestDatabase(database);
   const owner = randomUUID(), token = 'c'.repeat(64); insertTestUser(database, owner);
@@ -134,6 +135,9 @@ test('production static metadata supplies compression and conditional responses 
     assert.equal(response.status, 200); assert.equal(response.headers.get('content-encoding'), 'gzip');
     assert.equal(response.headers.get('etag'), manifest.files['assets/sample.js'].etag);
     assert.match(await response.text(), /console.log/);
+    const decoder = await fetch(f.base + '/assets/sample.wasm', { headers: { 'Accept-Encoding': 'gzip' } });
+    assert.equal(decoder.headers.get('content-type'), 'application/wasm'); assert.equal(decoder.headers.get('content-encoding'), 'gzip');
+    assert.deepEqual(Buffer.from(await decoder.arrayBuffer()), readFileSync(resolve('public/decoders/basis/basis_transcoder.wasm')));
     const cached = await fetch(f.base + '/assets/sample.js', { headers: { 'If-None-Match': response.headers.get('etag')! } }); assert.equal(cached.status, 304);
     const downloads = Promise.all(Array.from({ length: 12 }, async () => {
       const started = performance.now(), item = await fetch(f.base + '/assets/sample.js');

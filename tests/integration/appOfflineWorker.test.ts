@@ -1,15 +1,22 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import vm from 'node:vm';
+import { createHash } from 'node:crypto';
+import { cp, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import type { Plugin, UserConfig } from 'vite';
 import config from '../../vite.config.ts';
+
+const bodies = new Map<string, string | Uint8Array>([
+  ['/index.html', '<html>3D Space</html>'], ['/assets/main.js', 'main();'], ['/assets/ModelWorkshop.js', 'workshop();'], ['/assets/boolean.worker.js', 'boolean();'], ['/assets/main.css', 'body{}'],
+]);
 
 async function workerSource() {
   const plugin = ((config as UserConfig).plugins?.flat().find(value => value && typeof value === 'object' && 'name' in value && value.name === 'app-offline')) as Plugin;
   assert.ok(plugin?.generateBundle);
   const hook = typeof plugin.generateBundle === 'function' ? plugin.generateBundle : plugin.generateBundle.handler;
-  let source = '';
-  const emitFile = (value: { fileName?: string; source?: unknown }) => { if (value.fileName === 'service-worker.js') source = String(value.source); return 'worker'; };
+  const emitFile = (value: { fileName?: string; source?: unknown }) => { if (value.fileName && typeof value.source === 'string') bodies.set('/' + value.fileName, value.source); return 'worker'; };
   await (hook as Function).call({ emitFile }, {}, {
     'index.html': { type: 'asset', source: '<html>3D Space</html>' },
     'assets/main.js': { type: 'chunk', code: 'main();' },
@@ -17,14 +24,33 @@ async function workerSource() {
     'assets/boolean.worker.js': { type: 'chunk', code: 'boolean();' },
     'assets/main.css': { type: 'asset', source: 'body{}' },
   });
-  assert.ok(source); return source;
+  assert.ok(plugin.writeBundle);
+  const writeHook = typeof plugin.writeBundle === 'function' ? plugin.writeBundle : plugin.writeBundle.handler;
+  const directory = await mkdtemp(join(tmpdir(), 'space-sw-build-'));
+  try {
+    await cp(new URL('../../public/', import.meta.url), directory, { recursive: true });
+    await mkdir(join(directory, 'assets'), { recursive: true });
+    // Simulate Vite's final dynamic preload rewrite: generateBundle saw different bytes.
+    bodies.set('/assets/main.js', 'main(); /* final preload table */');
+    for (const [path, bytes] of bodies) await writeFile(join(directory, path.slice(1)), bytes);
+    await (writeHook as Function).call({}, { dir: directory }, {});
+    const result = await readFile(join(directory, 'service-worker.js'), 'utf8');
+    const identities = JSON.parse(/^const IDENTITIES = (.+);$/m.exec(result)![1]);
+    assert.equal(identities['/assets/main.js'], createHash('sha256').update(bodies.get('/assets/main.js')!).digest('hex'));
+    assert.notEqual(identities['/assets/main.js'], createHash('sha256').update('main();').digest('hex'));
+    return result;
+  } finally {
+    assert.ok(directory.startsWith(join(tmpdir(), 'space-sw-build-')));
+    await rm(directory, { recursive: true, force: true });
+  }
 }
 const source = workerSource();
 
 type Tab = { id: string; result: 'ready' | 'unsaved' | 'silent' | 'discarded'; messages: string[]; automaticSafe?: boolean; url?: string; acknowledge?: () => void };
-async function worker(options: { badScript?: boolean; offline?: boolean; tabs?: Tab[]; preparedPrevious?: boolean } = {}) {
+async function worker(options: { badScript?: boolean; offline?: boolean; tabs?: Tab[]; preparedPrevious?: boolean; previous?: Map<string, Response>; corrupt?: string } = {}) {
   const listeners = new Map<string, Function>(), entries = new Map<string, Map<string, Response>>(), calls: string[] = [], matches: string[] = [];
   entries.set('unrelated-app', new Map()); entries.set('3d-space-static-old', new Map()); entries.set('3d-space-v2-static-previous', new Map());
+  if (options.previous) entries.set('3d-space-v2-static-previous', options.previous);
   if (options.preparedPrevious) entries.get('3d-space-v2-static-previous')!.set('/environments/sunset-fairway-1k.hdr', new Response('prepared HDR'));
   const timers = new Map<number, () => void>(); let timerId = 0, activated = 0;
   let tabs = options.tabs ?? [];
@@ -40,6 +66,7 @@ async function worker(options: { badScript?: boolean; offline?: boolean; tabs?: 
   let unavailable = false;
   vm.runInNewContext(await source, {
     URL, Response, caches,
+    crypto: { subtle: { digest: async (_algorithm: string, bytes: ArrayBuffer) => Uint8Array.from(createHash('sha256').update(new Uint8Array(bytes)).digest()).buffer } },
     setTimeout: (callback: () => void) => { const id = ++timerId; timers.set(id, callback); return id; },
     clearTimeout: (id: number) => timers.delete(id),
     MessageChannel: class {
@@ -51,7 +78,9 @@ async function worker(options: { badScript?: boolean; offline?: boolean; tabs?: 
       if (offline) throw new TypeError('offline');
       if (unavailable) return new Response('Temporary outage', { status: 503, headers: { 'content-type': 'text/html' } });
       const mime = path.endsWith('.js') ? options.badScript && path.endsWith('main.js') ? 'text/html' : 'application/javascript' : path.endsWith('.css') ? 'text/css' : path.endsWith('.html') ? 'text/html' : 'application/octet-stream';
-      return new Response(path.endsWith('.html') ? '<html>3D Space</html>' : path, { headers: { 'content-type': mime } });
+      if (options.corrupt === path) return new Response('wrong deployment bytes', { headers: { 'content-type': mime } });
+      if (!bodies.has(path)) bodies.set(path, new Uint8Array(await readFile(new URL('../../public' + path, import.meta.url))));
+      return new Response(bodies.get(path) as BodyInit, { headers: { 'content-type': mime } });
     },
     self: {
       location: { origin: 'https://space.test' },
@@ -101,6 +130,28 @@ test('service worker precaches the shell, all lazy and worker chunks, and public
   for (const locale of ['es', 'en']) for (const image of ['library', 'setup', 'editor', 'workshop', 'offline', 'sharing']) assert.ok(app.calls.includes(`/help/${locale}/${image}.jpg`));
   assert.ok(!app.calls.some(path => path.endsWith('.md') || path.startsWith('/api/')));
   await app.event('activate'); assert.ok(!app.entries.has('3d-space-static-old')); assert.ok(!app.entries.has('3d-space-v2-static-previous')); assert.ok(app.entries.has('unrelated-app'));
+});
+
+test('unchanged resources are verified and reused while shell and executable assets retain priority', async () => {
+  const identities = JSON.parse((await source).match(/const IDENTITIES = ([^;]+);/)![1]);
+  const previous = new Map([
+    ['/__3d-space-identities__', new Response(JSON.stringify(identities))],
+    ['/assets/main.js', new Response(bodies.get('/assets/main.js') as BodyInit, { headers: { 'content-type': 'application/javascript' } })],
+    ['/assets/ModelWorkshop.js', new Response('corrupted old cache', { headers: { 'content-type': 'application/javascript' } })],
+  ]);
+  const app = await worker({ previous }); await app.event('install');
+  assert.ok(!app.calls.includes('/assets/main.js'), 'identical verified modules do not download again');
+  assert.ok(app.calls.includes('/assets/ModelWorkshop.js'), 'matching metadata never hides corrupted bytes');
+  assert.ok(app.calls.indexOf('/index.html') < app.calls.indexOf('/help/es/editor.jpg'));
+  assert.ok(app.calls.indexOf('/assets/ModelWorkshop.js') < app.calls.indexOf('/help/es/editor.jpg'));
+  assert.equal(await (await app.request('/assets/main.js'))!.text(), bodies.get('/assets/main.js'));
+});
+
+test('a mismatched response refuses installation without replacing a previously prepared generation', async () => {
+  const app = await worker({ preparedPrevious: true, corrupt: '/materials/ktx2/512/wood/color.ktx2' });
+  await assert.rejects(app.event('install'), /Static resource unavailable/);
+  assert.ok(app.entries.get('3d-space-v2-static-previous')!.has('/environments/sunset-fairway-1k.hdr'));
+  assert.equal(app.activated(), 0);
 });
 
 test('service worker never intercepts API, external, mutations, or unknown paths', async () => {

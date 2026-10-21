@@ -51,3 +51,20 @@ test('swept movement cannot tunnel through furniture or walls and stale support 
   const navigation = new ArchitecturalNavigation(project), state = navigation.start(level.id, { x: -1, z: 0 })!; assert(navigation.move(state, { x: 2, z: 0 }).blocked);
   assert(navigation.move({ ...state, surfaceId: 'removed' } as WalkState, { x: 0, z: 0 }).blocked); assert(!navigation.hasSurface('removed'));
 });
+
+
+test('moving furniture and opening doors update existing navigation without replacing its supporting surfaces', () => {
+  let project = createDefaultProject(); const levelId = project.levels[0].id;
+  project = addWall(project, levelId, { x: 0, z: -2 }, { x: 0, z: 2 });
+  const level = project.levels[0];
+  level.openings.push({ id: 'door', levelId, wallId: level.walls.at(-1)!.id, type: 'door', doorStyle: 'right', open: false, offset: 1.4, width: 1.2, height: 2.2, sill: 0 });
+  const navigation = new ArchitecturalNavigation(project), state = navigation.start(levelId, { x: -.6, z: 0 })!;
+  assert(navigation.move(state, { x: 1.2, z: 0 }).blocked);
+  let next = structuredClone(project); next.levels[0].openings[0].open = true; navigation.updateDynamic(next);
+  assert(!navigation.move(state, { x: 1.2, z: 0 }).blocked);
+  next = structuredClone(next); next.levels[0].furniture.push({ id: 'moving-bed', levelId, type: 'bed', bedSize: 'single', material: 'wood', color: '#ffffff', x: .4, z: 0, width: .1, depth: .5, height: .4, rotation: 0 }); navigation.updateDynamic(next);
+  assert(navigation.move(state, { x: 1.2, z: 0 }).blocked);
+  next = structuredClone(next); next.levels[0].furniture[0].z = 1.5; navigation.updateDynamic(next);
+  assert(!navigation.move(state, { x: 1.2, z: 0 }).blocked);
+  assert(navigation.hasSurface(state.surfaceId));
+});

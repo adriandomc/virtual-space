@@ -1,7 +1,7 @@
 import * as THREE from 'three/webgpu';
-import { color, float, min, mix, normalMap, smoothstep, step, texture, uv, vec2, vec3, type ShaderNodeObject } from 'three/tsl';
+import { color, float, materialReference, min, mix, normalMap, smoothstep, step, texture, uv, vec2, vec3, type ShaderNodeObject } from 'three/tsl';
 import type { FloorFinish, FurnitureMaterial, Room } from '../../domain/project/types';
-import { textureDimensions } from '../../client/graphics/graphicsSettings';
+import { loadArchitecturalTexture } from './architecturalTextureLoader';
 
 type ShaderValue = ShaderNodeObject<THREE.Node>;
 type Quality = Room['renderQuality'];
@@ -13,7 +13,6 @@ let textureResolution = 2048;
 export function setMaterialTextureResolution(value: 512 | 1024 | 2048) {
   if (textureResolution === value) return false;
   textureResolution = value;
-  disposeArchitecturalTextures();
   return true;
 }
 const surfaceScale: Record<ArchitecturalSurface, number> = { wood: 1.7, plaster: 1, stone: 2.08, marble: 1.5, fabric: 0.264 };
@@ -29,16 +28,7 @@ function architecturalTexture(surface: ArchitecturalSurface, map: 'color' | 'nor
   let result = architecturalTextures.get(path);
   if (!result) {
     // Material construction also runs during Node tests, where ImageLoader has no DOM.
-    result = typeof document === 'undefined' ? new THREE.Texture() : new THREE.TextureLoader().load(path, loaded => {
-      window.dispatchEvent(new Event('space-material-ready'));
-      const image = loaded.image as HTMLImageElement;
-      const size = textureDimensions(image.width, image.height, textureResolution);
-      if (size.width === image.width && size.height === image.height) return;
-      const canvas = document.createElement('canvas'); canvas.width = size.width; canvas.height = size.height;
-      const context = canvas.getContext('2d');
-      if (!context) return;
-      context.drawImage(image, 0, 0, size.width, size.height); loaded.image = canvas; loaded.needsUpdate = true;
-    }, undefined, () => console.warn(`No se pudo cargar ${path}`));
+    result = loadArchitecturalTexture(surface, map, textureResolution, () => window.dispatchEvent(new Event('space-material-ready')));
     result.name = path;
     result.wrapS = result.wrapT = THREE.RepeatWrapping;
     result.colorSpace = map === 'color' ? THREE.SRGBColorSpace : THREE.NoColorSpace;
@@ -63,7 +53,7 @@ function architecturalMaterial(hex: string, surface: ArchitecturalSurface, point
   // Keep the chosen paint/tint while retaining photographed contrast and a little natural chroma.
   const photographedTone = luminance.div(surfaceLuminance[surface]).clamp(0.3, 1.6);
   const painted = surface === 'plaster';
-  material.colorNode = color(hex).mul(painted ? mix(float(1), photographedTone, 0.1) : photographedTone).mul(mix(vec3(1), sample.div(luminance.max(0.01)), painted ? 0.02 : 0.12));
+  material.colorNode = materialReference('color', 'color').mul(painted ? mix(float(1), photographedTone, 0.1) : photographedTone).mul(mix(vec3(1), sample.div(luminance.max(0.01)), painted ? 0.02 : 0.12));
   material.normalNode = normalMap(texture(material.normalMap, point).rgb, vec2(normalStrength));
   material.roughnessNode = texture(material.roughnessMap, point).g.clamp(roughness[0], roughness[1]);
   material.aoNode = mix(float(1), texture(material.aoMap, point).r, painted ? 0.08 : 0.45);
@@ -159,7 +149,7 @@ export function createFloorMaterial(room: FloorSurface): THREE.MeshStandardNodeM
     : new THREE.MeshStandardNodeMaterial({ color: room.floorColor, roughness: 0.78 });
   const point = uv();
   const pattern = floorPattern(point, room.floorFinish, realistic);
-  material.colorNode = mix(color('#b8b6ae'), color(room.floorColor).mul(pattern.tone), pattern.body);
+  material.colorNode = mix(color('#b8b6ae'), materialReference('color', 'color').mul(pattern.tone), pattern.body);
   if (material instanceof THREE.MeshPhysicalNodeMaterial) {
     material.roughnessNode = pattern.roughness;
     material.normalNode = surfaceNormal(point, p => floorPattern(p, room.floorFinish, true).height);
@@ -229,7 +219,7 @@ export function createWoodMaterial(hex: string, quality: Quality): THREE.MeshSta
   const material = new THREE.MeshPhysicalNodeMaterial({ color: hex, roughness: 0.5, clearcoat: 0.15, clearcoatRoughness: 0.35 });
   const point = uv().yx;
   const grain = woodGrain(point);
-  material.colorNode = color(hex).mul(grain.mul(0.16).add(0.84));
+  material.colorNode = materialReference('color', 'color').mul(grain.mul(0.16).add(0.84));
   material.roughnessNode = grain.mul(0.12).add(0.43);
   material.normalNode = surfaceNormal(uv(), p => woodGrain(p.yx).mul(0.00025));
   material.clearcoatNormalNode = material.normalNode;
@@ -257,4 +247,11 @@ export function createFabricMaterial(hex: string, quality: Quality): THREE.MeshS
   material.sheenColor.set(hex);
   material.sheenRoughness = 0.9;
   return material;
+}
+
+/** Color changes update uniforms only, including procedural and photographed finishes. */
+export function tintMaterial(material: THREE.Material, hex: string) {
+  const colored = material as THREE.MeshStandardMaterial;
+  colored.color?.set(hex);
+  if (material instanceof THREE.MeshPhysicalNodeMaterial && material.sheen > 0) material.sheenColor.set(hex);
 }

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { acquireGraphicsJob } from '../../shared/graphicsJobs';
 import { booleanTransfers, packBooleanMesh, unpackBooleanGeometry } from './workshopBooleanTransfer';
 import type { BooleanReply, WorkshopBooleanOperation } from './workshopBooleanTransfer';
 
@@ -8,14 +9,20 @@ export function startWorkshopBoolean(base: THREE.Mesh, tool: THREE.Mesh, operati
   let worker: Worker | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let settled = false;
+  const abort = new AbortController();
+  let release: (() => void) | undefined;
   let rejectOperation: (cause: Error) => void = () => {};
-  const finish = () => { settled = true; if (timer) clearTimeout(timer); worker?.terminate(); };
+  const finish = () => { settled = true; abort.abort(); release?.(); release = undefined; if (timer) clearTimeout(timer); worker?.terminate(); };
   const promise = new Promise<THREE.Mesh>((accept, reject) => {
     rejectOperation = reject;
     try {
       if (base === tool || !['union', 'subtract', 'intersect'].includes(operation)) throw new Error('Selecciona dos piezas distintas.');
       const faces = [base, tool].reduce((total, mesh) => total + (mesh.geometry.index?.count ?? mesh.geometry.getAttribute('position')?.count ?? 0) / 3, 0);
       if (!Number.isInteger(faces) || faces > 20000 || [base, tool].some(mesh => (mesh.geometry.getAttribute('position')?.count ?? 0) > 60000)) throw new Error('Las piezas son demasiado complejas para combinarlas.');
+      void acquireGraphicsJob(abort.signal).then(permit => {
+      if (settled) { permit(); return; }
+      release = permit;
+      try {
       const originals = new Map<string, THREE.Material>();
       for (const [prefix, mesh] of [['base', base], ['tool', tool]] as const) (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).forEach((material, index) => originals.set(`csg-input-${prefix}-${index}`, material));
       const first = packBooleanMesh(base, 'base', base.parent), second = packBooleanMesh(tool, 'tool', base.parent);
@@ -44,6 +51,8 @@ export function startWorkshopBoolean(base: THREE.Mesh, tool: THREE.Mesh, operati
       worker.onmessageerror = () => { if (!settled) { finish(); reject(new Error('No se pudo recibir la combinación de piezas.')); } };
       timer = setTimeout(() => { if (!settled) { finish(); reject(new Error('La combinación tardó demasiado. Prueba con piezas más sencillas.')); } }, 20000);
       worker.postMessage({ base: first, tool: second, operation }, [...booleanTransfers(first.geometry), ...booleanTransfers(second.geometry)]);
+      } catch (cause) { finish(); reject(cause); }
+      }).catch(cause => { if (!settled) { finish(); reject(cause); } });
     } catch (cause) { finish(); reject(cause); }
   });
   return { promise, cancel() { if (!settled) { finish(); rejectOperation(new Error('La combinación se canceló.')); } } };

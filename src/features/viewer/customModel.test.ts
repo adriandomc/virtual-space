@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as THREE from 'three/webgpu';
-import { applyCustomPart, attachCustomModel, clearCustomModelCache, cloneCustomModel } from './customModel';
+import { applyCustomPart, attachCustomModel, clearCustomModelCache, cloneCustomModel, customModelCacheUsage, loadEditableModel, modelTemplateBytes } from './customModel';
 import { modelAssetUrl } from '../../client/models/modelUrl';
 import type { FurnitureItem } from '../../domain/project/types';
+import { updateFurnitureAppearance } from './furnitureRendering';
 
 const item: FurnitureItem = { id: 'custom-a', type: 'custom', material: null, color: null, width: 1, height: 1, depth: 1, x: 0, z: 0, rotation: 0 };
 test('custom models clone materials and geometry without mutating another instance', () => {
@@ -119,4 +120,51 @@ test('cancelled model loads cannot attach to disposed scenes, while other instan
     assert.equal((meshes[1].material as THREE.MeshStandardMaterial).color.getHexString(), '0000ff');
     disposeFirst(); assert.equal(first.children.length, 0); assert.equal(second.children.length, 1); disposeSecond();
   } finally { globalThis.fetch = original; clearCustomModelCache(); }
+});
+
+test('display copies share source buffers while workshop copies and template lifetime remain independent', async () => {
+  clearCustomModelCache();
+  const original = globalThis.fetch, cleanup: (() => void)[] = [];
+  let requests = 0, sourceDisposals = 0;
+  globalThis.fetch = async () => { requests++; return new Response(modelBytes()); };
+  const first = new THREE.Group(), second = new THREE.Group(), modelItem = { ...item, assetId: 'shared-display' };
+  try {
+    await Promise.all([first, second].map(parent => new Promise<void>((accept, reject) => { cleanup.push(attachCustomModel(parent, modelItem, 'realistic', { onLoaded: accept, onError: error => reject(new Error(error)) })); })));
+    const mesh = (root: THREE.Group) => { let result!: THREE.Mesh; root.traverse(object => { if (object instanceof THREE.Mesh) result = object; }); return result; };
+    const firstMesh = mesh(first), secondMesh = mesh(second); assert.equal(requests, 1); assert.equal(firstMesh.geometry, secondMesh.geometry); assert.notEqual(firstMesh.material, secondMesh.material);
+    firstMesh.geometry.addEventListener('dispose', () => { sourceDisposals++; });
+    const editable = await loadEditableModel(modelItem); assert.notEqual(mesh(editable).geometry, firstMesh.geometry);
+    mesh(editable).geometry.getAttribute('position').setX(0, 99); assert.equal(secondMesh.geometry.getAttribute('position').getX(0), 0);
+    cleanup[0](); clearCustomModelCache(); assert.equal(sourceDisposals, 0); assert.equal(second.children.length, 1);
+    (editable.userData.disposeEditorModel as () => void)(); cleanup[1](); assert.equal(sourceDisposals, 0, 'idle template retained within its byte budget');
+    assert(customModelCacheUsage().bytes > 0); assert.equal(customModelCacheUsage().activeTemplates, 0);
+    clearCustomModelCache(); assert.equal(sourceDisposals, 1); assert.equal(customModelCacheUsage().bytes, 0);
+  } finally { cleanup.forEach(dispose => dispose()); globalThis.fetch = original; clearCustomModelCache(); }
+});
+
+test('template memory estimates count shared buffers and textures once', () => {
+  const root = new THREE.Group(), geometry = new THREE.BoxGeometry(), texture = new THREE.Texture({ width: 1024, height: 1024 } as HTMLImageElement), material = new THREE.MeshStandardMaterial({ map: texture, normalMap: texture });
+  root.add(new THREE.Mesh(geometry, material)); const first = modelTemplateBytes(root); root.add(new THREE.Mesh(geometry, material));
+  assert.equal(modelTemplateBytes(root), first); assert(first >= 1024 * 1024 * 4);
+  geometry.dispose(); material.dispose(); texture.dispose();
+});
+
+test('custom appearance changes during loading and afterward preserve geometry and part overrides', async () => {
+  clearCustomModelCache();
+  const original = globalThis.fetch, root = new THREE.Group();
+  let finish!: () => void, cleanup!: () => void;
+  const pending = new Promise<void>(accept => { finish = accept; });
+  globalThis.fetch = async () => { await pending; return new Response(modelBytes()); };
+  const originalItem = { ...item, assetId: 'appearance-pending', color: '#112233' };
+  try {
+    const ready = new Promise<void>((accept, reject) => { cleanup = attachCustomModel(root, originalItem, 'realistic', { textureResolution: 2048, onLoaded: accept, onError: error => reject(new Error(error)) }); });
+    updateFurnitureAppearance(root, { ...originalItem, color: '#abcdef' }, 'realistic'); finish(); await ready;
+    let mesh!: THREE.Mesh; root.traverse(object => { if (object instanceof THREE.Mesh) mesh = object; });
+    const geometry = mesh.geometry, material = mesh.material as THREE.MeshStandardMaterial;
+    assert.equal(material.color.getHexString(), 'abcdef');
+    updateFurnitureAppearance(root, { ...originalItem, color: '#987654' }, 'realistic'); assert.equal(mesh.material, material); assert.equal(material.color.getHexString(), '987654');
+    updateFurnitureAppearance(root, { ...originalItem, color: null, parts: { '0': { color: '#102030' } } }, 'realistic'); assert.equal(material.color.getHexString(), '102030');
+    updateFurnitureAppearance(root, { ...originalItem, color: '#fedcba', material: 'metal' }, 'realistic'); assert.equal(mesh.geometry, geometry); assert.equal((mesh.material as THREE.MeshStandardMaterial).metalness, 1);
+    updateFurnitureAppearance(root, { ...originalItem, color: null, material: null }, 'realistic'); assert.equal(mesh.geometry, geometry); assert.equal((mesh.material as THREE.MeshStandardMaterial).color.getHexString(), 'ffffff');
+  } finally { cleanup?.(); finish(); globalThis.fetch = original; clearCustomModelCache(); }
 });

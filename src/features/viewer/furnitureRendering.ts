@@ -1,13 +1,16 @@
 import * as THREE from 'three/webgpu';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { bounds, furnitureCorners } from '../../domain/project/model';
-import { createFabricMaterial, createFurnitureMaterial } from './materials';
+import { createFabricMaterial, createFurnitureMaterial, tintMaterial } from './materials';
+import { getGraphicsProfile } from '../../client/graphics/graphicsSettings';
 import { createDuvetGeometry, createPillowGeometry } from './beddingGeometry';
 import { buildCatalogGeometry } from './catalogGeometry';
 import { isFurnitureVariant } from '../../domain/models/furnitureCatalog';
 import { attachCustomModel } from './customModel';
+import { groupDisplayGeometry } from './displayGeometry';
+import { prepareScenePicking } from './scenePickingAcceleration';
 import type { FurnitureItem, Room, Selection } from '../../domain/project/types';
-type FurnitureRenderOptions = { geometry?: 'low' | 'medium' | 'high'; textures?: number; roomId?: string; publicView?: boolean; onError?: (message: string) => void; onLoaded?: () => void };
+type FurnitureRenderOptions = { geometry?: 'low' | 'medium' | 'high'; textures?: number; roomId?: string; publicView?: boolean; onError?: (message: string) => void; onLoaded?: () => void; editable?: boolean };
 
 export function box(group: THREE.Group, size: [number, number, number], at: [number, number, number], material: THREE.Material, rounded = false) {
   const beveled = group.userData.architectural;
@@ -36,6 +39,7 @@ export function addStoredFurniture(parent: THREE.Group, item: FurnitureItem, qua
   group.position.set(item.x, 0, item.z);
   group.rotation.y = THREE.MathUtils.degToRad(item.rotation);
   group.userData.selection = { kind: 'furniture', id: item.id } satisfies Selection;
+  group.userData.furnitureAppearance = { material: item.material, quality };
   parent.add(group);
   if (item.type === 'custom') {
     attachCustomModel(group, item, quality, { roomId: options.roomId, publicOnly: options.publicView, onError: options.onError, onLoaded: options.onLoaded, textureResolution: options.textures });
@@ -87,9 +91,13 @@ export function addStoredFurniture(parent: THREE.Group, item: FurnitureItem, qua
   }
   const usedMaterials = new Set<THREE.Material>();
   group.traverse(object => {
-    if (object instanceof THREE.Mesh) (Array.isArray(object.material) ? object.material : [object.material]).forEach(material => usedMaterials.add(material));
+    if (object instanceof THREE.Mesh) {
+      (Array.isArray(object.material) ? object.material : [object.material]).forEach(material => usedMaterials.add(material));
+      object.userData.furnitureMaterialRole ??= object.material === body ? 'body' : object.material === handles ? 'handles' : 'fabric';
+    }
   });
   for (const material of new Set([body, face, handles])) if (!usedMaterials.has(material)) material.dispose();
+  if (!options.editable) { groupDisplayGeometry(group); prepareScenePicking(group); }
   if (import.meta.env?.DEV) {
     group.updateWorldMatrix(true, true);
     const actual = new THREE.Box3().setFromObject(group);
@@ -100,6 +108,35 @@ export function addStoredFurniture(parent: THREE.Group, item: FurnitureItem, qua
 }
 
 export function createFurnitureModel(item: FurnitureItem, quality: Room['renderQuality'] = 'standard'): THREE.Group {
-  return addStoredFurniture(new THREE.Group(), { ...item, x: 0, z: 0, rotation: 0 }, quality);
+  return addStoredFurniture(new THREE.Group(), { ...item, x: 0, z: 0, rotation: 0 }, quality, { editable: true });
+}
+
+/** Repainting preserves the display buffers, original parts and authored hardware/fabric colors. */
+export function updateFurnitureAppearance(group: THREE.Object3D, item: FurnitureItem, quality: Room['renderQuality'], replaceTextures = false) {
+  if (item.type === 'custom') {
+    const update = group.userData.updateCustomAppearance as ((next: FurnitureItem, quality: Room['renderQuality'], resolution?: number) => void) | undefined;
+    update?.(item, quality, getGraphicsProfile().textures); return;
+  }
+  const before = group.userData.furnitureAppearance as { material: FurnitureItem['material']; quality: Room['renderQuality'] } | undefined;
+  const replace = replaceTextures || before?.material !== item.material || before?.quality !== quality;
+  const replacements = new Map<THREE.Material, THREE.Material>(), tinted = new Set<THREE.Material>();
+  group.traverse(object => {
+    if (!(object instanceof THREE.Mesh)) return;
+    const role = object.userData.furnitureMaterialRole;
+    if (role !== 'body' && !(replaceTextures && role === 'fabric')) return;
+    const update = (material: THREE.Material) => {
+      if (!replace) { if (!tinted.has(material)) { tinted.add(material); tintMaterial(material, item.color!); } return material; }
+      if (!replacements.has(material)) {
+        const next = role === 'body' ? createFurnitureMaterial(item.color!, item.material!, quality) : createFabricMaterial('#' + (material as THREE.MeshStandardMaterial).color.getHexString(), quality);
+        next.name = role === 'body' ? `3D Space:${item.material!}` : material.name;
+        next.side = material.side; next.transparent = material.transparent; next.opacity = material.opacity; next.alphaTest = material.alphaTest;
+        replacements.set(material, next);
+      }
+      return replacements.get(material)!;
+    };
+    object.material = Array.isArray(object.material) ? object.material.map(update) : update(object.material);
+  });
+  replacements.forEach((_next, previous) => previous.dispose());
+  group.userData.furnitureAppearance = { material: item.material, quality };
 }
 

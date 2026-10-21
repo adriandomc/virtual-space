@@ -1,3 +1,4 @@
+import { stableStringify } from '../../shared/sameData';
 import * as THREE from 'three/webgpu';
 import { projectLevel, projectStructure, projectToRoom, type ProjectDocument } from '../../domain/project/projectDocument';
 import { buildRoofGeometry, type Vec3 } from '../../domain/project/projectGeometry';
@@ -5,10 +6,10 @@ import type { Point, Room } from '../../domain/project/types';
 
 /** Appearance and transforms do not invalidate architectural buffers. */
 export function levelGeometrySignature(room: Room, extra = '') {
-  return JSON.stringify({ vertices: room.vertices, height: room.height, thickness: room.thickness, quality: room.renderQuality, walls: room.wallSegments?.map(({ leftColor: _left, rightColor: _right, ...wall }) => wall), surfaces: room.surfaces?.map(({ finish: _finish, undersideFinish: _underside, ...surface }) => surface), openings: room.openings.map(({ open: _open, color: _color, ...opening }) => opening), extra });
+  return stableStringify({ vertices: room.vertices, height: room.height, thickness: room.thickness, quality: room.renderQuality, surfaces: room.surfaces?.map(({ finish: _finish, undersideFinish: _underside, ...surface }) => surface), extra });
 }
 
-export function furnitureGeometrySignature({ color: _color, material: _material, name: _name, x: _x, z: _z, rotation: _rotation, ...geometry }: Room['furniture'][number]) { return JSON.stringify(geometry); }
+export function furnitureGeometrySignature({ color: _color, material: _material, name: _name, x: _x, z: _z, rotation: _rotation, ...geometry }: Room['furniture'][number]) { return stableStringify(geometry); }
 
 export function shadowLightIds(project: ProjectDocument, activeId: string, resident: Set<string>, position: Vec3, maximum: number) {
   const candidates = project.levels.filter(level => resident.has(level.id)).flatMap(level => level.lights.filter(light => light.enabled).map(light => ({ id: light.id, active: level.id === activeId, distance: Math.hypot(position.x - light.x, position.y - level.elevation - light.y, position.z - light.z) })));
@@ -55,7 +56,7 @@ export function indexedArchitectureGeometry(vertices: Vec3[], triangles: [number
 }
 
 export function projectNavigationSignature(project: ProjectDocument) {
-  return JSON.stringify({ structure: projectStructure(project), openings: project.levels.flatMap(level => level.openings.map(({ color: _color, ...opening }) => opening)), furniture: project.levels.flatMap(level => level.furniture.map(item => [item.id, item.x, item.z, item.width, item.depth, item.height, item.rotation])) });
+  return stableStringify({ structure: projectStructure(project), openings: project.levels.flatMap(level => level.openings.map(({ color: _color, open: _open, ...opening }) => opening)) });
 }
 
 export function slabGeometry(outline: Point[], holes: Point[][], thickness: number, downward = true) {
@@ -88,6 +89,6 @@ export function sceneResourceUsage(scene: THREE.Object3D) {
     triangles += (geometry.index?.count ?? geometry.getAttribute('position').count) / 3 * (object instanceof THREE.InstancedMesh ? object.count : 1);
     for (const material of Array.isArray(object.material) ? object.material : [object.material]) for (const property of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'emissiveMap', 'alphaMap'] as const) { const texture = (material as THREE.MeshStandardMaterial)[property]; if (texture) textures.add(texture); }
   });
-  textures.forEach(texture => { const image = texture.image as { width?: number; height?: number } | null; if (image?.width && image.height) textureBytes += image.width * image.height * 4 * (texture.generateMipmaps ? 4 / 3 : 1); });
+  textures.forEach(texture => { if ((texture as THREE.CompressedTexture).isCompressedTexture && texture.mipmaps.length) { textureBytes += texture.mipmaps.reduce((sum, mip) => sum + ((mip as { data?: ArrayBufferView }).data?.byteLength ?? 0), 0); return; } const image = texture.image as { width?: number; height?: number } | null; if (image?.width && image.height) textureBytes += image.width * image.height * 4 * (texture.generateMipmaps ? 4 / 3 : 1); });
   return { meshes, triangles, geometryBytes: [...buffers].reduce((bytes, buffer) => bytes + buffer.byteLength, 0), textures: textures.size, textureBytes: Math.ceil(textureBytes) };
 }

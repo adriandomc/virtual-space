@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as THREE from 'three';
-import { captureWorkshopSnapshot, disposeWorkshopSnapshot, WorkshopHistory } from './workshopHistory';
+import { applyWorkshopPatch, captureWorkshopPatch, captureWorkshopSnapshot, compactWorkshopVertexPatch, disposeWorkshopSnapshot, WorkshopHistory } from './workshopHistory';
+import { getEditableVertices, moveModelVertex } from './modelWorkshopGeometry';
 
 const snapshot = (name: string, bytes?: number) => {
   const content = new THREE.Group(), piece = new THREE.Mesh(new THREE.BoxGeometry(.5, .5, .5), new THREE.MeshStandardMaterial()); content.add(piece);
@@ -79,4 +80,49 @@ test('empty history consumes unused captures and clearing disposes owned geometr
   const value = snapshot('Owned'), mesh = value.content.children[0] as THREE.Mesh; let geometryDisposed = 0, materialDisposed = 0;
   mesh.geometry.addEventListener('dispose', () => geometryDisposed++); (mesh.material as THREE.Material).addEventListener('dispose', () => materialDisposed++);
   history.record(value); history.clear(); history.clear(); assert.equal(geometryDisposed, 1); assert.equal(materialDisposed, 1);
+});
+
+test('transform and material undo use sparse before-images without cloning unaffected model buffers', () => {
+  const content = new THREE.Group(), mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 120, 120), new THREE.MeshStandardMaterial({ color: '#123456' }));
+  const sibling = new THREE.Mesh(new THREE.SphereGeometry(1, 120, 120), new THREE.MeshStandardMaterial()); content.add(mesh, sibling);
+  const geometry = mesh.geometry, buffer = geometry.getAttribute('position'), siblingMaterial = sibling.material;
+  const history = new WorkshopHistory(), before = captureWorkshopPatch(content, mesh.uuid, 'Model', [mesh.uuid], { kind: 'transforms', ids: [mesh.uuid] });
+  assert(before.bytes < 1024); assert.equal(before.content.children.length, 0);
+  mesh.position.set(1, 2, 3); mesh.rotation.y = 1; mesh.userData.workshopGroup = { id: 'g', name: 'Group' }; history.record(before);
+  const undo = history.undo(history.captureCurrent('undo', content, mesh.uuid, 'Model', [mesh.uuid]))!; assert(applyWorkshopPatch(undo, content));
+  assert.deepEqual(mesh.position.toArray(), [0, 0, 0]); assert.equal(mesh.userData.workshopGroup, undefined); assert.equal(mesh.geometry, geometry); assert.equal(geometry.getAttribute('position'), buffer);
+  const redo = history.redo(history.captureCurrent('redo', content, mesh.uuid, 'Model', [mesh.uuid]))!; applyWorkshopPatch(redo, content); assert.deepEqual(mesh.position.toArray(), [1, 2, 3]);
+  const materialBefore = captureWorkshopPatch(content, mesh.uuid, 'Model', [mesh.uuid], { kind: 'materials', ids: [mesh.uuid] }); mesh.material.color.set('#abcdef'); applyWorkshopPatch(materialBefore, content);
+  assert.equal(mesh.material.color.getHexString(), '123456'); assert.equal(sibling.material, siblingMaterial); assert.equal(mesh.geometry, geometry);
+  history.clear(); mesh.geometry.dispose(); mesh.material.dispose(); sibling.geometry.dispose(); sibling.material.dispose();
+});
+
+test('vertex history restores exact normals, tangents and positions with sparse retained memory and unchanged buffers', () => {
+  const content = new THREE.Group(), mesh = new THREE.Mesh(new THREE.PlaneGeometry(4, 4, 60, 60), new THREE.MeshStandardMaterial()); content.add(mesh);
+  const geometry = mesh.geometry, position = geometry.getAttribute('position'), originalPositions = position.array.slice(), originalNormals = geometry.getAttribute('normal').array.slice();
+  const tangent = new THREE.Float32BufferAttribute(new Float32Array(position.count * 4).fill(.5), 4); geometry.setAttribute('tangent', tangent);
+  const vertex = getEditableVertices(geometry)[1400], history = new WorkshopHistory();
+  const before = captureWorkshopPatch(content, mesh.uuid, 'Model', [mesh.uuid], { kind: 'vertices', id: mesh.uuid, indices: vertex.indices });
+  moveModelVertex(geometry, vertex.id, [vertex.position[0], vertex.position[1], 1]); compactWorkshopVertexPatch(before, content); history.record(before);
+  assert(before.bytes < tangent.array.byteLength + 1024, 'only changed normals and positions are retained alongside authored tangents');
+  const changedPositions = position.array.slice(), changedNormals = geometry.getAttribute('normal').array.slice();
+  const previous = history.undo(history.captureCurrent('undo', content, mesh.uuid, 'Model', [mesh.uuid]))!; applyWorkshopPatch(previous, content);
+  assert.equal(mesh.geometry, geometry); assert.equal(geometry.getAttribute('position'), position); assert.deepEqual(position.array, originalPositions); assert.deepEqual(geometry.getAttribute('normal').array, originalNormals); assert.deepEqual(geometry.getAttribute('tangent').array, tangent.array);
+  const next = history.redo(history.captureCurrent('redo', content, mesh.uuid, 'Model', [mesh.uuid]))!; applyWorkshopPatch(next, content);
+  assert.deepEqual(position.array, changedPositions); assert.deepEqual(geometry.getAttribute('normal').array, changedNormals); assert.equal(geometry.getAttribute('tangent'), undefined);
+  history.clear(); geometry.dispose(); mesh.material.dispose();
+});
+
+test('coalesced vertex edits retain the first value of every newly affected normal and vertex', () => {
+  const content = new THREE.Group(), mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2, 2, 2), new THREE.MeshStandardMaterial()); content.add(mesh);
+  const geometry = mesh.geometry, positions = geometry.getAttribute('position').array.slice(), normals = geometry.getAttribute('normal').array.slice(); let time = 0;
+  const history = new WorkshopHistory(() => time);
+  for (const id of [0, 8]) {
+    const vertex = getEditableVertices(geometry)[id], before = captureWorkshopPatch(content, mesh.uuid, 'Model', [mesh.uuid], { kind: 'vertices', id: mesh.uuid, indices: vertex.indices });
+    moveModelVertex(geometry, id, [vertex.position[0], vertex.position[1], .5]); compactWorkshopVertexPatch(before, content); history.record(before, 'coordinate'); time += 100;
+  }
+  assert.equal(history.past.length, 1);
+  const previous = history.undo(history.captureCurrent('undo', content, mesh.uuid, 'Model', [mesh.uuid]))!; applyWorkshopPatch(previous, content);
+  assert.deepEqual(geometry.getAttribute('position').array, positions); assert.deepEqual(geometry.getAttribute('normal').array, normals);
+  history.clear(); geometry.dispose(); mesh.material.dispose();
 });

@@ -33,7 +33,7 @@ export function resolveGraphicsProfile(preferences: GraphicsPreferences, device 
   const low = device.memoryGB < 4 || device.cores <= 4 || device.coarse && device.width <= 700;
   const high = !device.coarse && device.memoryGB >= 8 && device.cores >= 8;
   const profile: GraphicsProfile = low
-    ? { shadows: 512, textures: 512, renderScale: 0.75, geometry: 'low', distance: 40, ao: 'off', fps: 30 }
+    ? { shadows: 512, textures: 512, renderScale: 0.75, geometry: 'low', distance: 40, ao: 'off', fps: 60 }
     : high ? { shadows: 2048, textures: 2048, renderScale: 1, geometry: 'high', distance: 160, ao: 'high', fps: 60 }
       : { shadows: 1024, textures: 1024, renderScale: 1, geometry: 'medium', distance: 80, ao: 'low', fps: 60 };
   for (const key of Object.keys(choices) as GraphicsKey[]) if (preferences[key] !== 'auto') Object.assign(profile, { [key]: preferences[key] });
@@ -65,6 +65,7 @@ let adaptiveTier = 0;
 try { if (typeof window !== 'undefined') preferences = parseGraphicsPreferences(JSON.parse(window.localStorage.getItem(GRAPHICS_STORAGE_KEY) ?? 'null')); } catch { /* Graphics choices remain available without device storage. */ }
 const listeners = new Set<() => void>();
 export const getGraphicsPreferences = () => preferences;
+export const getAdaptiveGraphicsTier = () => adaptiveTier;
 export function getGraphicsProfile() {
   let profile = resolveGraphicsProfile(preferences);
   for (let tier = 0; tier < adaptiveTier; tier++) profile = reduceAutomaticGraphics(profile, preferences);
@@ -89,17 +90,21 @@ export function setAdaptiveGraphicsTier(tier: number) {
 
 /** Dwell times prevent quality oscillation and ignore a brief shader-compilation spike. */
 export class GraphicsPerformanceController {
-  tier = 0;
+  tier: number;
   private slow = 0;
   private fast = 0;
   private sinceChange = 0;
-  reset() { this.tier = this.slow = this.fast = this.sinceChange = 0; }
-  sample(frameMs: number, elapsedMs: number, targetFps: number, automatic: boolean): number | null {
-    if (!automatic || !Number.isFinite(frameMs) || elapsedMs <= 0 || elapsedMs > 250) { this.slow = this.fast = 0; return null; }
+  constructor(tier = getAdaptiveGraphicsTier()) { this.tier = tier; }
+  reset(tier = getAdaptiveGraphicsTier()) { this.tier = tier; this.slow = this.fast = this.sinceChange = 0; }
+  sample(cpuMs: number, elapsedMs: number, targetFps: number, automatic: boolean, interacting = true, gpuMs?: number): number | null {
+    // Idle, resumed/background frames and first-frame compilation are not sustained performance.
+    if (!automatic || !interacting || !Number.isFinite(cpuMs) || elapsedMs <= 0 || elapsedMs > 250 || cpuMs > 250) { this.slow = this.fast = 0; return null; }
     this.sinceChange += elapsedMs;
     const budget = 1000 / (targetFps || 60);
-    if (frameMs > budget * 1.3) { this.slow += elapsedMs; this.fast = 0; }
-    else if (frameMs < budget * 1.12) { this.fast += elapsedMs; this.slow = 0; }
+    const work = Math.max(cpuMs, Number.isFinite(gpuMs) ? gpuMs! : 0);
+    if (elapsedMs > budget * 1.3 || work > budget * .9) { this.slow += elapsedMs; this.fast = 0; }
+    // A capped 30-FPS cadence is not proof of headroom for 60. Require measured work below a 60-FPS budget.
+    else if (elapsedMs < budget * 1.12 && work < Math.min(budget, 1000 / 60) * .6) { this.fast += elapsedMs; this.slow = 0; }
     else { this.slow = this.fast = 0; }
     const down = this.slow >= 2500 && this.sinceChange >= 8000 && this.tier < 2;
     const up = this.fast >= 15000 && this.sinceChange >= 20000 && this.tier > 0;
@@ -111,6 +116,7 @@ export class GraphicsPerformanceController {
 export function useGraphicsSettings() { return useSyncExternalStore(subscribeGraphicsSettings, getGraphicsPreferences, () => DEFAULT_GRAPHICS); }
 if (typeof window !== 'undefined') window.addEventListener('storage', event => {
   if (event.key !== GRAPHICS_STORAGE_KEY) return;
+  adaptiveTier = 0;
   try { preferences = parseGraphicsPreferences(JSON.parse(event.newValue ?? 'null')); } catch { preferences = { ...DEFAULT_GRAPHICS }; }
   listeners.forEach(listener => listener());
 });

@@ -8,6 +8,8 @@ export class ProjectRecovery {
   private saving: Promise<void> = Promise.resolve();
   private listeners = new Set<() => void>();
   private generation = 0;
+  private checkpointAccount: string | null = null;
+  private checkpointGeneration = 0;
 
   constructor(private id: string) {}
   project = () => this.value?.project ?? null;
@@ -29,12 +31,55 @@ export class ProjectRecovery {
 
   capture(project: ProjectDocument, accountId: string) {
     this.generation++;
+    this.checkpointGeneration++;
+    this.checkpointAccount = null;
     this.value = { project, accountId }; this.notify();
     this.saving = this.saving.catch(() => {}).then(() => atomicOffline(accountId, [{ store: 'meta', key: this.key(accountId), value: { accountId, roomId: this.id, project } }]));
     return this.saving;
   }
 
-  clear() { this.generation++; this.value = null; this.notify(); }
+  /** A transient gesture is recoverable after a crash without publishing intermediate edits. */
+  checkpoint(project: ProjectDocument, accountId: string, current: () => boolean = () => true) {
+    if (this.value) return Promise.reject(new Error('Guarda o descarta la copia recuperada antes de continuar.'));
+    this.generation++;
+    const generation = ++this.checkpointGeneration;
+    this.checkpointAccount = accountId;
+    this.saving = this.saving.catch(() => {}).then(async () => {
+      if (this.value || generation !== this.checkpointGeneration || !current()) return;
+      await atomicOffline(accountId, [{ store: 'meta', key: this.key(accountId), value: { accountId, roomId: this.id, project } }]);
+    });
+    return this.saving;
+  }
+
+  /** Call after the final edit is durable, or after an explicitly cancelled gesture. */
+  clearCheckpoint(current: () => boolean = () => true) {
+    const accountId = this.checkpointAccount;
+    if (!accountId) return this.saving;
+    const generation = this.checkpointGeneration;
+    this.saving = this.saving.catch(() => {}).then(async () => {
+      // A rejected edit captured in the meantime must survive this cleanup.
+      const valid = () => !this.value && generation === this.checkpointGeneration && current();
+      if (!valid()) return;
+      const identity = await readOffline<{ id: string }>('meta', 'identity');
+      if (identity?.id !== accountId || !valid()) return;
+      await atomicOffline(accountId, [{ store: 'meta', key: this.key(accountId), remove: true }]);
+      if (valid()) this.checkpointAccount = null;
+    });
+    return this.saving;
+  }
+
+  /** A later preview/cancel must not replace the only durable copy of an accepted edit. */
+  async updateCheckpoint(project: ProjectDocument | null, accountId: string | undefined, durability: { assertDurable(): Promise<void>; readonly hasUndurableWork: boolean }, current: () => boolean) {
+    try { await durability.assertDurable(); }
+    catch { return false; }
+    const valid = () => current() && !durability.hasUndurableWork && !this.value;
+    if (!valid() || project && !accountId) return false;
+    if (project) await this.checkpoint(project, accountId!, valid);
+    else await this.clearCheckpoint(valid);
+    return valid();
+  }
+
+  clear() { this.generation++; this.checkpointGeneration++; this.checkpointAccount = null; this.value = null; this.notify(); }
 
   private async owned() {
     const current = this.value;

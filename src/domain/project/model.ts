@@ -256,7 +256,9 @@ function readFurniture(value: unknown, height: number, index = 0): FurnitureItem
   if (!(type === 'custom' && material === null) && material !== 'wood' && material !== 'plastic' && material !== 'metal') throw new Error('El material de mueble debe ser madera, plástico o metal.');
   const id = text(p.id, 'Identificador de mueble');
   if (id.length > 64) throw new Error('El identificador de mueble admite hasta 64 caracteres.');
-  if (type === 'wardrobe' || type === 'vanity' || type === 'nightstand') {    if (!isFurnitureVariant(type, p.variant)) throw new Error('Selecciona un modelo válido de esta categoría.');  } else if (p.variant !== undefined) throw new Error('Este elemento no admite variantes de catálogo.');
+  if (type === 'wardrobe' || type === 'vanity' || type === 'nightstand') {
+    if (!isFurnitureVariant(type, p.variant)) throw new Error('Selecciona un modelo válido de esta categoría.');
+  } else if (p.variant !== undefined) throw new Error('Este elemento no admite variantes de catálogo.');
   let asset: Pick<FurnitureItem, 'assetId' | 'name' | 'parts'> = {};
   if (type === 'custom') {
     if (typeof p.assetId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(p.assetId)) throw new Error('El modelo necesita un archivo válido.');
@@ -530,7 +532,8 @@ function boundedMove(previous: Point, target: Point, pathIsClear: (point: Point)
   return { x: previous.x + (target.x - previous.x) * low, z: previous.z + (target.z - previous.z) * low };
 }
 
-export function moveSceneItem(room: Room, selection: Selection, target: Point & { y?: number; rotation?: number }): Room {
+/** Previews derive finite, clamped transforms from an already validated room without copying unrelated data. */
+export function previewSceneItemMove(room: Room, selection: Selection, target: Point & { y?: number; rotation?: number }): Room {
   if (![target.x, target.z, ...(target.y === undefined ? [] : [target.y]), ...(target.rotation === undefined ? [] : [target.rotation])].every(Number.isFinite)) throw new Error('La posición y el giro deben ser números finitos.');
   const editing = room.editing;
   const snap = (value: number) => editing.snap ? Number((Math.round(value / editing.step) * editing.step).toFixed(6)) : value;
@@ -542,7 +545,7 @@ export function moveSceneItem(room: Room, selection: Selection, target: Point & 
     const rotation = target.rotation === undefined ? item.rotation : ((target.rotation % 360) + 360) % 360;
     const moved = { ...item, ...position, rotation };
     if (moved.x === item.x && moved.z === item.z && moved.rotation === item.rotation) return room;
-    return validateRoom({ ...room, furniture: room.furniture.map(p => p.id === item.id ? moved : p) });
+    return { ...room, furniture: room.furniture.map(p => p.id === item.id ? moved : p) };
   }
   if (selection.kind === 'light') {
     const item = room.lights.find(p => p.id === selection.id);
@@ -550,7 +553,7 @@ export function moveSceneItem(room: Room, selection: Selection, target: Point & 
     const point = editing.bounds ? boundedMove(item, position, p => footprintInside([item, { x: coordinate(p.x), z: coordinate(p.z) }], room.vertices)) : position;
     if (!point) return room;
     const moved = { ...item, x: coordinate(point.x), z: coordinate(point.z), y: target.y === undefined ? item.y : clamp(snap(target.y), 0.1, room.height) };
-    return validateRoom({ ...room, lights: room.lights.map(p => p.id === item.id ? moved : p) });
+    return { ...room, lights: room.lights.map(p => p.id === item.id ? moved : p) };
   }
   if (selection.kind !== 'opening') return room;
   const item = room.openings.find(p => p.id === selection.id);
@@ -570,5 +573,11 @@ export function moveSceneItem(room: Room, selection: Selection, target: Point & 
     if (error < distance) { distance = error; closest = { ...item, wall, offset: clamp(offset, 0, length - item.width), sill }; }
   }
   if (!closest) throw new Error('No queda espacio en una pared para mover esta abertura sin superponerla.');
-  return validateRoom({ ...room, openings: room.openings.map(p => p.id === item.id ? closest! : p) });
+  return { ...room, openings: room.openings.map(p => p.id === item.id ? closest! : p) };
+}
+
+/** Persistence and authoritative operations always validate the complete proposed room. */
+export function moveSceneItem(room: Room, selection: Selection, target: Point & { y?: number; rotation?: number }): Room {
+  const next = previewSceneItemMove(room, selection, target);
+  return next === room ? room : validateRoom(next);
 }

@@ -5,6 +5,7 @@ import { createDefaultProject, projectToRoom } from '../../domain/project/projec
 import { addLevel, addStair } from '../../domain/project/projectOperations';
 import { fitOrbitCamera, resetCamera, finishViewTransition } from './sceneCamera';
 import { disposeArchitecture, disposeContent } from './sceneResources';
+import { architecturalAreaTextures } from './areaLightTextures';
 import { canInteract, canMove, canRotate, sameSelection, sceneItemPosition } from './sceneSelection';
 import type { RoomSceneProps, SceneRuntime } from './sceneRuntime';
 
@@ -80,7 +81,8 @@ test('disposing the rendering environment invalidates asynchronous loads and rel
   runtime.postProcessing = resource() as SceneRuntime['postProcessing'];
   runtime.architecturalEnvironment = resource() as THREE.RenderTarget;
   runtime.sky = resource() as THREE.DataTexture;
-  runtime.areaTextures = { LTC_FLOAT_1: resource(), LTC_FLOAT_2: resource(), LTC_HALF_1: resource(), LTC_HALF_2: resource() } as SceneRuntime['areaTextures'];
+  runtime.areaTextures = architecturalAreaTextures();
+  for (const key of ['LTC_FLOAT_1', 'LTC_FLOAT_2', 'LTC_HALF_1', 'LTC_HALF_2'] as const) runtime.areaTextures[key].addEventListener('dispose', () => disposed++);
   disposeArchitecture(runtime);
   assert.equal(runtime.disposed, true);
   assert.equal(disposed, 7);
