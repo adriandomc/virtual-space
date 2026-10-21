@@ -30,6 +30,16 @@ export default function useProject() {
   const sketch = useRef<ProjectSketch | null>(null);
   const recovery = useMemo(() => new ProjectRecovery(id), [id]);
   const recoveryProject = useSyncExternalStore(recovery.subscribe, recovery.project);
+  const checkpointCommitted = useRef(0);
+  const checkpointGeneration = useRef(0);
+  const clearDurableCheckpoint = useCallback(async () => {
+    const value = session.current, committed = checkpointCommitted.current;
+    if (!committed || !value) return;
+    const generation = checkpointGeneration.current;
+    const current = () => session.current === value && checkpointCommitted.current === committed && checkpointGeneration.current === generation;
+    if (await recovery.updateCheckpoint(null, undefined, value, current) && current()) checkpointCommitted.current = 0;
+  }, [recovery]);
+  useEffect(() => { void clearDurableCheckpoint().catch(cause => session.current?.failure(cause)); }, [state, clearDurableCheckpoint]);
   useEffect(() => { setAppUpdateReady(status !== 'loading'); return () => setAppUpdateReady(false); }, [status]);
 
   useEffect(() => {
@@ -64,13 +74,27 @@ export default function useProject() {
       const validated = validateProjectDocument(next);
       if (!session.current?.change(validated)) return false;
       projectRef.current = validated;
+      checkpointCommitted.current = ++checkpointGeneration.current;
+      void clearDurableCheckpoint().catch(cause => session.current?.failure(cause));
       return true;
     } catch (cause) { session.current?.failure(cause); return false; }
-  }, [canEdit, recovery]);
+  }, [canEdit, recovery, clearDurableCheckpoint]);
   const setRoom = useCallback((next: Room) => {
     try { return setProject(updateProjectRoom(projectRef.current, activeLevelRef.current, next)); }
     catch (cause) { session.current?.failure(cause); return false; }
   }, [setProject]);
+  const checkpointRoom = useCallback(async (next: Room | null) => {
+    const value = session.current, accountId = value?.snapshot?.accountId ?? value?.record?.accountId;
+    if (!value || !accountId) return;
+    if (next && (!canEdit || recovery.project())) throw new Error('Espera a que se restablezca la conexión.');
+    if (next) assertCurrentAppVersion();
+    const levelId = activeLevelRef.current;
+    if (next && next.levelId !== levelId) throw new Error('El nivel cambió. Vuelve a seleccionar el elemento.');
+    const generation = ++checkpointGeneration.current;
+    const current = () => session.current === value && checkpointGeneration.current === generation && activeLevelRef.current === levelId && (value.snapshot?.accountId ?? value.record?.accountId) === accountId;
+    const draft = next ? updateProjectRoom(projectRef.current, levelId, next) : null;
+    if (await recovery.updateCheckpoint(draft, accountId, value, current) && current()) checkpointCommitted.current = 0;
+  }, [canEdit, recovery]);
   const setActiveLevelId = useCallback((levelId: string) => {
     if (!projectRef.current.levels.some(level => level.id === levelId)) return;
     selectLevel(levelId);
@@ -158,5 +182,5 @@ export default function useProject() {
     window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn);
   }, [recovery]);
 
-  return { project, setProject, activeLevelId, setActiveLevelId, room, setRoom, ready, status, error, recoveryProject, readOnly: !canEdit || !!recoveryProject || version !== 'current' && !appActivityReason(), canManage, role, connected, roomId: id, shareUrl: shareAddress(new URL(window.location.href), id), shared, setSharing, uploadSketch, sketchUrl, retry, offlineAllowed, pendingOffline: pendingOffline || pendingAssets || !!recoveryProject, discardOffline, downloadOfflineBackup, importProject };
+  return { project, setProject, activeLevelId, setActiveLevelId, room, setRoom, checkpointRoom, ready, status, error, recoveryProject, readOnly: !canEdit || !!recoveryProject || version !== 'current' && !appActivityReason(), canManage, role, connected, roomId: id, shareUrl: shareAddress(new URL(window.location.href), id), shared, setSharing, uploadSketch, sketchUrl, retry, offlineAllowed, pendingOffline: pendingOffline || pendingAssets || !!recoveryProject, discardOffline, downloadOfflineBackup, importProject };
 }

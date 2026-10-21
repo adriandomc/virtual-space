@@ -4,7 +4,8 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "postinstall": "node scripts/patch-three.mjs",
+    "postinstall": "node scripts/patch-three.mjs && node scripts/copy-texture-transcoder.mjs",
+    "assets:encode": "node scripts/encode-materials.mjs",
     "dev": "vite --host 0.0.0.0",
     "dev:server": "tsx src/server/server.ts",
     "check": "node scripts/check-architecture.mjs && tsc -p tsconfig.app.json && tsc -p tsconfig.tools.json && tsc -p tsconfig.tests.json",
@@ -15,8 +16,9 @@
     "operations": "node server-dist/server/operations.js",
     "preview": "vite preview --host 0.0.0.0",
     "test": "tsx --test \"src/**/*.test.ts\" \"tests/**/*.test.ts\"",
-    "test:e2e": "npm run build && playwright test --project=chromium",
-    "test:e2e:webkit": "npm run build && playwright test --project=webkit"
+    "test:e2e": "npm run build:e2e && playwright test --project=chromium",
+    "test:e2e:webkit": "npm run build:e2e && playwright test --project=webkit",
+    "build:e2e": "node scripts/build-e2e.mjs"
   },
   "dependencies": {
     "@zip.js/zip.js": "^2.24.0",

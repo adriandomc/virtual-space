@@ -72,7 +72,7 @@ npm run test:e2e
 npm run test:e2e:webkit
 ```
 
-`npm test` runs the TypeScript unit and integration tests. `build` checks TypeScript and builds both applications. Playwright rebuilds the app, starts an isolated production server at `127.0.0.1:5188` and uses a temporary database; it does not use development or production data. Set `PLAYWRIGHT_CHANNEL=chrome` to use an installed Chrome channel. Failure screenshots and traces are written to `test-results/`.
+`npm test` runs the TypeScript unit and integration tests. `build` checks TypeScript and builds both applications. The browser scripts use `build:e2e`, which enables scene diagnostics with `VITE_SCENE_DIAGNOSTICS=true`; ordinary production builds do not collect scene statistics unless the URL includes `?profile=1`. Playwright starts an isolated production server at `127.0.0.1:5188` and uses a temporary database; it does not use development or production data. Set `PLAYWRIGHT_CHANNEL=chrome` to use an installed Chrome channel. Failure screenshots and traces are written to `test-results/`.
 
 CI uses Node.js 24 on Linux, runs unit/integration tests, the production build, Chromium/WebKit flows and a Docker build. Each run retains isolated browser screenshots and failure traces as `browser-test-results` artifacts for seven days. Real-GPU checks remain separate from software-rendered CI.
 
@@ -134,9 +134,29 @@ Run **one application instance per data directory**. Sharing the same SQLite sto
 | `src/server/` | Node entry points and grouped HTTP, authentication, project commands, collaboration, models, quotas, SQLite and maintenance. |
 | `src/shared/ui/`, `i18n/` | Shared controls, draft fields, transient previews, translations and language catalogs. |
 | `src/**/*.test.ts`, `tests/`, `e2e/` | Colocated unit tests, cross-area integration tests/shared fixtures and production-browser regressions. |
-| `public/materials/`, `public/environments/` | Bundled visual assets and provenance documents. |
+| `public/materials/`, `public/environments/`, `public/decoders/` | Bundled visual assets, local texture transcoder and provenance documents. |
 
 See [Architecture](docs/architecture.md) for dependency rules, lifecycle ownership and where to put new features. `npm run check` checks those rules and separately type-checks browser code, build tools and tests. `npm run build:server` compiles the Node-only dependency graph. `npm test` discovers nested colocated tests and cross-area tests; it does not rely on files being directly in `src/`.
+
+## Rendering and visual assets
+
+The interactive viewer uses Three.js `WebGPURenderer` and TSL, falling back to its WebGL2 backend when needed. A rewrite in WebAssembly is not required to use WebGPU. CPU-heavy texture transcoding, picking-tree construction and model booleans use workers, with a shared admission budget of one heavy job on a coarse-pointer device and two on desktop. The bounded queue supports cancellation. WebAssembly is used locally by the Basis texture transcoder; no external rendering service is involved.
+
+Scene updates reconcile levels and individual objects. Transform changes preserve model geometry, material changes preserve construction buffers, and moving an opening updates its affected walls. Compatible static model pieces are grouped for rendering while editable originals and picking identities remain available. These changes reduce CPU allocations and submission overhead; a reduction in meshes or draw calls alone does not establish a frame-rate guarantee. Automatic graphics tuning uses sustained navigation samples with dwell times, changes only unpinned options, and preserves its tier across scene updates. Hidden or workshop-covered viewers pause rendering. Backend recovery recreates graphics resources while preserving document state and the camera.
+
+Bundled photographic maps use local KTX2/Basis textures with complete mip chains at 512 and 1024 pixels, selected according to the graphics profile and source resolution. Normal maps use UASTC; color and packed occlusion/roughness/metalness maps use ETC1S. The 2048 preference does not upscale the bundled 1K sources. The renderer chooses a compression format supported by all live viewer backends; the original JPEGs remain a fallback. Uploaded GLB validation and supported formats are unchanged. `architecturalTextureLoader.ts` owns transcoder lifetime; its renderer owners must be acquired after initialization and released before final shared-material cleanup. Compressed textures must never pass through a canvas-resizing path.
+
+Material and decoder downloads are abortable and capped at 30 seconds; they do not reserve a heavy-job slot. Transcodes have a 20-second deadline. Closing the viewer or cancelling an active transcode terminates its worker pool and releases its shared slots, including when a worker never answers. Late initialization cannot revive that pool. Remaining maps use the original JPEGs without replacing material references; a later texture request can start a fresh pool. Failed generations do not retry continuously.
+
+Generated KTX2 assets are checked in, so normal builds and Docker deployments need no encoder. To regenerate them, install [Khronos KTX-Software 4.4.2](https://github.com/KhronosGroup/KTX-Software/releases/tag/v4.4.2), put `ktx` on `PATH` or set `KTX_BINARY` to its executable, then run:
+
+```sh
+npm run assets:encode
+```
+
+The script validates each output and records its SHA-256, dimensions, encoding and transfer function in `public/materials/manifest.json`. `npm ci` copies the matching pinned Three.js Basis JS/WASM files into `public/decoders/basis/`; preserve that postinstall step when updating Docker or Three.js. See the [material provenance](public/materials/README.md) and [decoder license](public/decoders/basis/README.md). Both the compressed maps and fallback files participate in offline preparation.
+
+For reproducible browser measurements, build with `npm run build:e2e` and run `npx playwright test --project=gpu`. Tests using installed Chrome skip if a hardware backend is unavailable. Diagnostic canvas attributes expose CPU submission time, actual GPU time where supported, frame cadence and scene/resource counts. GPU timing may be unavailable and must not be replaced with CPU timing. Measurements belong to the tested device and scenario; desktop emulation does not establish Android or iOS performance. Keep profiling opt-in and do not send metrics off the device.
 
 ## Data and synchronization
 
@@ -156,7 +176,7 @@ Private projects use durable account-scoped IndexedDB records and a pending queu
 
 The service worker keeps application generations consistent. A fresh, untouched opening can update automatically only after local identity/mode initialization and checks for all pending projects, sketches, uninserted models and recovery records. Work in any other editor tab blocks automatic activation. User interaction during downloads turns the update into a dismissible notice. Returning from the background never resets the interaction guard. Manual **Update now** checks every editor tab, flushes valid edits, confirms durable local storage and freezes mutations until activation. Incomplete fields/IME, color previews, drawings and workshop drafts must be finished or cancelled; durable unsynchronized changes do not require a network sync. Embedded read-only viewers do not participate in save handshakes. Settings exposes the same guarded update action.
 
-A prepared application stages the new generation's full visual assets before installation can succeed; failed downloads retain the previous complete generation. Older caches remain while open or unidentified clients may still use them, and previous immutable chunks remain readable during controller changes. Forced offline startup reuses the existing registration without an explicit registration/update check. Do not clear site storage as an update mechanism.
+A prepared application stages the new generation's full visual assets before installation can succeed; failed downloads retain the previous complete generation. Each build records per-resource SHA-256 identities from the final emitted files, after Vite has rewritten preload tables. Static-asset preparation fails the build if the worker inventory or any identity differs from disk. Unchanged resources are copied from a previous generation only after verifying their bytes; downloads are also verified. Startup code is scheduled before help and visual assets without weakening the complete core or prepared-generation requirement. Older caches remain while open or unidentified clients may still use them, and previous immutable chunks remain readable during controller changes. Forced offline startup reuses the existing registration without an explicit registration/update check. Do not clear site storage as an update mechanism.
 
 The production service worker caches the app, localized help and bundled visual assets. Graphics preferences and the selected language stay in browser storage and are not sent as analytics or copied into another device profile. IndexedDB stores editable records separately from binary assets. Installation and storage persistence remain browser-controlled; exports are the user's independent backup. Local work does not count as server account activity until authenticated synchronization occurs.
 

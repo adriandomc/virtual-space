@@ -1,9 +1,18 @@
+import { wallGeometrySignature } from './sceneWalls';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as THREE from 'three/webgpu';
 import { createDefaultProject, projectToRoom, type ProjectDocument } from '../../domain/project/projectDocument';
 import { addLevel, addStair, addWall } from '../../domain/project/projectOperations';
 import { architecturalViewBounds, indexedArchitectureGeometry, levelGeometrySignature, presentedLevelIds, projectedLevelScene, projectNavigationSignature, residentLevelIds, shadowLightIds, sceneResourceUsage, slabGeometry } from './sceneProjection';
+
+test('compressed maps retain a stable texture identity and report block bytes instead of RGBA estimates', () => {
+  const texture = new THREE.DataTexture(new Uint8Array(4), 1, 1);
+  Object.assign(texture, { isCompressedTexture: true, image: { width: 512, height: 512 }, mipmaps: [{ data: new Uint8Array(32768), width: 512, height: 512 }, { data: new Uint8Array(8192), width: 256, height: 256 }] });
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshStandardMaterial({ map: texture }));
+  assert.equal(sceneResourceUsage(mesh).textureBytes, 40960);
+  mesh.geometry.dispose(); mesh.material.dispose(); texture.dispose();
+});
 import { buildRoofGeometry } from '../../domain/project/projectGeometry';
 import { buildCatalogGeometry } from './catalogGeometry';
 import { createDuvetGeometry, createPillowGeometry } from './beddingGeometry';
@@ -71,7 +80,7 @@ test('paint, door state and item transforms retain structural buffers; holes and
   const project = fixture(1), room = projectToRoom(project), initial = levelGeometrySignature(room);
   const changed = structuredClone(room); changed.furniture[0].x += .2; changed.furniture[0].rotation = 15; changed.furniture[0].color = '#ee5511'; changed.floorColor = '#445566'; changed.wallSegments![0].leftColor = '#778899'; changed.lights[0].enabled = false;
   assert.equal(levelGeometrySignature(changed), initial);
-  changed.wallSegments![0].height -= .2; assert.notEqual(levelGeometrySignature(changed), initial);
+  changed.wallSegments![0].height -= .2; assert.equal(levelGeometrySignature(changed), initial, 'a wall edit retains floor buffers'); assert.notEqual(wallGeometrySignature(changed, 0), wallGeometrySignature(room, 0));
   const hole = structuredClone(room); hole.surfaces![0].holes.push({ id: 'hole', vertices: [{ x: -.2, z: -.2 }, { x: .2, z: -.2 }, { x: .2, z: .2 }, { x: -.2, z: .2 }] }); assert.notEqual(levelGeometrySignature(hole), initial);
 });
 
@@ -92,11 +101,12 @@ test('resource accounting counts shared geometry and textures once', () => {
   geometry.dispose(); material.dispose(); texture.dispose();
 });
 
-test('moving, resizing and changing a doorway invalidates physical navigation', () => {
+test('moving and resizing a doorway invalidates static navigation while its hinge remains dynamic', () => {
   const project = createDefaultProject(), level = project.levels[0];
   level.openings.push({ id: 'door', levelId: level.id, wallId: level.walls[0].id, type: 'door', doorStyle: 'right', open: false, offset: 1, width: .9, height: 2.1, sill: 0 });
   const signature = projectNavigationSignature(project);
-  for (const patch of [{ offset: 2 }, { width: 1.1 }, { height: 1.8 }, { wallId: level.walls[1].id }, { doorStyle: 'left' }, { open: true }]) { const changed = structuredClone(project); Object.assign(changed.levels[0].openings[0], patch); assert.notEqual(projectNavigationSignature(changed), signature); }
+  for (const patch of [{ offset: 2 }, { width: 1.1 }, { height: 1.8 }, { wallId: level.walls[1].id }, { doorStyle: 'left' }]) { const changed = structuredClone(project); Object.assign(changed.levels[0].openings[0], patch); assert.notEqual(projectNavigationSignature(changed), signature); }
+  const opened = structuredClone(project); opened.levels[0].openings[0].open = true; assert.equal(projectNavigationSignature(opened), signature);
 });
 
 test('painting an opening or lamp never invalidates level geometry or navigation', () => {

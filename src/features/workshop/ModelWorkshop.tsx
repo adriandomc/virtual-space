@@ -1,5 +1,5 @@
 import { t, useLocale } from '../../shared/i18n/i18n';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { Copy, Group, LoaderCircle, Pencil, Trash2, Ungroup, X } from 'lucide-react';
 import FurnitureCatalog from '../models/FurnitureCatalog.tsx';
@@ -13,7 +13,7 @@ import { parseName } from '../../shared/ui/fieldDraft';
 import ColorPicker from '../../shared/ui/ColorPicker';
 import { addModelFace, addModelVertex, clampWorkshopScale, cloneWorkshopModel, deleteModelFace, deleteModelVertex, disposeWorkshopModel, exportWorkshopGLB, fitWorkshopCamera, getEditableVertices, getModelFaces, moveModelVertex, setWorkshopColor, setWorkshopMaterial, workshopSurface } from './modelWorkshopGeometry';
 import { createWorkshopPiece, WORKSHOP_PIECES } from './workshopPieces';
-import { captureWorkshopSnapshot, WorkshopHistory, type WorkshopSnapshot } from './workshopHistory';
+import { applyWorkshopPatch, captureWorkshopPatch, captureWorkshopSnapshot, compactWorkshopVertexPatch, disposeWorkshopSnapshot, WorkshopHistory, type WorkshopPatchSpec, type WorkshopSnapshot } from './workshopHistory';
 import { startWorkshopBoolean } from './workshopBooleanClient';
 import type { WorkshopBooleanOperation } from './workshopBoolean';
 import { alignWorkshopPiece, snapWorkshopPiece, type WorkshopAxis, type WorkshopAlignment } from './workshopAlignment';
@@ -22,6 +22,8 @@ import './modelWorkshop.css';
 import { NumberControl, NameControl, PieceThumbnail } from './WorkshopFields';
 import WorkshopToolbar from './WorkshopToolbar';
 import { AXES, createWorkshopScene, disposeWorkshopScene, releaseWorkshopSource, updateWorkshopSelection, removeHelper, clearSelectionHelpers, showSnapGuide, type WorkshopPanel, type WorkshopTool, type WorkshopGeometryTool, type WorkshopSceneRuntime } from './workshopScene';
+import { createDemandFrames } from '../../client/graphics/demandFrames';
+import { getGraphicsProfile, subscribeGraphicsSettings } from '../../client/graphics/graphicsSettings';
 import { beginAppActivity, registerBeforeAppUpdate, registerAppActivity } from '../../client/pwa/appOffline';
 
 type Props = { item?: FurnitureItem; roomId: string; onSaved: (asset: ModelAsset) => boolean | void; onClose: () => void };
@@ -66,14 +68,14 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
   const [alignmentReference, setAlignmentReference] = useState(''), [alignmentAxis, setAlignmentAxis] = useState<WorkshopAxis>('x');
   const latest = useRef({ selected, selectedIds, multiSelect, panel, tool, geometryTool, vertexId, faceId, saving, computing, previewing, name, snapEnabled, snapGrid, snapPieces, gridStep });
   latest.current = { selected, selectedIds, multiSelect, panel, tool, geometryTool, vertexId, faceId, saving, computing, previewing, name, snapEnabled, snapGrid, snapPieces, gridStep };
-  const change = () => { setRevision(value => value + 1); setError(''); };
+  const change = () => { runtime.current?.invalidate(true); setRevision(value => value + 1); setError(''); };
   const pieces = (runtime.current?.content.children ?? []).filter((object): object is THREE.Mesh => object instanceof THREE.Mesh);
   const mesh = pieces.find(piece => piece.uuid === selected);
   const selection = pieces.filter(piece => selectedIds.includes(piece.uuid));
   const isMultiple = selection.length > 1;
   const commonGroup = isMultiple && mesh && workshopGroup(mesh) && selection.every(piece => workshopGroup(piece)?.id === workshopGroup(mesh)?.id) ? workshopGroup(mesh) : null;
-  const vertices = mesh && panel === 'geometry' ? getEditableVertices(mesh.geometry) : [];
-  const faces = mesh && panel === 'geometry' && geometryTool === 'faces' ? getModelFaces(mesh.geometry) : [];
+  const vertices = useMemo(() => mesh && panel === 'geometry' ? getEditableVertices(mesh.geometry) : [], [mesh, panel, revision]);
+  const faces = useMemo(() => mesh && panel === 'geometry' && geometryTool === 'faces' ? getModelFaces(mesh.geometry) : [], [mesh, panel, geometryTool, revision]);
   const vertex = vertices[Math.min(vertexId, Math.max(0, vertices.length - 1))];
   const reference = pieces.find(piece => piece.uuid === alignmentReference && !selectedIds.includes(piece.uuid));
 
@@ -83,6 +85,7 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
     else onClose();
   }
   function previewColor(color: string | null) {
+    runtime.current?.invalidate();
     if (color === null) {
       colorPreview.current?.forEach((previous, material) => { material.color.copy(previous); }); colorPreview.current = null;
       return;
@@ -114,30 +117,32 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
     booleanJob.current?.cancel(); booleanJob.current = null;
     const value = preview.current;
     if (value) { value.base.visible = value.visibility[0]; value.cutter.visible = value.visibility[1]; value.result.removeFromParent(); disposeWorkshopModel(new THREE.Group().add(value.result)); preview.current = null; }
-    setPreviewing(false); setComputing(false);
+    setPreviewing(false); setComputing(false); runtime.current?.invalidate(true);
   }
   function restore(snapshot: WorkshopSnapshot) {
     const active = runtime.current;
-    if (!active) { disposeWorkshopModel(snapshot.content); return; }
+    if (!active) { disposeWorkshopSnapshot(snapshot); return; }
     active.transform.detach();
     clearSelectionHelpers(active);
     for (const key of ['points', 'face', 'outline', 'toolOutline', 'snapGuide'] as const) removeHelper(active, key);
-    disposeWorkshopModel(active.content);
-    while (snapshot.content.children.length) active.content.add(snapshot.content.children[0]);
+    if (!applyWorkshopPatch(snapshot, active.content)) {
+      disposeWorkshopModel(active.content);
+      while (snapshot.content.children.length) active.content.add(snapshot.content.children[0]);
+    }
     setName(snapshot.name); setSelected(snapshot.selected); setSelectedIds(snapshot.selectedIds); setSecond(''); setVertexId(0); setFaceId(0); change();
   }
-  function run(action: () => void | boolean, key?: string) {
+  function run(action: () => void | boolean, key?: string, patch?: WorkshopPatchSpec) {
     const active = runtime.current;
     if (!active || active.transform.dragging || latest.current.saving || latest.current.computing || latest.current.previewing) return;
-    const before = captureWorkshopSnapshot(active.content, latest.current.selected, latest.current.name, latest.current.selectedIds);
-    try { if (action() === false) { disposeWorkshopModel(before.content); return; } if (active.content.children.reduce((sum, piece) => sum + faceCount(piece as THREE.Mesh), 0) > 200000) throw new Error('El modelo admite hasta 200 000 caras.'); history.current.record(before, key); change(); }
+    const before = patch ? captureWorkshopPatch(active.content, latest.current.selected, latest.current.name, latest.current.selectedIds, patch) : captureWorkshopSnapshot(active.content, latest.current.selected, latest.current.name, latest.current.selectedIds);
+    try { if (action() === false) { disposeWorkshopSnapshot(before); return; } if (active.content.children.reduce((sum, piece) => sum + faceCount(piece as THREE.Mesh), 0) > 200000) throw new Error('El modelo admite hasta 200 000 caras.'); compactWorkshopVertexPatch(before, active.content); history.current.record(before, key); change(); }
     catch (cause) { restore(before); setError(cause instanceof Error ? cause.message : "No se pudo hacer el cambio."); }
   }
   function travelHistory(direction: 'undo' | 'redo') {
     const active = runtime.current;
     if (!active || active.transform.dragging || latest.current.saving || latest.current.computing) return;
     discardPreview();
-    const current = captureWorkshopSnapshot(active.content, selected, name, selectedIds);
+    const current = history.current.captureCurrent(direction, active.content, selected, name, selectedIds);
     const previous = history.current[direction](current);
     if (previous) restore(previous);
   }
@@ -153,7 +158,7 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
       preview.current = { result, base: mesh, cutter, visibility: [mesh.visible, cutter.visible] };
       mesh.visible = cutter.visible = false; active.scene.add(result); active.transform.detach();
       for (const key of ['points', 'face', 'outline', 'toolOutline', 'snapGuide'] as const) removeHelper(active, key);
-      setPreviewing(true); setComputing(false);
+      setPreviewing(true); setComputing(false); active.invalidate(true);
     } catch (cause) {
       if (runtime.current === active && booleanSequence.current === sequence) { booleanJob.current = null; setError(cause instanceof Error ? cause.message : "No se pudo combinar las piezas."); setComputing(false); }
     }
@@ -177,7 +182,7 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
     active.content.updateWorldMatrix(true, true);
     const host = mount.current, aspect = host && host.clientHeight ? host.clientWidth / host.clientHeight : active.camera.aspect;
     const center = fitWorkshopCamera(active.camera, new THREE.Box3().setFromObject(active.content), aspect);
-    active.controls.target.copy(center); active.controls.update();
+    active.controls.target.copy(center); active.controls.update(); active.invalidate();
   }
 
   useEffect(() => {
@@ -201,7 +206,7 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
         runtime.current = active;
         const value = active;
         const resize = () => {
-          const width = Math.max(1, host.clientWidth), height = Math.max(1, host.clientHeight); renderer.setSize(width, height); camera.aspect = width / height; camera.updateProjectionMatrix();
+          const width = Math.max(1, host.clientWidth), height = Math.max(1, host.clientHeight); renderer.setSize(width, height); camera.aspect = width / height; camera.updateProjectionMatrix(); value.invalidate();
           const focused = document.activeElement;
           if (focused instanceof HTMLInputElement && dialog.current?.contains(focused)) requestAnimationFrame(() => { if (focused.isConnected && document.activeElement === focused) focused.scrollIntoView({ block: 'nearest', inline: 'nearest' }); });
         };
@@ -263,20 +268,19 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
               if (object === value.selectionProxy && value.selectionTransform) applySelectionTransform(value.selectionTransform, object.position, object.quaternion);
             }
           }
-          value.outline?.update();
+          value.outline?.update(); value.invalidate(true);
         };
         const dragging = (event: { value: unknown }) => {
           controls.enabled = !event.value;
           if (event.value) {
-            value.dragged = false; dragSnapshot.current = captureWorkshopSnapshot(content, latest.current.selected, latest.current.name, latest.current.selectedIds);
+            value.dragged = false; dragSnapshot.current = captureWorkshopPatch(content, latest.current.selected, latest.current.name, latest.current.selectedIds, value.vertexMesh ? { kind: 'vertices', id: value.vertexMesh.uuid, indices: value.vertexIndices } : { kind: 'transforms', ids: latest.current.selectedIds });
             if (value.selectionProxy) value.selectionTransform = captureSelectionTransform(content.children.filter((piece): piece is THREE.Mesh => piece instanceof THREE.Mesh && latest.current.selectedIds.includes(piece.uuid)));
           }
           if (!event.value) {
             removeHelper(value, 'snapGuide');
-            if (value.pendingNormals && value.vertexMesh) { value.vertexMesh.geometry.computeVertexNormals(); value.vertexMesh.geometry.computeBoundingBox(); value.vertexMesh.geometry.computeBoundingSphere(); const raw = value.vertexIndices[0]; const welded = getEditableVertices(value.vertexMesh.geometry).find(vertex => vertex.indices.includes(raw)); if (welded) setVertexId(welded.id); value.pendingNormals = false; }
+            if (value.pendingNormals && value.vertexMesh) { value.vertexMesh.geometry.deleteAttribute('tangent'); value.vertexMesh.geometry.computeVertexNormals(); value.vertexMesh.geometry.computeBoundingBox(); value.vertexMesh.geometry.computeBoundingSphere(); const raw = value.vertexIndices[0]; const welded = getEditableVertices(value.vertexMesh.geometry).find(vertex => vertex.indices.includes(raw)); if (welded) setVertexId(welded.id); value.pendingNormals = false; }
             if (dragSnapshot.current) {
-              const moved = content.children.some(object => { const before = dragSnapshot.current!.content.children.find(piece => piece.uuid === object.uuid); return before && (!object.position.equals(before.position) || !object.quaternion.equals(before.quaternion) || !object.scale.equals(before.scale)); });
-              if (value.dragged && (value.vertexMesh || moved)) history.current.record(dragSnapshot.current); else disposeWorkshopModel(dragSnapshot.current.content);
+              if (value.dragged) { compactWorkshopVertexPatch(dragSnapshot.current, content); history.current.record(dragSnapshot.current); } else disposeWorkshopSnapshot(dragSnapshot.current);
               dragSnapshot.current = null;
             }
             change();
@@ -284,8 +288,21 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
         };
         canvas.addEventListener('pointerdown', pointerDown, true); canvas.addEventListener('pointerup', pointerUp);
         transform.addEventListener('objectChange', changed); transform.addEventListener('dragging-changed', dragging);
-        removeEvents = () => { canvas.removeEventListener('pointerdown', pointerDown, true); canvas.removeEventListener('pointerup', pointerUp); transform.removeEventListener('objectChange', changed); transform.removeEventListener('dragging-changed', dragging); };
-        renderer.setAnimationLoop(() => { if (!cancelled) { controls.update(); value.outline?.update(); value.toolOutline?.update(); value.selectionOutlines.forEach(outline => outline.update()); renderer.render(scene, camera); } });
+        const frames = createDemandFrames(() => {
+          if (cancelled) return false;
+          const moving = controls.update(); value.outline?.update(); value.toolOutline?.update(); value.selectionOutlines.forEach(outline => outline.update()); renderer.render(scene, camera); return moving;
+        }, { fps: () => getGraphicsProfile().fps });
+        value.invalidate = (shadows = false) => { if (shadows) value.sun.shadow.needsUpdate = true; frames.invalidate(); };
+        const presentation = () => value.invalidate();
+        controls.addEventListener('change', presentation); transform.addEventListener('change', presentation);
+        const quality = () => {
+          const profile = getGraphicsProfile(), shadowSize = profile.shadows || 512;
+          renderer.setPixelRatio(Math.min(2, window.devicePixelRatio) * profile.renderScale); renderer.shadowMap.enabled = !!profile.shadows;
+          if (value.sun.shadow.mapSize.x !== shadowSize) { value.sun.shadow.map?.dispose(); value.sun.shadow.map = null; value.sun.shadow.mapSize.set(shadowSize, shadowSize); }
+          value.sun.castShadow = !!profile.shadows; value.invalidate(true); resize();
+        };
+        const unsubscribe = subscribeGraphicsSettings(quality); quality();
+        removeEvents = () => { frames.dispose(); unsubscribe(); controls.removeEventListener('change', presentation); transform.removeEventListener('change', presentation); canvas.removeEventListener('pointerdown', pointerDown, true); canvas.removeEventListener('pointerup', pointerUp); transform.removeEventListener('objectChange', changed); transform.removeEventListener('dragging-changed', dragging); };
         if (item) source = item.type === 'custom' ? await loadEditableModel(item, roomId) : createFurnitureModel(item);
         else source = new THREE.Group();
         if (cancelled) { releaseWorkshopSource(source); source = null; return; }
@@ -300,7 +317,7 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
     return () => {
       cancelled = true; observer?.disconnect(); removeEvents();
       booleanSequence.current++; booleanJob.current?.cancel(); booleanJob.current = null; preview.current = null;
-      history.current.clear(); if (dragSnapshot.current) disposeWorkshopModel(dragSnapshot.current.content); dragSnapshot.current = null;
+      history.current.clear(); if (dragSnapshot.current) disposeWorkshopSnapshot(dragSnapshot.current); dragSnapshot.current = null;
       if (active) disposeWorkshopScene(active);
       if (source) releaseWorkshopSource(source);
       runtime.current = null;
@@ -319,14 +336,14 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
     const active = runtime.current;
     if (!active || !ready || !snapEnabled || !snapGrid) return;
     const size = Math.min(10, gridStep * 200), grid = new THREE.GridHelper(size, Math.round(size / gridStep), '#bdc9b1', '#dce3d5');
-    grid.position.y = -.004; active.scene.add(grid);
-    return () => { grid.removeFromParent(); grid.geometry.dispose(); (Array.isArray(grid.material) ? grid.material : [grid.material]).forEach(material => material.dispose()); };
+    grid.position.y = -.004; active.scene.add(grid); active.invalidate();
+    return () => { grid.removeFromParent(); active.invalidate(); grid.geometry.dispose(); (Array.isArray(grid.material) ? grid.material : [grid.material]).forEach(material => material.dispose()); };
   }, [ready, snapEnabled, snapGrid, gridStep]);
 
   useEffect(() => {
     const active = runtime.current;
     if (!active || !ready) return;
-    updateWorkshopSelection(active, { panel, tool, geometryTool, selected, selectedIds, second, reference, vertexId, faceId, saving, computing, previewing });
+    updateWorkshopSelection(active, { panel, tool, geometryTool, selected, selectedIds, second, reference, vertexId, faceId, saving, computing, previewing }); active.invalidate();
   }, [ready, selected, selectedIds, second, alignmentReference, panel, tool, geometryTool, vertexId, faceId, revision, saving, computing, previewing]);
 
   function addPiece(id: string) {
@@ -378,13 +395,14 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
     run(() => {
       const count = new Set(pieces.map(piece => workshopGroup(piece)?.id).filter(Boolean)).size;
       return groupWorkshopPieces(selection, t('Grupo {{number}}', { number: count + 1 }));
-    });
+    }, undefined, { kind: 'transforms', ids: selectedIds });
   }
   function ungroupSelection() {
-    run(() => { const ids = new Set(selection.map(piece => workshopGroup(piece)?.id).filter(Boolean)); ungroupWorkshopPieces(pieces.filter(piece => ids.has(workshopGroup(piece)?.id))); });
+    const groups = new Set(selection.map(piece => workshopGroup(piece)?.id).filter(Boolean)), targets = pieces.filter(piece => groups.has(workshopGroup(piece)?.id));
+    run(() => { ungroupWorkshopPieces(targets); }, undefined, { kind: 'transforms', ids: targets.map(piece => piece.uuid) });
   }
   function moveSelection(axis: WorkshopAxis, value: number) {
-    run(() => { const snapshot = captureSelectionTransform(selection), position = snapshot.center.clone(); position[axis] = value; return applySelectionTransform(snapshot, position); }, `selection-position-${selectedIds.join('-')}-${axis}`);
+    run(() => { const snapshot = captureSelectionTransform(selection), position = snapshot.center.clone(); position[axis] = value; return applySelectionTransform(snapshot, position); }, `selection-position-${selectedIds.join('-')}-${axis}`, { kind: 'transforms', ids: selectedIds });
   }
   function alignSelection(alignment: WorkshopAlignment) {
     if (!reference || !selection.length) return;
@@ -393,7 +411,7 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
       const proxy = createSelectionProxy(selection), snapshot = captureSelectionTransform(selection); runtime.current!.content.add(proxy);
       try { if (!alignWorkshopPiece(proxy, reference, alignmentAxis, alignment)) return false; return applySelectionTransform(snapshot, proxy.position); }
       finally { proxy.removeFromParent(); proxy.geometry.dispose(); (proxy.material as THREE.Material).dispose(); }
-    });
+    }, undefined, { kind: 'transforms', ids: selectedIds });
   }
   async function save() {
     const active = runtime.current, modelName = parseName(name);
@@ -408,7 +426,7 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
   }
   function setVertexCoordinate(axis: number, value: number) {
     if (!mesh || !vertex) return;
-    run(() => { const point: [number, number, number] = [...vertex.position]; point[axis] = value; const raw = vertex.indices[0]; moveModelVertex(mesh.geometry, vertex.id, point); setVertexId(getEditableVertices(mesh.geometry).find(next => next.indices.includes(raw))!.id); }, `vertex-${mesh.uuid}-${vertex.indices[0]}-${axis}`);
+    run(() => { const point: [number, number, number] = [...vertex.position]; point[axis] = value; const raw = vertex.indices[0]; moveModelVertex(mesh.geometry, vertex.id, point); setVertexId(getEditableVertices(mesh.geometry).find(next => next.indices.includes(raw))!.id); }, `vertex-${mesh.uuid}-${vertex.indices[0]}-${axis}`, { kind: 'vertices', id: mesh.uuid, indices: vertex.indices });
   }
   function addVertex() {
     if (!mesh) return;
@@ -476,14 +494,14 @@ export default function ModelWorkshop({ item, roomId, onSaved, onClose }: Props)
             <nav className="workshop-palette-tabs" aria-label={t('Tipo de pieza')}>{([['primitives', "Formas"], ['prefabs', "Piezas"], ['furniture', "Muebles"]] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={palette === value} onClick={() => setPalette(value)}>{t(label)}</button>)}</nav>
             {palette === 'furniture' ? <FurnitureCatalog onSelect={addFurniture} /> : <div className="workshop-piece-grid">{WORKSHOP_PIECES.filter(preset => preset.category === palette).map(preset => <button type="button" key={preset.id} aria-label={t('Agregar {{name}}', { name: t(preset.label) })} onClick={() => addPiece(preset.id)}><PieceThumbnail preset={preset} /><span>{t(preset.label)}</span></button>)}</div>}
           </> : panel === 'model' ? <>
-            <NameControl label={t('Nombre del modelo')} value={name} onChange={value => run(() => setName(value), 'model-name')} />
+            <NameControl label={t('Nombre del modelo')} value={name} onChange={value => run(() => setName(value), 'model-name', { kind: 'transforms', ids: [] })} />
             {mesh ? <>
-              {commonGroup ? <NameControl label={t('Grupo')} value={commonGroup.name} onChange={value => run(() => { for (const piece of selection) piece.userData.workshopGroup = { ...commonGroup, name: value }; }, `group-name-${commonGroup.id}`)} /> : !isMultiple && <NameControl label={t('Pieza')} value={mesh.name} onChange={value => run(() => { mesh.name = value; }, `piece-name-${mesh.uuid}`)} />}
-              <label className="workshop-field"><span>{isMultiple ? t('Material de la selección') : t('Material')}</span><select value={workshopSurface(firstMaterial(mesh))} onChange={event => run(() => { for (const piece of selection) setWorkshopMaterial(piece, event.target.value as FurnitureMaterial, '#' + firstMaterial(piece).color.getHexString()); })}><option value="wood">{t('Madera')}</option><option value="plastic">{t('Plástico')}</option><option value="metal">{t('Metal')}</option></select></label>
-              <ColorPicker key={selectedIds.join('-')} value={'#' + firstMaterial(mesh).color.getHexString()} revision={revision} colors={[...new Set(pieces.flatMap(piece => (Array.isArray(piece.material) ? piece.material : [piece.material]).map(material => '#' + (material as THREE.MeshStandardMaterial).color.getHexString())))]} onPreview={previewColor} onChange={value => { previewColor(null); run(() => { for (const piece of selection) setWorkshopColor(piece, value); }); }} />
+              {commonGroup ? <NameControl label={t('Grupo')} value={commonGroup.name} onChange={value => run(() => { for (const piece of selection) piece.userData.workshopGroup = { ...commonGroup, name: value }; }, `group-name-${commonGroup.id}`, { kind: 'transforms', ids: selectedIds })} /> : !isMultiple && <NameControl label={t('Pieza')} value={mesh.name} onChange={value => run(() => { mesh.name = value; }, `piece-name-${mesh.uuid}`, { kind: 'transforms', ids: selectedIds })} />}
+              <label className="workshop-field"><span>{isMultiple ? t('Material de la selección') : t('Material')}</span><select value={workshopSurface(firstMaterial(mesh))} onChange={event => run(() => { for (const piece of selection) setWorkshopMaterial(piece, event.target.value as FurnitureMaterial, '#' + firstMaterial(piece).color.getHexString()); }, undefined, { kind: 'materials', ids: selectedIds })}><option value="wood">{t('Madera')}</option><option value="plastic">{t('Plástico')}</option><option value="metal">{t('Metal')}</option></select></label>
+              <ColorPicker key={selectedIds.join('-')} value={'#' + firstMaterial(mesh).color.getHexString()} revision={revision} colors={[...new Set(pieces.flatMap(piece => (Array.isArray(piece.material) ? piece.material : [piece.material]).map(material => '#' + (material as THREE.MeshStandardMaterial).color.getHexString())))]} onPreview={previewColor} onChange={value => { previewColor(null); run(() => { for (const piece of selection) setWorkshopColor(piece, value); }, undefined, { kind: 'materials', ids: selectedIds }); }} />
               {isMultiple ? <div className="workshop-group"><span>{t('Posición (m)')}</span><div className="workshop-coordinates">{AXES.map(axis => <NumberControl key={axis} label={axis.toUpperCase()} value={selectionCenter![axis]} onChange={value => moveSelection(axis, value)} />)}</div></div> : <>
-                <div className="workshop-group"><span>{t('Tamaño (m)')}</span><div className="workshop-coordinates">{([['x', "Ancho"], ['y', "Alto"], ['z', "Fondo"]] as const).filter(([axis]) => dimensions[axis] > .000001).map(([axis, label]) => <NumberControl key={axis} label={t(label)} value={dimensions[axis] * Math.abs(mesh.scale[axis])} min={.001} max={Math.min(10000, dimensions[axis] * 1000)} onChange={value => run(() => { mesh.scale[axis] = (Math.sign(mesh.scale[axis]) || 1) * value / dimensions[axis]; }, `size-${mesh.uuid}-${axis}`)} />)}</div></div>
-                <details className="workshop-transforms"><summary>{t('Posición y giro')}</summary>{([['position', "Posición (m)"], ['rotation', "Giro (°)"]] as const).map(([attribute, label]) => <div className="workshop-group" key={attribute}><span>{t(label)}</span><div className="workshop-coordinates">{AXES.map(axis => <NumberControl key={axis} label={axis.toUpperCase()} value={attribute === 'rotation' ? THREE.MathUtils.radToDeg(mesh.rotation[axis]) : mesh.position[axis]} onChange={value => run(() => { if (attribute === 'rotation') mesh.rotation[axis] = THREE.MathUtils.degToRad(value); else mesh.position[axis] = value; }, `${attribute}-${mesh.uuid}-${axis}`)} />)}</div></div>)}</details>
+                <div className="workshop-group"><span>{t('Tamaño (m)')}</span><div className="workshop-coordinates">{([['x', "Ancho"], ['y', "Alto"], ['z', "Fondo"]] as const).filter(([axis]) => dimensions[axis] > .000001).map(([axis, label]) => <NumberControl key={axis} label={t(label)} value={dimensions[axis] * Math.abs(mesh.scale[axis])} min={.001} max={Math.min(10000, dimensions[axis] * 1000)} onChange={value => run(() => { mesh.scale[axis] = (Math.sign(mesh.scale[axis]) || 1) * value / dimensions[axis]; }, `size-${mesh.uuid}-${axis}`, { kind: 'transforms', ids: selectedIds })} />)}</div></div>
+                <details className="workshop-transforms"><summary>{t('Posición y giro')}</summary>{([['position', "Posición (m)"], ['rotation', "Giro (°)"]] as const).map(([attribute, label]) => <div className="workshop-group" key={attribute}><span>{t(label)}</span><div className="workshop-coordinates">{AXES.map(axis => <NumberControl key={axis} label={axis.toUpperCase()} value={attribute === 'rotation' ? THREE.MathUtils.radToDeg(mesh.rotation[axis]) : mesh.position[axis]} onChange={value => run(() => { if (attribute === 'rotation') mesh.rotation[axis] = THREE.MathUtils.degToRad(value); else mesh.position[axis] = value; }, `${attribute}-${mesh.uuid}-${axis}`, { kind: 'transforms', ids: selectedIds })} />)}</div></div>)}</details>
               </>}
               {selectionActions}
             </> : <p className="workshop-empty">{t('Agrega o selecciona una pieza.')}</p>}

@@ -4,8 +4,10 @@ import { ceilingFinishTargets } from '../../domain/project/projectDocument';
 import { presentedLevelIds } from './sceneProjection';
 import type { RoomSceneProps, SceneRuntime } from './sceneRuntime';
 import { selectionKey } from './sceneSelection';
+import { applyPresentationLayers } from './scenePresentationLayers';
 
 export function updatePresentation(runtime: SceneRuntime, props: RoomSceneProps, delta: number) {
+  let animating = false;
   const presentation = props.presentation ?? { walls: 'cut', roofs: false, levels: 'active' };
   const visible = runtime.project ? presentedLevelIds(runtime.project, runtime.activeLevelId ?? runtime.project.activeLevelId, props.mode === 'walk' ? 'all' : presentation.levels) : null;
   const views = runtime.levelViews ? [...runtime.levelViews.values()].map(view => view.runtime) : [runtime];
@@ -21,10 +23,18 @@ export function updatePresentation(runtime: SceneRuntime, props: RoomSceneProps,
     const elevation = room.elevation ?? 0;
     const inside = !!runtime.viewTransition && runtime.camera.position.y < elevation + room.height - .03 && runtime.camera.position.y > elevation && pointInPolygon(runtime.camera.position, room.vertices);
     const enclosed = runtime.viewTransition ? inside : props.mode === 'walk';
-    if (runtime.levelViews) view.content.traverse(object => { object.layers.mask = show ? object.userData.baseLayerMask ?? 1 : 2; });
+    if (runtime.levelViews) applyPresentationLayers(view.content, String(show), object => {
+      object.userData.baseLayerMask ??= object.layers.mask;
+      return show ? object.userData.baseLayerMask : 2;
+    });
     for (const wall of view.walls) wall.group.visible = enclosed || isActive && props.selection?.kind === 'wall' && (props.selection.id ? props.selection.id === wall.group.userData.selection.id : props.selection.index === wall.index) || presentation.walls === 'full' || presentation.walls === 'cut' && (runtime.camera.position.x - wall.midpoint.x) * wall.inward.x + (runtime.camera.position.z - wall.midpoint.z) * wall.inward.z > -.03;
     for (const [key, item] of view.objects) {
-      if (key.startsWith('floor:') && coveringSlabs.has(item.userData.slabSurfaceId) && !show) item.layers.set(enclosed || presentation.roofs || props.selection?.kind === 'ceiling' && props.selection.id === item.userData.slabSurfaceId ? 0 : 1);
+      if (key.startsWith('floor:')) {
+        // Slab ceilings override the normal level mask. Reset only these meshes each frame,
+        // including when an unchanged slab no longer covers the current room.
+        item.layers.mask = show ? item.userData.baseLayerMask ?? 1 : 2;
+        if (coveringSlabs.has(item.userData.slabSurfaceId) && !show) item.layers.set(enclosed || presentation.roofs || props.selection?.kind === 'ceiling' && props.selection.id === item.userData.slabSurfaceId ? 0 : 1);
+      }
       if (key.startsWith('opening:')) item.visible = enclosed || isActive && props.selection?.kind === 'opening' && key === selectionKey(props.selection) || view.walls[item.userData.wall]?.group.visible === true;
       if (key.startsWith('furniture:')) item.visible = props.mode !== 'walk' || item.getWorldPosition(position).distanceTo(runtime.camera.position) <= runtime.graphics.distance;
       const overlay = item.userData.placementOverlay as THREE.Mesh | undefined;
@@ -32,7 +42,13 @@ export function updatePresentation(runtime: SceneRuntime, props: RoomSceneProps,
     }
     for (const ceiling of view.ceilings ?? (view.ceiling ? [view.ceiling] : [])) {
       const selected = isActive && props.selection?.kind === 'ceiling' && (!props.selection.id || props.selection.id === ceiling.userData.selection.id);
-      if (runtime.animateView) { const target = show && (enclosed || selected) ? 1 : 0; runtime.ceilingOpacity = THREE.MathUtils.damp(runtime.ceilingOpacity, target, 14, delta); if (Math.abs(runtime.ceilingOpacity - target) < .002) runtime.ceilingOpacity = target; (ceiling.material as THREE.Material).opacity = runtime.ceilingOpacity; ceiling.layers.set(runtime.ceilingOpacity > 0 ? 0 : 1); }
+      if (runtime.animateView) {
+        const target = show && (enclosed || selected || presentation.roofs) ? 1 : 0, material = ceiling.material as THREE.Material;
+        const opacity = THREE.MathUtils.damp(material.opacity, target, 14, delta);
+        material.opacity = Math.abs(opacity - target) < .002 ? target : opacity;
+        if (material.opacity !== target) animating = true;
+        ceiling.layers.set(material.opacity > 0 ? 0 : 1);
+      }
       else ceiling.layers.set(show && (enclosed || selected || presentation.roofs) ? 0 : 1);
     }
   }
@@ -40,7 +56,8 @@ export function updatePresentation(runtime: SceneRuntime, props: RoomSceneProps,
     const belongs = visible === null || (object.userData.levelIds as string[]).some(id => visible.has(id));
     const isRoof = object.userData.selection?.kind === 'roof';
     const show = belongs && (!isRoof || props.mode === 'walk' || presentation.roofs || selectedRoofCeiling === object.userData.selection?.id || props.selection?.kind === 'roof' && props.selection.id === object.userData.selection.id);
-    object.traverse(child => child.layers.set(show ? 0 : 1));
+    applyPresentationLayers(object, String(show), () => show ? 1 : 2);
   }
   for (const object of runtime.projectLighting?.children ?? runtime.content.children) if (object.userData.exterior) object.layers.set(props.mode === 'walk' ? 1 : 0);
+  return animating;
 }

@@ -1,16 +1,17 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { t, useLocale } from '../../shared/i18n/i18n';
 import NumberInput from '../../shared/ui/NumberInput';
 import { bounds } from '../../domain/project/model';
 import { projectLevel, validateProjectDocument, type ProjectDocument, type ProjectStair, type ProjectRoof, type ParametricRoof, type SurfaceFinish, type MeshRoof } from '../../domain/project/projectDocument';
 import { addRoof, updateRoof, deleteRoof, convertRoofToMesh, updateStair, deleteStair } from '../../domain/project/projectOperations';
-import RoofMeshEditor from './RoofMeshEditor';
 import { STAIR_TYPES } from './StairCatalog';
 import ColorPicker from '../../shared/ui/ColorPicker';
 import { projectColors } from '../../shared/ui/colorPreview';
 import type { Selection } from '../../domain/project/types';
 import './construction.css';
+
+const RoofMeshEditor = lazy(() => import('./RoofMeshEditor'));
 
 const ROOFS = [['flat', 'Plana'], ['shed', 'Una agua'], ['gable', 'Dos aguas'], ['hip', 'Cuatro aguas']] as const;
 const FINISHES = [['wood', 'Madera'], ['tile-grid', 'Loseta'], ['tile-brick', 'Loseta trabada'], ['tile-checker', 'Damero'], ['marble', 'Mármol'], ['concrete', 'Concreto']] as const;
@@ -64,7 +65,7 @@ export default function ConstructionPanel({ project, activeLevelId, onChange, on
         <Finish key={stair.id} finish={stair.finish} label={t("Acabado de escalera")} project={project} disabled={readOnly} onChange={finish => patchStair({ finish })} onPreview={color => onPreview?.(color ? updateStair(project, stair.id, { finish: { ...stair.finish, color } }) : null)} />
         <button type="button" className="outline-button" onClick={() => { if (apply(() => deleteStair(project, stair.id))) onSelect?.(null); }}><Trash2 size={17} />{t('Eliminar escalera')}</button></>}
     </fieldset></details>}
-    {editingRoof && <RoofMeshEditor key={editingRoof.id} project={project} roof={currentEditingRoof ?? editingRoof} readOnly={readOnly || !currentEditingRoof} onNotice={setError} onApply={next => apply(() => next)} onCancel={() => setEditingRoof(null)} />}
+    {editingRoof && <Suspense fallback={<p role="status">{t('Cargando')}</p>}><RoofMeshEditor key={editingRoof.id} project={project} roof={currentEditingRoof ?? editingRoof} readOnly={readOnly || !currentEditingRoof} onNotice={setError} onApply={next => apply(() => next)} onCancel={() => setEditingRoof(null)} /></Suspense>}
     {error && <p className="construction-error" role="alert">{t(error)}</p>}
   </div>;
 }

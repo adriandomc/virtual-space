@@ -4,7 +4,7 @@ import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { DoorClosed, DoorOpen, Lightbulb, LoaderCircle } from 'lucide-react';
-import { furnitureWalkable, itemWorldPosition, moveSceneItem, toggleSceneInteraction } from '../../domain/project/model';
+import { furnitureWalkable, invalidFurnitureIds, itemWorldPosition, toggleSceneInteraction } from '../../domain/project/model';
 import { createArchitecturalPostProcessing } from './postProcessing';
 import { joystickVector, renderPixelRatio } from './navigation';
 import { sampleCameraTransition } from './cameraTransition';
@@ -23,6 +23,9 @@ import { updateSceneInteraction } from './sceneInteraction';
 import { fitOrbitCamera, resetCamera, finishViewTransition, startViewTransition } from './sceneCamera';
 import { updatePresentation } from './scenePresentation';
 import { scenePaintTarget, selectedScenePaintTarget, visiblePaintHit, sampleScenePaintColor, sampleSceneObjectColor } from './scenePaintPicking';
+import { applyDrawingBufferSize, GpuFrameSampler, hasWalkInput, SceneFrameStatistics, sceneDiagnosticsEnabled } from './sceneFrame';
+import { GestureCheckpoints, SceneItemDrag } from './sceneItemDragging';
+import { acquireArchitecturalTextureLoader } from './architecturalTextureLoader';
 
 const KEY_DIRECTIONS: Record<string, string> = { KeyW: 'forward', ArrowUp: 'forward', KeyS: 'back', ArrowDown: 'back', KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right', KeyQ: 'lookLeft', KeyE: 'lookRight', KeyR: 'lookUp', KeyF: 'lookDown' };
 
@@ -50,6 +53,14 @@ export default function RoomScene(props: RoomSceneProps) {
   const lastResetKey = useRef(props.resetKey);
   const [notice, setNotice] = useState('');
   const [walkTarget, setWalkTarget] = useState<Selection | null>(null);
+  const [rendererGeneration, setRendererGeneration] = useState(0);
+  const recoveryAttempts = useRef(0);
+  const restoredCameraPending = useRef(false);
+  const recoveredView = useRef<{ position: THREE.Vector3; quaternion: THREE.Quaternion; target: THREE.Vector3; yaw: number; pitch: number; walkState: SceneRuntime['walkState']; orbitPose: SceneRuntime['orbitPose']; mode: RoomSceneProps['mode'] } | null>(null);
+  const applyGraphicsSize = useRef<(() => void) | null>(null);
+  const refreshGesture = useRef<(() => void) | null>(null);
+  const suspendGesture = useRef<(() => void) | null>(null);
+  const flushRendererGesture = useRef<(() => boolean) | null>(null);
   const walkTargetRef = useRef<Selection | null>(null);
   useEffect(() => {
     const invalidate = () => { if (runtime.current) runtime.current.needsRender = true; };
@@ -64,12 +75,13 @@ export default function RoomScene(props: RoomSceneProps) {
   useEffect(() => {
     const active = runtime.current;
     if (!active || !ready) return;
-    active.cancelStairEdit?.(); active.cancelPaint?.(); active.graphics = getGraphicsProfile(); active.postProcessing?.dispose(); active.postProcessing = null; active.postFailed = false;
+    active.cancelStairEdit?.(); active.cancelItemEdit?.(); active.cancelPaint?.(); active.graphics = getGraphicsProfile(); active.postProcessing?.dispose(); active.postProcessing = null; active.postFailed = false;
+    applyGraphicsSize.current?.();
     buildRoom(active, current.current.room); updateSelection(active, current.current);
   }, [graphicsPreferences, ready]);
   useEffect(() => {
     if (runtime.current) runtime.current.needsRender = true;
-    if (props.paused) { runtime.current?.cancelStairEdit?.(); runtime.current?.cancelPaint?.(); directions.current.clear(); joystick.current = { x: 0, z: 0 }; setStick({ x: 0, z: 0 }); }
+    if (props.paused) { runtime.current?.cancelStairEdit?.(); runtime.current?.cancelItemEdit?.(); runtime.current?.cancelPaint?.(); directions.current.clear(); joystick.current = { x: 0, z: 0 }; setStick({ x: 0, z: 0 }); }
   }, [props.paused]);
   useEffect(() => {
     runtime.current?.renderer.domElement.setAttribute('aria-label', t(current.current.paintActive && !current.current.readOnly && current.current.mode === 'orbit' ? current.current.sampleActive ? 'Visor 3D. Toca un elemento para tomar su color. Enter o Espacio toma el color del elemento seleccionado. Arrastra para girar; usa dos dedos para desplazar y acercar.' : 'Visor 3D. Toca un elemento para pintarlo. Enter o Espacio pinta el elemento seleccionado. Arrastra para girar; usa dos dedos para desplazar y acercar.' : 'Visor 3D del cuarto. Arrastra para mirar. En recorrido: WASD o flechas para moverte, Q y E para girar, R y F para mirar arriba y abajo. Toca puertas y focos, o mira hacia ellos y pulsa Enter o espacio.'));
@@ -103,19 +115,27 @@ export default function RoomScene(props: RoomSceneProps) {
     let removeEvents = () => {};
     let removeOrbitEvents = () => {};
     let unregisterFlush = () => {}, unregisterActivity = () => {};
+    let releaseTextureLoader = () => {};
+    const diagnostics = sceneDiagnosticsEnabled();
+    const gpuSampler = new GpuFrameSampler();
+    const frameStatistics = diagnostics ? new SceneFrameStatistics() : null;
+    let flushGesture = () => true;
     const mount = container.current;
     if (!mount) return;
     const initialize = async () => {
       try {
-        renderer = new THREE.WebGPURenderer({ antialias: true });
+        setError(''); setReady(false);
+        renderer = new THREE.WebGPURenderer({ antialias: true, forceWebGL: recoveryAttempts.current >= 2, trackTimestamp: true });
         try { await renderer.init(); }
         catch {
           try { renderer.dispose(); } catch { /* initialization may not have allocated a backend */ }
           if (cancelled) return;
-          renderer = new THREE.WebGPURenderer({ antialias: true, forceWebGL: true });
+          renderer = new THREE.WebGPURenderer({ antialias: true, forceWebGL: true, trackTimestamp: true });
           await renderer.init();
         }
         if (cancelled) { renderer.dispose(); return; }
+        gpuSampler.configure(renderer.backend as { isWebGPUBackend?: boolean; trackTimestamp?: boolean });
+        releaseTextureLoader = acquireArchitecturalTextureLoader(renderer);
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
         renderer.shadowMap.enabled = true;
         renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -141,6 +161,16 @@ export default function RoomScene(props: RoomSceneProps) {
         const content = new THREE.Group();
         scene.add(content);
         const active: SceneRuntime = { graphics: getGraphicsProfile(), needsRender: true, renderer, scene, camera, controls, content, walls: [], ceiling: null, yaw: 0, pitch: 0, fittedDistance: 0, objects: new Map(), invalidFurniture: new Set(), selectionBox: null, walkBlocked: false, viewTransition: null, orbitPose: null, animateView: !!current.current.animateView, ceilingOpacity: current.current.mode === 'walk' ? 1 : 0, transform, proxy, manipulating: null, directDragging: false, pendingEdit: false, lastOpeningBuild: 0, environment: null, architecturalEnvironment: null, sky: null, loadingSky: false, disposed: false, areaTextures: null, postProcessing: null, postFailed: false, viewMode: current.current.mode, builtRoom: null, structure: '', outlinedKey: null };
+        const deviceLost = renderer.onDeviceLost.bind(renderer);
+        renderer.onDeviceLost = info => {
+          deviceLost(info);
+          if (cancelled) return;
+          void active.renderer.setAnimationLoop(null);
+          recoveredView.current = { position: camera.position.clone(), quaternion: camera.quaternion.clone(), target: controls.target.clone(), yaw: active.yaw, pitch: active.pitch, walkState: active.walkState && { ...active.walkState }, orbitPose: active.orbitPose, mode: current.current.mode };
+          if (!flushGesture()) { setError(t('No se pudo mostrar el cuarto. Actualiza el navegador o activa la aceleración gráfica.')); return; }
+          if (++recoveryAttempts.current <= 2) setRendererGeneration(value => value + 1);
+          else setError(t('No se pudo mostrar el cuarto. Actualiza el navegador o activa la aceleración gráfica.'));
+        };
         // Wheel input may finish controls.update() before the next animation frame; its change event must invalidate that frame.
         const invalidateOrbit = () => { active.needsRender = true; };
         controls.addEventListener('change', invalidateOrbit);
@@ -161,11 +191,9 @@ export default function RoomScene(props: RoomSceneProps) {
           const detailed = current.current.room.renderQuality !== 'standard';
           const highResolution = detailed && !window.matchMedia('(pointer: coarse)').matches && width > 700;
           const ratio = renderPixelRatio(window.devicePixelRatio, current.current.room.renderQuality, highResolution) * active.graphics.renderScale;
-          const size = active.renderer.getSize(new THREE.Vector2());
-          if (size.x !== width || size.y !== height || active.renderer.getPixelRatio() !== ratio) {
+          if (applyDrawingBufferSize(active.renderer, new THREE.Vector2(), width, height, ratio)) {
             active.cancelStairEdit?.(); active.cancelPaint?.();
             active.postProcessing?.dispose(); active.postProcessing = null;
-            active.renderer.setPixelRatio(ratio); active.renderer.setSize(width, height);
           }
           let shadowProfileChanged = false;
           content.traverse(object => {
@@ -185,8 +213,17 @@ export default function RoomScene(props: RoomSceneProps) {
           active.needsRender = true;
         };
         observer = new ResizeObserver(resize);
+        applyGraphicsSize.current = resize;
         observer.observe(mount);
         resize();
+        const recovered = recoveredView.current;
+        if (recovered && recovered.mode === current.current.mode) {
+          camera.position.copy(recovered.position); camera.quaternion.copy(recovered.quaternion); controls.target.copy(recovered.target);
+          active.yaw = recovered.yaw; active.pitch = recovered.pitch; active.walkState = recovered.walkState; active.orbitPose = recovered.orbitPose;
+          camera.updateMatrixWorld(); active.needsRender = true;
+          restoredCameraPending.current = true;
+        }
+        recoveredView.current = null;
         let pointer: { id: number; x: number; y: number; startX: number; startY: number; handled: boolean; multi: boolean; paint: boolean; paintProject?: ProjectDocument; paintTarget?: ReturnType<typeof scenePaintTarget> } | null = null;
         const pointers = new Set<number>();
         let directPlane: THREE.Plane | null = null;
@@ -265,6 +302,22 @@ export default function RoomScene(props: RoomSceneProps) {
           return null;
         };
         let lastCommitError: Error | null = null;
+        let itemEdit: SceneItemDrag | undefined;
+        let checkpoints: GestureCheckpoints | undefined;
+        let dragShadowLights: (THREE.PointLight | THREE.DirectionalLight | THREE.SpotLight)[] = [];
+        const invalidateDragShadows = () => { for (const light of dragShadowLights) light.shadow.needsUpdate = true; };
+        const previewPlacement = (room: Room) => {
+          const invalid = invalidFurnitureIds(room); active.invalidFurniture = invalid;
+          const level = active.activeLevelId && active.levelViews?.get(active.activeLevelId); if (level) level.runtime.invalidFurniture = invalid;
+          return invalid;
+        };
+        const discardItemGesture = (restore = true) => {
+          if (!itemEdit) return;
+          invalidateDragShadows(); dragShadowLights = [];
+          if (restore) itemEdit.dispose(); itemEdit = undefined; checkpoints?.stop(true); checkpoints = undefined;
+          previewPlacement(current.current.room);
+          active.pendingEdit = false; active.needsRender = true;
+        };
         const beginManipulation = (selected: Selection | null) => {
           active.manipulating = selected;
           const state = current.current;
@@ -272,12 +325,22 @@ export default function RoomScene(props: RoomSceneProps) {
             const group = active.objects.get(`stair:${selected.id}`);
             if (group && state.project.stairs.some(stair => stair.id === selected.id)) active.stairEdit = new StairTransformPreview(state.project, selected.id, group);
           }
+          if (selected && (selected.kind === 'furniture' || selected.kind === 'light' || selected.kind === 'opening') && !itemEdit) {
+            const object = active.objects.get(`${selected.kind}:${selected.id}`);
+            if (object && (selected.kind === 'furniture' || selected.kind === 'light' || selected.kind === 'opening')) {
+              itemEdit = new SceneItemDrag(state.room, { kind: selected.kind, id: selected.id }, object);
+              dragShadowLights = [];
+              (selected.kind === 'light' ? object : scene).traverse(child => { if ((child instanceof THREE.PointLight || child instanceof THREE.DirectionalLight || child instanceof THREE.SpotLight) && child.castShadow) dragShadowLights.push(child); });
+              checkpoints = new GestureCheckpoints(state.onCheckpoint, cause => { lastCommitError = cause instanceof Error ? cause : new Error('No se pudo aplicar el cambio.'); setNotice(lastCommitError.message); });
+            }
+          }
         };
         const commitProxy = (force = false) => {
+          checkpoints?.tick(performance.now());
           if (!active.pendingEdit) return;
           const state = current.current;
           const selected = active.manipulating;
-          if (state.readOnly || state.paintActive || state.mode !== 'orbit' || !selected) { active.pendingEdit = false; return; }
+          if (state.readOnly || state.paintActive || state.mode !== 'orbit' || !selected) { discardItemGesture(); active.pendingEdit = false; return; }
           if (selected.kind === 'stair') {
             if (!state.project || !state.onProjectChange || !active.stairEdit) { active.pendingEdit = false; return false; }
             const validate = force || performance.now() - active.lastOpeningBuild >= 80;
@@ -305,43 +368,59 @@ export default function RoomScene(props: RoomSceneProps) {
               return false;
             }
           }
-          if (selected.kind === 'opening' && !force && performance.now() - active.lastOpeningBuild < 80) return;
           active.pendingEdit = false;
-          active.lastOpeningBuild = performance.now();
           try {
-            const next = moveSceneItem(state.room, selected, { x: proxy.position.x, y: proxy.position.y - (state.room.elevation ?? 0), z: proxy.position.z, rotation: THREE.MathUtils.radToDeg(proxy.rotation.y) });
-            if (next !== state.room && state.onChange(next) === false) throw new Error('No se pudo aplicar el cambio.');
-            current.current = { ...state, room: next };
-            if (state.project) { active.project = updateProjectRoom(state.project, active.activeLevelId ?? state.project.activeLevelId, next); current.current.project = active.project; }
+            if (!itemEdit) return;
+            let next = itemEdit.preview(state.room, { x: proxy.position.x, y: proxy.position.y - (state.room.elevation ?? 0), z: proxy.position.z, rotation: THREE.MathUtils.radToDeg(proxy.rotation.y) });
+            invalidateDragShadows();
             const accepted = itemWorldPosition(next, selected);
             if (accepted) proxy.position.set(accepted.x, accepted.y + (state.room.elevation ?? 0), accepted.z);
-            if (selected.kind === 'furniture') { const item = next.furniture.find(item => item.id === selected.id); if (item) proxy.rotation.y = THREE.MathUtils.degToRad(item.rotation); }
+            if (selected.kind === 'furniture') {
+              const item = next.furniture.find(item => item.id === selected.id); if (item) proxy.rotation.y = THREE.MathUtils.degToRad(item.rotation);
+              const invalid = previewPlacement(next).has(selected.id);
+              const overlay = itemEdit.object.userData.placementOverlay as THREE.Mesh | undefined; if (overlay) overlay.visible = invalid;
+              if (active.selectionBox) (active.selectionBox.material as THREE.LineBasicMaterial).color.set(invalid ? '#d63f3f' : '#b78436');
+            }
+            active.selectionBox?.setFromObject(itemEdit.object);
+            active.needsRender = true;
+            if (!force) { checkpoints?.queue(next); return true; }
+            next = itemEdit.apply(state.room);
+            if (next !== state.room && state.onChange(next) === false) throw new Error('No se pudo aplicar el cambio.');
+            itemEdit.dispose(); itemEdit = undefined; checkpoints?.stop(next === state.room); checkpoints = undefined; dragShadowLights = [];
+            current.current = { ...state, room: next };
+            if (state.project) { active.project = updateProjectRoom(state.project, active.activeLevelId ?? state.project.activeLevelId, next); current.current.project = active.project; }
             updateRoom(active, next);
             updateSelection(active, current.current);
             setNotice('');
             lastCommitError = null;
             return true;
-          } catch (cause) { lastCommitError = cause instanceof Error ? cause : new Error('No se puede colocar aquí.'); setNotice(lastCommitError.message); return false; }
+          } catch (cause) { lastCommitError = cause instanceof Error ? cause : new Error('No se puede colocar aquí.'); setNotice(lastCommitError.message); if (!itemEdit?.compatible(state.room)) discardItemGesture(); return false; }
         };
+        flushGesture = () => {
+          if (itemEdit?.target || active.stairEdit?.hasPreview) active.pendingEdit = true;
+          return commitProxy(true) !== false;
+        };
+        flushRendererGesture.current = flushGesture;
         unregisterFlush = registerBeforeAppUpdate(async () => { if (active.painting) throw new Error('Termina o cancela la edición pendiente antes de continuar.'); if (active.stairEdit) throw new Error('El movimiento pendiente se conserva. Revísalo antes de continuar.'); if (active.pendingEdit && commitProxy(true) === false) throw lastCommitError ?? new Error('No se puede colocar aquí.'); });
-        unregisterActivity = registerAppActivity(() => active.painting ? 'Termina o cancela la edición pendiente antes de continuar.' : !current.current.publicView && (active.directDragging || transform.dragging) ? 'El movimiento pendiente se conserva. Revísalo antes de continuar.' : false);
+        unregisterActivity = registerAppActivity(() => active.painting ? 'Termina o cancela la edición pendiente antes de continuar.' : !current.current.publicView && (active.directDragging || transform.dragging || !!itemEdit?.target) ? 'El movimiento pendiente se conserva. Revísalo antes de continuar.' : false);
         const finishDrag = () => {
-          if (active.stairEdit?.hasPreview) active.pendingEdit = true;
-          commitProxy(true);
+          if (active.stairEdit?.hasPreview || itemEdit?.target) active.pendingEdit = true;
+          const committed = commitProxy(true);
           active.stairEdit?.dispose(); active.stairEdit = undefined;
           active.directDragging = false;
-          active.manipulating = null;
+          if (committed !== false) active.manipulating = null;
           active.pendingEdit = false;
           directPlane = null;
           controls.enabled = current.current.mode === 'orbit' && !active.viewTransition;
           updateSelection(active, current.current);
         };
-        const changed = () => { if (active.transform.dragging) active.pendingEdit = true; };
+        const changed = () => { if (active.transform.dragging) { active.pendingEdit = true; active.needsRender = true; } };
         const dragging = (event: { value: unknown }) => {
           if (event.value) { beginManipulation(current.current.selection); controls.enabled = false; }
           else finishDrag();
         };
         transform.addEventListener('objectChange', changed);
+        transform.addEventListener('change', invalidateOrbit);
         transform.addEventListener('dragging-changed', dragging);
         const down = (event: PointerEvent) => {
           if (active.viewTransition) { event.preventDefault(); event.stopImmediatePropagation(); return; }
@@ -378,7 +457,7 @@ export default function RoomScene(props: RoomSceneProps) {
             event.preventDefault(); event.stopImmediatePropagation();
             if (current.current.readOnly || current.current.mode !== 'orbit') { finishDrag(); return; }
             setRay(event);
-            if (ray.ray.intersectPlane(directPlane, point)) { proxy.position.copy(point).add(dragOffset); active.pendingEdit = true; }
+            if (ray.ray.intersectPlane(directPlane, point)) { proxy.position.copy(point).add(dragOffset); active.pendingEdit = true; active.needsRender = true; }
             return;
           }
           if (current.current.mode !== 'walk') return;
@@ -386,6 +465,7 @@ export default function RoomScene(props: RoomSceneProps) {
           active.yaw -= (event.clientX - pointer.x) * 0.004;
           active.pitch = THREE.MathUtils.clamp(active.pitch - (event.clientY - pointer.y) * 0.004, -1.25, 1.25);
           camera.rotation.set(active.pitch, active.yaw, 0, 'YXZ');
+          active.needsRender = true;
           pointer.x = event.clientX;
           pointer.y = event.clientY;
         };
@@ -412,10 +492,11 @@ export default function RoomScene(props: RoomSceneProps) {
           }
           pointer = null;
         };
-        const cancel = (event?: PointerEvent) => {
+        const cancel = (event?: PointerEvent, restore = true) => {
           if ((transform.dragging || active.directDragging) && pointer && event && pointer.id !== event.pointerId) { event.preventDefault(); event.stopImmediatePropagation(); return; }
           pointers.clear();
           active.painting = false;
+          discardItemGesture(restore);
           if (active.stairEdit) { active.stairEdit.dispose(); active.stairEdit = undefined; active.pendingEdit = false; setNotice(''); }
           if (transform.dragging) transform.pointerUp(null);
           if (active.directDragging) finishDrag();
@@ -423,6 +504,13 @@ export default function RoomScene(props: RoomSceneProps) {
           updateSelection(active, current.current);
         };
         active.cancelStairEdit = () => { if (active.stairEdit) cancel(); };
+        active.cancelItemEdit = () => { if (itemEdit) cancel(); };
+        suspendGesture.current = () => itemEdit?.dispose();
+        refreshGesture.current = () => {
+          if (!itemEdit) return;
+          if (current.current.readOnly || !itemEdit.compatible(current.current.room) || active.objects.get(`${itemEdit.selection.kind}:${itemEdit.selection.id}`) !== itemEdit.object) { cancel(undefined, false); setNotice('El movimiento se canceló porque cambió la construcción.'); }
+          else { active.pendingEdit = true; commitProxy(); }
+        };
         active.cancelPaint = () => { if (pointer?.paint) cancel(); };
         const keyDown = (event: KeyboardEvent) => {
           if (event.target !== canvas) return;
@@ -477,6 +565,8 @@ export default function RoomScene(props: RoomSceneProps) {
         window.addEventListener('blur', blur);
         removeEvents = () => {
           active.painting = false; active.cancelPaint = undefined;
+          // Teardown keeps already durable checkpoints available for recovery; explicit cancellation clears them.
+          itemEdit?.dispose(); checkpoints?.stop(); active.cancelItemEdit = undefined;
           active.stairEdit?.dispose(); active.stairEdit = undefined;
           canvas.removeEventListener('pointerdown', down, true);
           canvas.removeEventListener('pointermove', move, true);
@@ -484,22 +574,35 @@ export default function RoomScene(props: RoomSceneProps) {
           canvas.removeEventListener('pointercancel', cancel);
           canvas.removeEventListener('lostpointercapture', cancel);
           transform.removeEventListener('objectChange', changed);
+          transform.removeEventListener('change', invalidateOrbit);
           transform.removeEventListener('dragging-changed', dragging);
           window.removeEventListener('keydown', keyDown);
           window.removeEventListener('keyup', keyUp);
           window.removeEventListener('blur', blur);
         };
-        let previous = 0, lastWalkTargetUpdate = 0, lastMetricsUpdate = -Infinity, lastResidencyUpdate = -Infinity;
+        let previous = 0, lastRendered = 0, lastWalkTargetUpdate = 0, lastMetricsUpdate = -Infinity, lastResidencyUpdate = -Infinity;
+        const previousPosition = new THREE.Vector3(), previousRotation = new THREE.Quaternion();
+        if (diagnostics) {
+          const sample = () => { lastMetricsUpdate = -Infinity; active.needsRender = true; };
+          const resetSamples = () => { frameStatistics?.reset(); sample(); };
+          canvas.addEventListener('space-profile-snapshot', sample);
+          canvas.addEventListener('space-profile-reset', resetSamples);
+          const detach = removeEvents;
+          removeEvents = () => { detach(); canvas.removeEventListener('space-profile-snapshot', sample); canvas.removeEventListener('space-profile-reset', resetSamples); };
+        }
         const performanceController = new GraphicsPerformanceController();
         let sampledPreferences = getGraphicsPreferences();
         await renderer.setAnimationLoop(time => {
           if (cancelled) return;
-          if (current.current.paused || active.overlayPaused || document.visibilityState === 'hidden') { previous = 0; return; }
+          if (current.current.paused || active.overlayPaused || document.visibilityState === 'hidden') { previous = lastRendered = 0; return; }
           if (active.graphics.fps && previous && time - previous < 1000 / active.graphics.fps - 1) return;
           const elapsedMs = previous ? time - previous : 0;
           const delta = Math.min(0.04, elapsedMs / 1000);
           previous = time;
           const state = current.current;
+          const frameStarted = performance.now();
+          const walkInput = state.mode === 'walk' && hasWalkInput(directions.current, joystick.current);
+          previousPosition.copy(camera.position); previousRotation.copy(camera.quaternion);
           if (active.project && time - lastResidencyUpdate > 500) { const desired = residentLevelIds(active.project, active.activeLevelId ?? active.project.activeLevelId, state.mode === 'walk', camera.position, active.graphics.distance); const changed = [...active.levelViews ?? []].some(([id, view]) => view.resident !== desired.has(id)); if (changed) buildProjectScene(active, active.project); lastResidencyUpdate = time; }
           commitProxy();
           if (active.viewTransition) {
@@ -509,7 +612,7 @@ export default function RoomScene(props: RoomSceneProps) {
               setTransitioning(false);
               setWalkBlocked(active.walkBlocked);
             }
-          } else if (state.mode === 'walk') {
+          } else if (state.mode === 'walk' && (walkInput || active.needsRender)) {
             active.yaw += (Number(directions.current.has('lookLeft')) - Number(directions.current.has('lookRight'))) * delta * 1.4;
             active.pitch = THREE.MathUtils.clamp(active.pitch + (Number(directions.current.has('lookUp')) - Number(directions.current.has('lookDown'))) * delta, -1.25, 1.25);
             camera.rotation.set(active.pitch, active.yaw, 0, 'YXZ');
@@ -521,7 +624,7 @@ export default function RoomScene(props: RoomSceneProps) {
             const dz = (-Math.cos(active.yaw) * forward - Math.sin(active.yaw) * right) * distance;
             if (active.navigator) {
               active.walkState ??= active.navigator.start(active.activeLevelId ?? active.project!.activeLevelId, camera.position) ?? undefined;
-              if (active.walkState) {
+              if (active.walkState && (dx !== 0 || dz !== 0)) {
                 active.walkState = active.navigator.move(active.walkState, { x: dx, z: dz });
                 camera.position.set(active.walkState.x, active.walkState.eyeY, active.walkState.z);
                 if (active.walkState.levelId !== active.activeLevelId) {
@@ -535,13 +638,15 @@ export default function RoomScene(props: RoomSceneProps) {
               if (furnitureWalkable({ x: camera.position.x, z: camera.position.z + dz }, state.room)) camera.position.z += dz;
             }
             if (time - lastWalkTargetUpdate >= 80) { changeWalkTarget(findWalkTarget()); lastWalkTargetUpdate = time; }
-          } else if (!transform.dragging && !active.directDragging && controls.update()) active.needsRender = true;
-          if (state.mode === 'walk') {
+          } else if (state.mode === 'orbit' && !transform.dragging && !active.directDragging && controls.update()) active.needsRender = true;
+          const cameraChanged = !camera.position.equals(previousPosition) || !camera.quaternion.equals(previousRotation);
+          if (cameraChanged) active.needsRender = true;
+          if (!active.needsRender && !active.viewTransition && !active.pendingEdit && !walkInput) { lastRendered = 0; return; }
+          if (diagnostics && state.mode === 'walk') {
             const pose = JSON.stringify({ x: camera.position.x, z: camera.position.z, yaw: active.yaw, feetY: active.walkState?.y ?? camera.position.y - 1.6, eyeY: camera.position.y, levelId: active.walkState?.levelId ?? active.activeLevelId, surfaceId: active.walkState?.surfaceId, blocked: active.walkState?.blocked ?? active.walkBlocked });
             if (canvas.dataset.walkPose !== pose) canvas.dataset.walkPose = pose;
           }
-          updatePresentation(active, current.current, delta);
-          if (state.mode === 'orbit' && !active.needsRender && !active.viewTransition && !transform.dragging && !active.directDragging) return;
+          const presentationAnimating = updatePresentation(active, current.current, delta);
           try {
             const renderStarted = performance.now();
             if (state.room.renderQuality === 'hyperrealistic' && active.graphics.ao !== 'off' && !active.postProcessing && !active.postFailed) {
@@ -556,15 +661,20 @@ export default function RoomScene(props: RoomSceneProps) {
                 active.renderer.render(scene, camera);
               }
             } else active.renderer.render(scene, camera);
-            active.needsRender = false;
-            updateSceneInteraction(active, current.current);
-            if (time - lastMetricsUpdate >= 1000) {
+            active.needsRender = presentationAnimating;
+            const renderCpuMs = performance.now() - renderStarted, cpuMs = performance.now() - frameStarted;
+            const cadenceMs = lastRendered ? time - lastRendered : 0; lastRendered = time;
+            frameStatistics?.record(cpuMs, cadenceMs, gpuSampler.milliseconds);
+            const backend = active.renderer.backend as unknown as { timestampQueryPool?: { render?: unknown } };
+            if (backend.timestampQueryPool?.render) gpuSampler.sample(active.renderer, time);
+            if (diagnostics) updateSceneInteraction(active, current.current);
+            if (diagnostics && time - lastMetricsUpdate >= 1000) {
               const resources = sceneResourceUsage(scene), info = active.renderer.info;
-              canvas.dataset.sceneMetrics = JSON.stringify({ sampledAt: Date.now(), activeLevelId: active.activeLevelId ?? active.builtRoom?.levelId ?? null, levels: active.project?.levels.length ?? 1, residentLevels: active.levelViews ? [...active.levelViews.values()].filter(view => view.resident).length : 1, architectureBuilds: active.levelViews ? [...active.levelViews.values()].reduce((sum, view) => sum + (view.runtime.architectureBuilds ?? 0), 0) : active.architectureBuilds ?? 0, gpuGeometries: info.memory.geometries, gpuTextures: info.memory.textures, drawCalls: info.render.drawCalls, renderedTriangles: info.render.triangles, frameMs: Math.round((performance.now() - renderStarted) * 100) / 100, walk: active.walkState ? { levelId: active.walkState.levelId, feetY: active.walkState.y, eyeY: active.walkState.eyeY, x: active.walkState.x, z: active.walkState.z, yaw: active.yaw, surfaceId: active.walkState.surfaceId, blocked: active.walkState.blocked } : null, ...resources }); lastMetricsUpdate = time;
+              canvas.dataset.sceneMetrics = JSON.stringify({ sampledAt: Date.now(), activeLevelId: active.activeLevelId ?? active.builtRoom?.levelId ?? null, levels: active.project?.levels.length ?? 1, residentLevels: active.levelViews ? [...active.levelViews.values()].filter(view => view.resident).length : 1, architectureBuilds: active.levelViews ? [...active.levelViews.values()].reduce((sum, view) => sum + (view.runtime.architectureBuilds ?? 0), 0) : active.architectureBuilds ?? 0, gpuGeometries: info.memory.geometries, gpuTextures: info.memory.textures, drawCalls: info.render.drawCalls, renderedTriangles: info.render.triangles, frameMs: Math.round(renderCpuMs * 100) / 100, cpuFrameMs: cpuMs, gpuFrameMs: gpuSampler.milliseconds ?? null, gpuTiming: gpuSampler.kind, cadenceMs, pixelRatio: active.renderer.getPixelRatio(), graphics: { ...active.graphics }, camera: { position: camera.position.toArray(), quaternion: camera.quaternion.toArray() }, renderCalls: info.render.calls, renderedFrames: frameStatistics?.renderedFrames, sampleWindow: frameStatistics?.summary(), walk: active.walkState ? { levelId: active.walkState.levelId, feetY: active.walkState.y, eyeY: active.walkState.eyeY, x: active.walkState.x, z: active.walkState.z, yaw: active.yaw, surfaceId: active.walkState.surfaceId, blocked: active.walkState.blocked } : null, ...resources }); lastMetricsUpdate = time;
             }
             const settings = getGraphicsPreferences();
             if (settings !== sampledPreferences && JSON.stringify(settings) !== JSON.stringify(sampledPreferences)) { performanceController.reset(); sampledPreferences = settings; }
-            const adaptive = performanceController.sample(Math.max(performance.now() - renderStarted, elapsedMs), elapsedMs, active.graphics.fps || 60, settings.mode === 'auto');
+            const adaptive = performanceController.sample(cpuMs, cadenceMs, active.graphics.fps || 60, settings.mode === 'auto', (walkInput || cameraChanged) && !transform.dragging && !active.directDragging && !active.viewTransition, gpuSampler.milliseconds);
             if (adaptive !== null) { setAdaptiveGraphicsTier(adaptive); sampledPreferences = getGraphicsPreferences(); }
           }
           catch (cause) {
@@ -581,6 +691,7 @@ export default function RoomScene(props: RoomSceneProps) {
         console.error('Room renderer initialization:', cause);
         observer?.disconnect();
         unregisterActivity(); unregisterFlush();
+        releaseTextureLoader(); gpuSampler.dispose();
         removeEvents();
         removeOrbitEvents();
         const active = runtime.current;
@@ -603,6 +714,7 @@ export default function RoomScene(props: RoomSceneProps) {
       cancelled = true;
       observer?.disconnect();
       unregisterActivity(); unregisterFlush();
+      releaseTextureLoader(); gpuSampler.dispose(); applyGraphicsSize.current = null; refreshGesture.current = null; suspendGesture.current = null; flushRendererGesture.current = null;
       removeEvents();
       removeOrbitEvents();
       directions.current.clear();
@@ -621,7 +733,7 @@ export default function RoomScene(props: RoomSceneProps) {
         runtime.current = null;
       }
     };
-  }, []);
+  }, [rendererGeneration]);
 
   useEffect(() => {
     const active = runtime.current;
@@ -630,12 +742,14 @@ export default function RoomScene(props: RoomSceneProps) {
     const previousLevelsMode = active.presentation?.levels;
     if (active.stairEdit && (!effectiveProject || previousLevelId !== effectiveActiveLevelId || !active.stairEdit.compatible(effectiveProject))) { active.cancelStairEdit?.(); setNotice('El movimiento se canceló porque cambió la construcción.'); }
     active.cancelPaint?.();
+    suspendGesture.current?.();
     active.project = effectiveProject; active.activeLevelId = effectiveActiveLevelId ?? effectiveProject?.activeLevelId; active.presentation = props.presentation;
     if (active.roomId !== props.roomId || active.publicView !== props.publicView) {
       active.roomId = props.roomId;
       active.publicView = props.publicView;
       buildRoom(active, effectiveRoom);
     } else updateRoom(active, effectiveRoom);
+    refreshGesture.current?.();
     updateSelection(active, current.current);
     if (props.mode === 'walk' && active.viewMode === props.mode && !active.viewTransition) {
       if (active.navigator) { if (previousLevelId !== active.activeLevelId && active.walkState?.levelId !== active.activeLevelId) resetCamera(active, effectiveRoom, props.mode); else if (active.walkState) active.camera.position.y = active.walkState.eyeY; }
@@ -648,7 +762,8 @@ export default function RoomScene(props: RoomSceneProps) {
   useEffect(() => {
     if (runtime.current && ready) {
       const active = runtime.current;
-      active.cancelStairEdit?.(); active.cancelPaint?.();
+      if (restoredCameraPending.current) { restoredCameraPending.current = false; updateSelection(active, current.current); setWalkBlocked(active.walkBlocked); return; }
+      active.cancelStairEdit?.(); active.cancelItemEdit?.(); active.cancelPaint?.();
       directions.current.clear();
       joystickPointer.current = null;
       joystick.current = { x: 0, z: 0 };
@@ -680,7 +795,7 @@ export default function RoomScene(props: RoomSceneProps) {
     active.cancelPaint?.();
     active.renderer.domElement.style.cursor = props.paintActive && !props.readOnly && props.mode === 'orbit' ? 'crosshair' : '';
     if (props.paintActive || props.readOnly || props.mode !== 'orbit' || active.manipulating && !sameSelection(active.manipulating, props.selection)) {
-      active.cancelStairEdit?.();
+      active.cancelStairEdit?.(); active.cancelItemEdit?.();
       active.transform.pointerUp(null);
       active.directDragging = false;
       active.pendingEdit = false;
@@ -709,7 +824,7 @@ export default function RoomScene(props: RoomSceneProps) {
 
   return <div className="room-scene" ref={container}>
     {!ready && !error && <div className="scene-loading"><LoaderCircle size={24} /><span>{t("Cargando…")}</span></div>}
-    {error && <div className="scene-error" role="alert"><strong>{t("No pudimos iniciar el visor")}</strong><p>{t(error)}</p></div>}
+    {error && <div className="scene-error" role="alert"><strong>{t("No pudimos iniciar el visor")}</strong><p>{t(error)}</p><button type="button" onClick={() => { if (flushRendererGesture.current?.() === false) return; recoveryAttempts.current = 0; setRendererGeneration(value => value + 1); }}>{t('Reintentar')}</button></div>}
     {notice && !error && <div className="scene-notice" role="status">{t(notice)}</div>}
     {ready && !error && !transitioning && props.mode === 'walk' && <><div className="walk-hint">{walkBlocked ? t("No queda espacio libre para caminar. Mueve algún mueble.") : t("Arrastra para mirar · Toca puertas y focos")}</div>{interactionLabel && <button type="button" className="walk-interaction" aria-pressed={targetDoor ? targetDoor.open !== false : targetLight?.enabled} onClick={() => interact(walkTargetRef.current)}>{targetDoor ? targetDoor.open === false ? <DoorOpen size={20} /> : <DoorClosed size={20} /> : <Lightbulb size={20} />}<span>{interactionLabel}</span></button>}<div className="walk-joystick"><button type="button" tabIndex={-1} className="joystick-base" aria-label={t("Joystick de movimiento: arrastra para caminar. Con teclado usa WASD en el visor.")} onPointerDown={event => { event.preventDefault(); event.stopPropagation(); joystickPointer.current = event.pointerId; event.currentTarget.setPointerCapture(event.pointerId); moveJoystick(event); }} onPointerMove={event => { if (joystickPointer.current === event.pointerId) { event.stopPropagation(); moveJoystick(event); } }} onPointerUp={releaseJoystick} onPointerCancel={releaseJoystick} onLostPointerCapture={releaseJoystick}><span className="joystick-knob" style={{ transform: `translate(${stick.x * 34}px, ${stick.z * 34}px)` }} /></button></div></>}
   </div>;

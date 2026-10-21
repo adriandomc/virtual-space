@@ -197,11 +197,11 @@ export function roofHeightAt(triangles: Triangle3[], x: number, z: number, above
 export function projectRoofUndersideAt(project: ProjectDocument, levelId: string, x: number, z: number): number | null { return roofHeightAt(project.roofs.filter(r => r.levelId === levelId).flatMap(r => buildRoofGeometry(project, r).underside), x, z); }
 
 /** Per-wall maximum height follows the real roof skin; renderer may sample the endpoints/ridge intersections. */
-export function wallRoofProfile(project: ProjectDocument, levelId: string, wallId: string): { t: number; height: number }[] {
+export function wallRoofProfile(project: ProjectDocument, levelId: string, wallId: string, preparedUnderside?: Triangle3[]): { t: number; height: number }[] {
   const level = projectLevel(project, levelId), wall = level.walls.find(w => w.id === wallId); if (!wall) return [];
   const [a, b] = wallEndpoints(level, wall), boundary = level.outline.some((id, i) => id === a.id && level.outline[(i + 1) % level.outline.length] === b.id || id === b.id && level.outline[(i + 1) % level.outline.length] === a.id);
   if (!boundary || Math.abs(wall.height - level.height) > EPS) return [{ t: 0, height: wall.height }, { t: 1, height: wall.height }];
-  const roofs = project.roofs.filter(r => r.levelId === levelId).flatMap(r => buildRoofGeometry(project, r).underside);
+  const roofs = preparedUnderside ?? project.roofs.filter(r => r.levelId === levelId).flatMap(r => buildRoofGeometry(project, r).underside);
   const values = new Set([0, 1]);
   for (const triangle of roofs) for (let i = 0; i < 3; i++) { const c = triangle[i], d = triangle[(i + 1) % 3], dx = b.x - a.x, dz = b.z - a.z, ex = d.x - c.x, ez = d.z - c.z, den = dx * ez - dz * ex; if (Math.abs(den) < EPS) continue; const t = ((c.x - a.x) * ez - (c.z - a.z) * ex) / den, u = ((c.x - a.x) * dz - (c.z - a.z) * dx) / den; if (t > EPS && t < 1 - EPS && u >= -EPS && u <= 1 + EPS) values.add(t); }
   return [...values].sort((a, b) => a - b).map(t => ({ t, height: (roofHeightAt(roofs, a.x + (b.x - a.x) * t, a.z + (b.z - a.z) * t) ?? level.elevation + wall.height) - level.elevation }));

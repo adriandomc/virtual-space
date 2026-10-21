@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createServer, request as forwardRequest } from 'node:http';
 import { readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 
 /** Real workers/caches, one compiled application, and two deployment identities. No retired data/schema is emulated. */
 export async function pwaDeployment({ brokenSetup = false, beforeModelUpload }: { brokenSetup?: boolean; beforeModelUpload?: () => Promise<void> } = {}) {
@@ -10,6 +11,19 @@ export async function pwaDeployment({ brokenSetup = false, beforeModelUpload }: 
   // A deployed build has different immutable module URLs. Relative chunk imports retain this prefix.
   const originalBuild = JSON.parse(worker.match(/const BUILD = ([^;]+);/)![1]);
   const assetPaths = (source: string, version: string) => source.replaceAll('/assets/', `/__pwa_${version}/assets/`).replaceAll(originalBuild, originalBuild + '-' + version);
+  const originalIdentities = JSON.parse(worker.match(/const IDENTITIES = ([^;]+);/)![1]) as Record<string, string>;
+  const variantIdentities: Record<string, Record<string, string>> = {};
+  for (const version of ['old', 'new']) {
+    const identities = { ...originalIdentities };
+    for (const path of Object.keys(identities)) {
+      if (path === '/index.html') identities[path] = createHash('sha256').update(assetPaths(shell.replace('</head>', `<meta name="pwa-test-build" content="${version}"></head>`), version)).digest('hex');
+      else if (path.startsWith('/assets/') && /\.(js|css)$/.test(path)) {
+        const content = brokenSetup && version === 'old' && /^\/assets\/SetupApp-[^/]+\.js$/.test(path) ? "throw new Error('Test deployment: setup module unavailable');" : assetPaths(await readFile(new URL('../../dist' + path, import.meta.url), 'utf8'), version);
+        identities[path] = createHash('sha256').update(content).digest('hex');
+      }
+    }
+    variantIdentities[version] = identities;
+  }
   const requests: { path: string; generation: string }[] = [];
   const pages = new Set(['/', '/index.html', '/login', '/designs', '/editor', '/help', '/privacy', '/terms', '/embed']);
   const server = createServer(async (incoming, response) => {
@@ -18,7 +32,7 @@ export async function pwaDeployment({ brokenSetup = false, beforeModelUpload }: 
     if (path === '/api/models' && incoming.method === 'POST' && beforeModelUpload) await beforeModelUpload();
     if (path === '/service-worker.js') {
       response.writeHead(200, { 'Content-Type': 'text/javascript', 'Cache-Control': 'no-store', 'Service-Worker-Allowed': '/' });
-      const variant = assetPaths(worker.replace(/const CACHE = ["'][^"']+["'];/, `const CACHE = '3d-space-v3-static-update-test-${generation}';`), generation)
+      const variant = assetPaths(worker.replace(/const CACHE = ["'][^"']+["'];/, `const CACHE = '3d-space-v3-static-update-test-${generation}';`).replace(/const IDENTITIES = [^;]+;/, 'const IDENTITIES = ' + JSON.stringify(variantIdentities[generation]) + ';'), generation)
         .replace("['/__pwa_" + generation + "/assets/',", "['/__pwa_old/assets/', '/__pwa_new/assets/',");
       response.end(variant); return;
     }

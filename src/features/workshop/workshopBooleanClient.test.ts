@@ -89,13 +89,14 @@ test('worker completion and cancellation preserve source materials and terminate
       assert.equal(base.geometry, originalGeometry); assert.deepEqual(base.geometry.getAttribute('position').array, originalPositions);
     });
     await t.test('cancel terminates a running worker and rejects the unfinished operation', async () => {
-      mode = 'hang'; const operation = startWorkshopBoolean(base, tool, 'union'); operation.cancel();
+      mode = 'hang'; const operation = startWorkshopBoolean(base, tool, 'union'); await Promise.resolve(); operation.cancel();
       await assert.rejects(operation.promise, /canceló/); assert.equal(workers.at(-1)!.terminated, true);
       assert.equal(base.geometry.getAttribute('position').array.byteLength, originalPositions.byteLength);
     });
     await t.test('timeout terminates a worker without blocking the caller or consuming sources', async context => {
       context.mock.timers.enable({ apis: ['setTimeout'] });
       const operation = startWorkshopBoolean(base, tool, 'union');
+      await Promise.resolve();
       context.mock.timers.tick(20000);
       await assert.rejects(operation.promise, /tardó demasiado/); assert.equal(workers.at(-1)!.terminated, true);
       assert.equal(content.children.length, 2); context.mock.timers.reset();

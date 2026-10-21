@@ -1,11 +1,14 @@
-export function createServiceWorkerSource(cacheName: string, paths: string[], buildId: string) {
+export function createServiceWorkerSource(cacheName: string, paths: string[], buildId: string, identities: Record<string, string>) {
   return `const CACHE = ${JSON.stringify(cacheName)};
 const BUILD = ${JSON.stringify(buildId)};
 const PREPARED = '/__3d-space-prepared__';
 const PREVIOUS = '/__3d-space-previous__';
+const IDENTITY = '/__3d-space-identities__';
+const IDENTITIES = ${JSON.stringify(identities)};
 const clientBuilds = new Map();
 const ownCache = key => key.startsWith('3d-space-static-') || key.startsWith('3d-space-v2-static-') || key.startsWith('3d-space-v3-static-');
-const FILES = ${JSON.stringify(paths)};
+const priority = path => path === '/index.html' ? 0 : /\\.(js|css)$/.test(path) && !path.includes('worker') && !path.startsWith('/decoders/') ? 1 : path.startsWith('/icons/') || path.includes('manifest') || path === '/favicon.svg' ? 2 : path.startsWith('/decoders/') ? 3 : path.startsWith('/help/') ? 5 : 4;
+const FILES = ${JSON.stringify(paths)}.sort((a, b) => priority(a) - priority(b));
 const ALLOWED = new Set(FILES);
 const CORE = FILES.filter(path => !path.startsWith('/environments/') && !(path.startsWith('/materials/') && !path.endsWith('.json')));
 let preparing;
@@ -18,18 +21,40 @@ function valid(response, path) {
   if (path.endsWith('.html')) return /text\\/html/.test(type);
   return !/text\\/html/.test(type);
 }
+async function verified(response, path) {
+  if (!response || !valid(response, path) || !IDENTITIES[path]) return false;
+  const digest = await crypto.subtle.digest('SHA-256', await response.clone().arrayBuffer());
+  return Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('') === IDENTITIES[path];
+}
+async function previousResources() {
+  const keys = (await (await caches.open(CACHE)).match(PREVIOUS));
+  const resources = [];
+  for (const key of keys ? await keys.json() : []) {
+    const cache = await caches.open(key), metadata = await cache.match(IDENTITY);
+    if (metadata) { try { resources.push({ cache, identities: await metadata.json() }); } catch {} }
+  }
+  return resources;
+}
 async function cacheFiles(paths) {
   const cache = await caches.open(CACHE);
+  const previous = await previousResources();
   let index = 0;
   await Promise.all(Array.from({length: 4}, async () => {
     while (index < paths.length) {
       const path = paths[index++];
       if (await cache.match(path)) continue;
+      let reused = false;
+      for (const source of previous) if (source.identities[path] === IDENTITIES[path]) {
+        const response = await source.cache.match(path);
+        if (await verified(response, path)) { await cache.put(path, response); reused = true; break; }
+      }
+      if (reused) continue;
       const response = await fetch(path, {cache: 'reload', credentials: 'omit'});
-      if (!valid(response, path)) throw new Error('Static resource unavailable: ' + path);
+      if (!await verified(response, path)) throw new Error('Static resource unavailable: ' + path);
       await cache.put(path, response);
     }
   }));
+  await cache.put(IDENTITY, new Response(JSON.stringify(IDENTITIES)));
 }
 function prepare() {
   return preparing ??= (async () => { await cacheFiles(FILES); const cache = await caches.open(CACHE); await cache.put(PREPARED, new Response(BUILD)); })().finally(() => {preparing = undefined;});
@@ -134,7 +159,7 @@ self.addEventListener('fetch', event => {
   const page = url.pathname.replace(/\\/+$/, '') || '/';
   const path = request.mode === 'navigate' && PAGES.has(page) ? '/index.html' : url.pathname;
   if (!ALLOWED.has(path)) {
-    if (!['/assets/', '/materials/', '/environments/', '/help/'].some(prefix => path.startsWith(prefix))) return;
+    if (!['/assets/', '/materials/', '/environments/', '/help/', '/decoders/'].some(prefix => path.startsWith(prefix))) return;
     event.respondWith((async () => {
       for (const key of await caches.keys()) if (ownCache(key)) { const cached = await (await caches.open(key)).match(path); if (cached) return cached; }
       return fetch(request);
@@ -144,7 +169,7 @@ self.addEventListener('fetch', event => {
     const cache = await caches.open(CACHE), cached = await cache.match(path);
     if (cached) return cached;
     const response = await fetch(path, {credentials: 'omit'});
-    if (!valid(response, path)) return new Response('Recurso no disponible.', {status: 503});
+    if (!await verified(response, path)) return new Response('Recurso no disponible.', {status: 503});
     await cache.put(path, response.clone());
     return response;
   })());

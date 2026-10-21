@@ -25,6 +25,7 @@ export type RoomSceneProps = {
   mode: ViewMode;
   selection: Selection | null;
   onSelect: (selection: Selection | null) => void;
+  onCheckpoint?: (room: Room | null) => Promise<void>;
   onChange: (room: Room) => boolean | void;
   readOnly: boolean;
   transformMode: 'translate' | 'rotate';
@@ -52,7 +53,7 @@ export type SceneRuntime = {
   itemProfile?: string;
   architectureBuilds?: number;
   renderedStructure?: string;
-  levelViews?: Map<string, { runtime: SceneRuntime; resident: boolean }>;
+  levelViews?: Map<string, { runtime: SceneRuntime; resident: boolean; inputSignature?: string }>;
   projectExtras?: THREE.Group;
   extrasSignature?: string;
   projectLighting?: THREE.Group;
@@ -64,6 +65,8 @@ export type SceneRuntime = {
   geometrySignature?: string;
   graphics: GraphicsProfile;
   needsRender: boolean;
+  applyGraphicsSize?: () => void;
+  cancelItemEdit?: () => void;
   overlayPaused?: boolean;
   previewFill?: THREE.HemisphereLight;
   roomId?: string;

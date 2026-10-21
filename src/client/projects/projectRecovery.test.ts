@@ -55,3 +55,92 @@ test('discard and a new rejected edit serialize without deleting the newer durab
   await recovery.discard();
   assert.equal(recovery.project(), null); assert.equal(await readOffline('meta', key), undefined);
 });
+
+
+test('gesture checkpoints are durable without replacing the editable project and cleanup serializes with the next gesture', async () => {
+  await reset();
+  const recovery = new ProjectRecovery(project.id), first = { ...project, name: 'First position' }, last = { ...project, name: 'Latest position' };
+  let notifications = 0; recovery.subscribe(() => notifications++);
+  const writing = recovery.checkpoint(first, owner.id), clearing = recovery.clearCheckpoint(), next = recovery.checkpoint(last, owner.id);
+  await Promise.all([writing, clearing, next]);
+  assert.equal(notifications, 0); assert.equal(recovery.project(), null);
+  const reopened = new ProjectRecovery(project.id); await reopened.restore(() => true);
+  assert.equal(reopened.project()?.name, last.name);
+  await recovery.clearCheckpoint(); assert.equal(await readOffline('meta', key), undefined);
+});
+
+test('a rejected collaborative edit supersedes a gesture checkpoint and survives queued cleanup', async () => {
+  await reset();
+  const recovery = new ProjectRecovery(project.id);
+  const writing = recovery.checkpoint(project, owner.id), clearing = recovery.clearCheckpoint();
+  const rejected = { ...project, name: 'Rejected edit' };
+  await recovery.capture(rejected, owner.id); await Promise.all([writing, clearing]);
+  assert.equal((await readOffline<{ project: typeof project }>('meta', key))?.project.name, rejected.name);
+  assert.equal(recovery.project()?.name, rejected.name);
+});
+
+test('failed local commit keeps its checkpoint through later previews and gesture cancellation', async () => {
+  await reset();
+  const recovery = new ProjectRecovery(project.id), accepted = { ...project, name: 'Accepted before quota failure' };
+  await recovery.checkpoint(accepted, owner.id);
+  let undurable = true;
+  const local = { get hasUndurableWork() { return undurable; }, async assertDurable() { if (undurable) throw new Error('Local quota exceeded'); } };
+  assert.equal(await recovery.updateCheckpoint({ ...project, name: 'Later preview' }, owner.id, local, () => true), false);
+  assert.equal(await recovery.updateCheckpoint(null, owner.id, local, () => true), false);
+  const reopened = new ProjectRecovery(project.id); await reopened.restore(() => true);
+  assert.equal(reopened.project()?.name, accepted.name, 'cancelling a later drag cannot discard the accepted edit');
+  // Becoming locally durable is enough, even if the saved draft still needs a server upload.
+  undurable = false;
+  assert.equal(await recovery.updateCheckpoint(null, owner.id, local, () => true), true);
+  assert.equal(await readOffline('meta', key), undefined);
+});
+
+test('late durability checks cannot write or clear checkpoints from another gesture or session', async () => {
+  await reset();
+  const recovery = new ProjectRecovery(project.id), saved = { ...project, name: 'Saved gesture' };
+  await recovery.checkpoint(saved, owner.id);
+  let finish!: () => void, current = true;
+  const local = { hasUndurableWork: false, assertDurable: () => new Promise<void>(resolve => { finish = resolve; }) };
+  const preview = recovery.updateCheckpoint({ ...project, name: 'Stale preview' }, owner.id, local, () => current);
+  current = false; finish(); assert.equal(await preview, false);
+  assert.equal((await readOffline<{ project: typeof project }>('meta', key))?.project.name, saved.name);
+  current = true;
+  const cancellation = recovery.updateCheckpoint(null, owner.id, local, () => current);
+  current = false; finish(); assert.equal(await cancellation, false);
+  assert.equal((await readOffline<{ project: typeof project }>('meta', key))?.project.name, saved.name);
+});
+
+test('queued checkpoint writes recheck local durability and preserve earlier accepted work', async () => {
+  await reset();
+  const recovery = new ProjectRecovery(project.id), saved = { ...project, name: 'Previous accepted position' };
+  await recovery.checkpoint(saved, owner.id);
+  let undurable = false;
+  const local = { get hasUndurableWork() { return undurable; }, async assertDurable() {} };
+  const preview = recovery.updateCheckpoint({ ...project, name: 'Obsolete intermediate pose' }, owner.id, local, () => true);
+  await Promise.resolve(); undurable = true;
+  assert.equal(await preview, false);
+  assert.equal((await readOffline<{ project: typeof project }>('meta', key))?.project.name, saved.name);
+});
+
+test('a failed checkpoint cleanup retains ownership for a safe retry', async () => {
+  await reset();
+  const recovery = new ProjectRecovery(project.id); await recovery.checkpoint(project, owner.id);
+  const original = IDBObjectStore.prototype.delete;
+  IDBObjectStore.prototype.delete = function (value) { if (value === key) throw new DOMException('Storage unavailable', 'QuotaExceededError'); return original.call(this, value); };
+  try { await assert.rejects(recovery.clearCheckpoint(), /No hay espacio suficiente/); }
+  finally { IDBObjectStore.prototype.delete = original; }
+  assert.ok(await readOffline('meta', key));
+  await recovery.clearCheckpoint();
+  assert.equal(await readOffline('meta', key), undefined);
+});
+
+test('checkpoint cancellation cannot clear another account after a delayed durability check', async () => {
+  await reset();
+  const recovery = new ProjectRecovery(project.id); await recovery.checkpoint(project, owner.id);
+  let finish!: () => void;
+  const local = { hasUndurableWork: false, assertDurable: () => new Promise<void>(resolve => { finish = resolve; }) };
+  const cancelling = recovery.updateCheckpoint(null, owner.id, local, () => true);
+  await writeOffline('meta', 'identity', { ...owner, id: '596872d9-a61a-452c-96b6-98bcc70988e9' });
+  finish(); await cancelling;
+  assert.ok(await readOffline('meta', key));
+});

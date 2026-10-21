@@ -14,7 +14,7 @@ function editorAddress() {
 
 export default function SetupApp() {
   useLocale();
-  const { project, setProject, activeLevelId, setActiveLevelId, room, setRoom, ready, status, error, role, readOnly, canManage, sketchUrl, uploadSketch, retry, pendingOffline, downloadOfflineBackup, discardOffline, recoveryProject } = useProject();
+  const { project, setProject, activeLevelId, setActiveLevelId, room, setRoom, checkpointRoom, ready, status, error, role, readOnly, canManage, sketchUrl, uploadSketch, retry, pendingOffline, downloadOfflineBackup, discardOffline, recoveryProject } = useProject();
   const unauthorized = role !== 'owner' && role !== 'editor';
   const [recoveryError, setRecoveryError] = useState('');
   const recoveryPanel = <RecoveryPanel project={recoveryProject} onDownload={downloadOfflineBackup} onDiscard={discardOffline} onError={setRecoveryError} />;
@@ -36,5 +36,5 @@ export default function SetupApp() {
 
   if (!ready || unauthorized || (room.setupStep === undefined && !destination)) return <main className="account-page account-loading">{recoveryPanel}{recoveryError && <p role="alert">{t(recoveryError)}</p>}{status === 'error' ? <><CircleHelp size={24} /><p className="account-error" role="alert">{t(error)}</p><button className="account-primary" onClick={retry}>{t("Reintentar")}</button><a href={DESIGNS_PATH}>{t("Mis diseños")}</a></> : <><LoaderCircle size={25} className="saving-spinner" /><span>{t("Cargando diseño…")}</span></>}</main>;
 
-  return <>{recoveryPanel}{recoveryError && <p role="alert">{t(recoveryError)}</p>}<Onboarding project={project} activeLevelId={activeLevelId} onProjectChange={setProject} onLevelChange={setActiveLevelId} disabled={readOnly} canManage={canManage} room={destination === 'editor' ? { ...room, setupStep: 3 } : room} onChange={change} sketchUrl={sketchUrl} onSketchChange={uploadSketch} status={destination && !['error', 'conflict', 'offline'].includes(status) ? 'loading' : status} error={t(error)} onRetry={retry} onFinish={finish} onCancel={() => setDestination('library')} pendingOffline={pendingOffline} onDownload={downloadOfflineBackup} onDiscard={discardOffline} /></>;
+  return <>{recoveryPanel}{recoveryError && <p role="alert">{t(recoveryError)}</p>}<Onboarding onCheckpoint={checkpointRoom} project={project} activeLevelId={activeLevelId} onProjectChange={setProject} onLevelChange={setActiveLevelId} disabled={readOnly} canManage={canManage} room={destination === 'editor' ? { ...room, setupStep: 3 } : room} onChange={change} sketchUrl={sketchUrl} onSketchChange={uploadSketch} status={destination && !['error', 'conflict', 'offline'].includes(status) ? 'loading' : status} error={t(error)} onRetry={retry} onFinish={finish} onCancel={() => setDestination('library')} pendingOffline={pendingOffline} onDownload={downloadOfflineBackup} onDiscard={discardOffline} /></>;
 }

@@ -1,22 +1,24 @@
 import * as THREE from 'three/webgpu';
 import { disposeArchitecturalTextures } from './materials';
 import type { SceneRuntime } from './sceneRuntime';
+import { releaseScenePicking } from './scenePickingAcceleration';
+import { hasArchitecturalTextureOwners } from './architecturalTextureLoader';
+import { disposeArchitecturalAreaTextures } from './areaLightTextures';
 
 export function disposeArchitecture(runtime: SceneRuntime) {
   runtime.disposed = true;
   runtime.postProcessing?.dispose();
   runtime.architecturalEnvironment?.dispose();
   runtime.sky?.dispose();
-  if (runtime.areaTextures) {
-    for (const key of ['LTC_FLOAT_1', 'LTC_FLOAT_2', 'LTC_HALF_1', 'LTC_HALF_2'] as const) runtime.areaTextures[key].dispose();
-  }
-  disposeArchitecturalTextures();
+  runtime.areaTextures = null;
+  if (!hasArchitecturalTextureOwners()) { disposeArchitecturalTextures(); disposeArchitecturalAreaTextures(); }
 }
 
 export function disposeContent(group: THREE.Group) {
   const cleanups: (() => void)[] = [];
   group.traverse(object => { if (typeof object.userData.disposeCustomModel === 'function') cleanups.push(object.userData.disposeCustomModel); });
   cleanups.forEach(cleanup => cleanup());
+  releaseScenePicking(group);
   const geometries = new Set<THREE.BufferGeometry>();
   const materials = new Set<THREE.Material>();
   group.traverse(object => {

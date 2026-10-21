@@ -7,10 +7,13 @@ import { fitWorkshopCamera } from '../workshop/modelWorkshopGeometry';
 import { t, useLocale } from '../../shared/i18n/i18n';
 import type { RoofFace, RoofVertex } from '../../domain/project/projectDocument';
 import { transformRoofVertices } from './roofMeshEditing';
+import { createDemandFrames } from '../../client/graphics/demandFrames';
+import { getGraphicsProfile, subscribeGraphicsSettings } from '../../client/graphics/graphicsSettings';
+import { updateRoofPreviewGeometry, updateRoofPreviewSelection } from './roofPreviewGeometry';
 import { registerAppActivity } from '../../client/pwa/appActivity';
 
 type Props = { vertices: RoofVertex[]; faces: RoofFace[]; selectedIds: string[]; selectedFace: string | null; selectionMode: 'vertices' | 'faces'; multi: boolean; tool: 'translate' | 'rotate' | 'scale'; snap: boolean; step: number; resetKey: number; maximumHeight: number; onSelect: (ids: string[], face: string | null) => void; onChange: (vertices: RoofVertex[]) => void; onStart: () => void; disabled?: boolean };
-type Runtime = { renderer: WebGLRenderer; scene: THREE.Scene; camera: THREE.PerspectiveCamera; controls: OrbitControls; transform: TransformControls; proxy: THREE.Object3D; model: THREE.Mesh; points: THREE.InstancedMesh | null; edges: THREE.LineSegments | null; grid: THREE.GridHelper | null; dirty: boolean; dragging: boolean; initial: RoofVertex[]; inverse: THREE.Matrix4; faceIds: string[] };
+type Runtime = { renderer: WebGLRenderer; scene: THREE.Scene; camera: THREE.PerspectiveCamera; controls: OrbitControls; transform: TransformControls; proxy: THREE.Object3D; model: THREE.Mesh; points: THREE.InstancedMesh | null; edges: THREE.LineSegments | null; grid: THREE.GridHelper | null; invalidate: () => void; dragging: boolean; initial: RoofVertex[]; inverse: THREE.Matrix4; faceIds: string[] };
 
 export default function RoofMeshPreview(props: Props) {
   const locale = useLocale(), mount = useRef<HTMLDivElement>(null), runtime = useRef<Runtime | null>(null), latest = useRef(props);
@@ -30,17 +33,17 @@ export default function RoofMeshPreview(props: Props) {
       const model = new THREE.Mesh(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute([], 3)), new THREE.MeshStandardMaterial({ color: '#ffffff', vertexColors: true, side: THREE.DoubleSide, roughness: .85, flatShading: true })); model.visible = false; scene.add(model);
       const proxy = new THREE.Object3D(); scene.add(proxy);
       const transform = new TransformControls(camera, renderer.domElement); transform.setColors('#ce756a', '#819968', '#6d97b4', '#d7ab5b'); transform.setSize(matchMedia('(pointer: coarse)').matches ? 1.5 : 1.1); scene.add(transform.getHelper());
-      const active: Runtime = { renderer, scene, camera, controls, transform, proxy, model, points: null, edges: null, grid: null, dirty: true, dragging: false, initial: [], inverse: new THREE.Matrix4(), faceIds: [] }; runtime.current = active;
-      const fit = () => { const width = Math.max(1, host.clientWidth), height = Math.max(1, host.clientHeight); renderer!.setSize(width, height); camera.aspect = width / height; camera.updateProjectionMatrix(); active.dirty = true; };
+      const active: Runtime = { renderer, scene, camera, controls, transform, proxy, model, points: null, edges: null, grid: null, invalidate: () => {}, dragging: false, initial: [], inverse: new THREE.Matrix4(), faceIds: [] }; runtime.current = active;
+      const fit = () => { const width = Math.max(1, host.clientWidth), height = Math.max(1, host.clientHeight); renderer!.setSize(width, height); camera.aspect = width / height; camera.updateProjectionMatrix(); active.invalidate(); };
       resize = new ResizeObserver(fit); resize.observe(host); fit();
       const begin = (event: { value: unknown }) => {
         active.dragging = !!event.value; controls.enabled = !event.value;
         if (event.value) { latest.current.onStart(); active.initial = structuredClone(latest.current.vertices); proxy.updateMatrixWorld(); active.inverse.copy(proxy.matrixWorld).invert(); }
         else active.initial = [];
-        active.dirty = true;
+        active.invalidate();
       };
       const change = () => {
-        active.dirty = true;
+        active.invalidate();
         if (!active.dragging || latest.current.disabled) return;
         proxy.updateMatrixWorld(); const delta = proxy.matrixWorld.clone().multiply(active.inverse);
         latest.current.onChange(transformRoofVertices(active.initial, latest.current.selectedIds, delta, latest.current.maximumHeight));
@@ -65,8 +68,12 @@ export default function RoofMeshPreview(props: Props) {
         event.preventDefault(); latest.current.onStart(); latest.current.onChange(transformRoofVertices(latest.current.vertices, latest.current.selectedIds, new THREE.Matrix4().makeTranslation(shift[0], shift[1], shift[2]), latest.current.maximumHeight));
       };
       renderer.domElement.addEventListener('keydown', keyDown);
-      renderer.setAnimationLoop(() => { if (document.visibilityState === 'hidden') return; if (controls.update()) active.dirty = true; if (active.dirty) { renderer!.render(scene, camera); active.dirty = false; } });
-      dispose = () => { transform.removeEventListener('dragging-changed', begin); transform.removeEventListener('objectChange', change); renderer!.domElement.removeEventListener('pointerdown', pointerDown); renderer!.domElement.removeEventListener('pointerup', pointerUp); renderer!.domElement.removeEventListener('keydown', keyDown); controls.dispose(); transform.dispose(); model.geometry.dispose(); (model.material as THREE.Material).dispose(); active.points?.geometry.dispose(); (active.points?.material as THREE.Material | undefined)?.dispose(); active.edges?.geometry.dispose(); (active.edges?.material as THREE.Material | undefined)?.dispose(); active.grid?.dispose(); };
+      const frames = createDemandFrames(() => { const moving = controls.update(); renderer!.render(scene, camera); return moving; }, { fps: () => getGraphicsProfile().fps });
+      active.invalidate = frames.invalidate;
+      controls.addEventListener('change', frames.invalidate); transform.addEventListener('change', frames.invalidate);
+      const quality = () => { renderer!.setPixelRatio(Math.min(devicePixelRatio, 1.5) * getGraphicsProfile().renderScale); fit(); };
+      const unsubscribe = subscribeGraphicsSettings(quality); quality();
+      dispose = () => { frames.dispose(); unsubscribe(); controls.removeEventListener('change', frames.invalidate); transform.removeEventListener('change', frames.invalidate); transform.removeEventListener('dragging-changed', begin); transform.removeEventListener('objectChange', change); renderer!.domElement.removeEventListener('pointerdown', pointerDown); renderer!.domElement.removeEventListener('pointerup', pointerUp); renderer!.domElement.removeEventListener('keydown', keyDown); controls.dispose(); transform.dispose(); model.geometry.dispose(); (model.material as THREE.Material).dispose(); active.points?.geometry.dispose(); (active.points?.material as THREE.Material | undefined)?.dispose(); active.edges?.geometry.dispose(); (active.edges?.material as THREE.Material | undefined)?.dispose(); active.grid?.dispose(); };
       setReady(true);
     } catch { setError('No se pudo iniciar la vista 3D. Puedes editar las coordenadas.'); }
     return () => { resize?.disconnect(); renderer?.setAnimationLoop(null); dispose(); renderer?.dispose(); renderer?.domElement.remove(); runtime.current = null; };
@@ -77,25 +84,27 @@ export default function RoofMeshPreview(props: Props) {
   }, [locale, ready]);
   useEffect(() => {
     const active = runtime.current; if (!active || !ready) return;
-    const positions: number[] = [], colors: number[] = []; active.faceIds = [];
-    for (const face of props.faces) for (let index = 1; index < face.vertexIds.length - 1; index++) { const triangle = [face.vertexIds[0], face.vertexIds[index], face.vertexIds[index + 1]].map(id => props.vertices.find(vertex => vertex.id === id)); if (triangle.some(vertex => !vertex)) continue; positions.push(...triangle.flatMap(vertex => [vertex!.x, vertex!.y, vertex!.z])); const color = new THREE.Color(face.id === props.selectedFace ? '#e0b66a' : '#c5b49a'); for (let vertex = 0; vertex < 3; vertex++) colors.push(...color.toArray()); active.faceIds.push(face.id); }
-    active.model.geometry.dispose(); active.model.geometry = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(positions, 3)).setAttribute('color', new THREE.Float32BufferAttribute(colors, 3)); active.model.geometry.computeVertexNormals();
-    active.model.visible = positions.length > 0;
-    if (!positions.length) active.model.geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 0);
-    if (active.edges) { active.edges.removeFromParent(); active.edges.geometry.dispose(); (active.edges.material as THREE.Material).dispose(); }
-    active.edges = new THREE.LineSegments(new THREE.EdgesGeometry(active.model.geometry), new THREE.LineBasicMaterial({ color: '#65735d' })); active.scene.add(active.edges);
-    if (active.points) { active.points.removeFromParent(); active.points.geometry.dispose(); (active.points.material as THREE.Material).dispose(); }
-    const bounds = new THREE.Box3().setFromPoints(props.vertices.map(vertex => new THREE.Vector3(vertex.x, vertex.y, vertex.z))), span = bounds.isEmpty() ? 1 : Math.max(.1, bounds.getSize(new THREE.Vector3()).length());
-    active.points = new THREE.InstancedMesh(new THREE.SphereGeometry(Math.max(.045, span * .008), 10, 8), new THREE.MeshBasicMaterial({ depthTest: false, transparent: true, opacity: .95 }), props.vertices.length);
-    const matrix = new THREE.Matrix4(); props.vertices.forEach((vertex, index) => { active.points!.setMatrixAt(index, matrix.makeTranslation(vertex.x, vertex.y, vertex.z)); active.points!.setColorAt(index, new THREE.Color(props.selectedIds.includes(vertex.id) ? '#d79531' : '#56744b')); }); active.points.renderOrder = 10; active.points.visible = props.selectionMode === 'vertices'; active.scene.add(active.points);
+    updateRoofPreviewGeometry(active, props.vertices, props.faces); active.invalidate();
+  }, [props.vertices, props.faces, ready]);
+  useEffect(() => {
+    const active = runtime.current; if (!active || !ready) return;
+    updateRoofPreviewSelection(active, props.vertices, props.selectedIds, props.selectedFace, props.selectionMode);
     if (!active.dragging) {
       const selected = props.vertices.filter(vertex => props.selectedIds.includes(vertex.id));
       if (selected.length && !props.disabled) { active.proxy.position.set(0, 0, 0); selected.forEach(vertex => active.proxy.position.add(new THREE.Vector3(vertex.x, vertex.y, vertex.z))); active.proxy.position.divideScalar(selected.length); active.proxy.rotation.set(0, 0, 0); active.proxy.scale.set(1, 1, 1); active.transform.attach(active.proxy); }
       else active.transform.detach();
     }
-    active.transform.setMode(props.tool); active.transform.setTranslationSnap(props.snap ? props.step : null); active.transform.setRotationSnap(props.snap ? THREE.MathUtils.degToRad(15) : null); active.transform.setScaleSnap(props.snap ? .1 : null); active.transform.enabled = !props.disabled; active.dirty = true;
-    if (!active.grid || active.grid.userData.step !== props.step) { active.grid?.removeFromParent(); active.grid?.dispose(); const size = Math.max(4, Math.ceil(span / (props.step * 10)) * props.step * 10); active.grid = new THREE.GridHelper(size, Math.min(200, Math.round(size / props.step)), '#a5b49a', '#d4dccd'); active.grid.userData.step = props.step; const center = bounds.isEmpty() ? new THREE.Vector3() : bounds.getCenter(new THREE.Vector3()); active.grid.position.set(center.x, bounds.isEmpty() ? 0 : bounds.min.y - .03, center.z); active.scene.add(active.grid); }
+    active.transform.setMode(props.tool); active.transform.setTranslationSnap(props.snap ? props.step : null); active.transform.setRotationSnap(props.snap ? THREE.MathUtils.degToRad(15) : null); active.transform.setScaleSnap(props.snap ? .1 : null); active.transform.enabled = !props.disabled; active.invalidate();
   }, [props.vertices, props.faces, props.selectedIds, props.selectedFace, props.selectionMode, props.tool, props.snap, props.step, props.disabled, ready]);
-  useEffect(() => { const active = runtime.current; if (!active || !ready || !props.vertices.length) return; const box = new THREE.Box3().setFromPoints(props.vertices.map(vertex => new THREE.Vector3(vertex.x, vertex.y, vertex.z))); active.controls.target.copy(fitWorkshopCamera(active.camera, box, active.camera.aspect)); active.controls.update(); active.dirty = true; }, [props.resetKey, ready]);
+  useEffect(() => {
+    const active = runtime.current; if (!active || !ready) return;
+    const bounds = new THREE.Box3().setFromPoints(props.vertices.map(vertex => new THREE.Vector3(vertex.x, vertex.y, vertex.z))), span = bounds.isEmpty() ? 1 : Math.max(.1, bounds.getSize(new THREE.Vector3()).length());
+    const size = Math.max(4, Math.ceil(span / (props.step * 10)) * props.step * 10);
+    if (!active.grid || active.grid.userData.step !== props.step || active.grid.userData.size !== size) {
+      active.grid?.removeFromParent(); active.grid?.dispose(); active.grid = new THREE.GridHelper(size, Math.min(200, Math.round(size / props.step)), '#a5b49a', '#d4dccd'); active.grid.userData.step = props.step; active.grid.userData.size = size; active.scene.add(active.grid);
+    }
+    const center = bounds.isEmpty() ? new THREE.Vector3() : bounds.getCenter(new THREE.Vector3()); active.grid.position.set(center.x, bounds.isEmpty() ? 0 : bounds.min.y - .03, center.z); active.invalidate();
+  }, [props.vertices, props.step, ready]);
+  useEffect(() => { const active = runtime.current; if (!active || !ready || !props.vertices.length) return; const box = new THREE.Box3().setFromPoints(props.vertices.map(vertex => new THREE.Vector3(vertex.x, vertex.y, vertex.z))); active.controls.target.copy(fitWorkshopCamera(active.camera, box, active.camera.aspect)); active.controls.update(); active.invalidate(); }, [props.resetKey, ready]);
   return <div className="roof-mesh-preview" ref={mount}>{error && <p role="status">{t(error)}</p>}</div>;
 }

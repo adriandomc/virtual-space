@@ -9,7 +9,7 @@ import { pipeline } from 'node:stream/promises';
 import { HttpError } from '../auth/auth.js';
 
 const compress = promisify(gzip);
-const MIME: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.webmanifest': 'application/manifest+json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.ico': 'image/x-icon', '.woff2': 'font/woff2' };
+const MIME: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.webmanifest': 'application/manifest+json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.wasm': 'application/wasm', '.ktx2': 'image/ktx2' };
 type Prepared = { etag: string; size: number; gzip: string | null };
 type Cached = { stamp: string; data: Buffer; gzip?: Buffer; etag: string };
 
@@ -65,7 +65,7 @@ export function createStaticAssets(directory: string) {
       streamPath = resolve(root, prepared.gzip); size = (await safeFile(streamPath)).size; encoded = true;
     } else if (cached) {
       data = cached.data;
-      if (acceptsGzip && data.length > 1024 && /\.(?:html|js|css|json|webmanifest|svg)$/.test(name)) { data = cached.gzip ??= await compress(data); encoded = true; }
+      if (acceptsGzip && data.length > 1024 && /\.(?:html|js|css|json|webmanifest|svg|wasm)$/.test(name)) { data = cached.gzip ??= await compress(data); encoded = true; }
       size = data.length;
     }
     response.writeHead(200, { ...headers, 'Content-Type': mime, 'Content-Length': size, ...(encoded ? { 'Content-Encoding': 'gzip' } : {}) });
